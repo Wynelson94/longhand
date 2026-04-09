@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "longhand"
+version = "0.1.0"
+description = "Lossless local memory for Claude Code sessions. The full, unabbreviated version."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Nate Nelson", email = "nate@blacksheephq.ai" },
+]
+requires-python = ">=3.10"
+keywords = ["claude", "claude-code", "ai-memory", "lossless", "forensic", "search", "blacksheep"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Version Control",
+]
+
+dependencies = [
+    "chromadb>=0.5.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pydantic>=2.6.0",
+]
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.0.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+]
+
+[project.scripts]
+longhand = "longhand.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/Wynelson94/longhand"
+Repository = "https://github.com/Wynelson94/longhand"
+Issues = "https://github.com/Wynelson94/longhand/issues"
+
+[tool.setuptools.packages.find]
+include = ["longhand*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
