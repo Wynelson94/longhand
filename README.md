@@ -1,128 +1,198 @@
 # Longhand
 
-**Lossless local memory for Claude Code sessions. The full, unabbreviated version.**
+**Lossless local memory for Claude Code. The full, unabbreviated version.**
 
-Every tool call. Every file edit. Every thinking block. Every before-and-after. Stored verbatim. Searchable. Replayable. All on your machine. No API calls. No summaries. No decisions made by an AI about what's worth remembering.
+Every tool call. Every file edit. Every thinking block. Every before-and-after. Stored verbatim on your machine. Searchable. Replayable. Recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
 ---
 
-## Why I Built This
+## The Principles
 
-I'm not a computer scientist. I'm a guy from Idaho Falls who's worked in fourteen industries and got a reputation as the person you hire when something's off but nobody can prove it.
+Longhand is built on a handful of principles. If you disagree with them, you probably want a different tool.
 
-At 28 I walked into a powersports store as the new GM. A family had been running it for thirty years — father, wife, daughter, son-in-law. The books looked clean. The bank statements reconciled. A fraud detective came in with specialized software and said there was nothing. I went line by line — bank statements, vendor invoices, card terminal logs, inventory counts — for four months at 19 hours a day. I found $400k in fraud traceable down to the date and time. The bank later found $7 million in missing collateral underneath. The operation was sophisticated. Every year they'd migrate to a new CRM and reformat the reports — burning the trail on purpose.
+### 1. Information doesn't disappear — it moves.
 
-The principle I learned there is the same principle behind everything I build: **matter can't be created or destroyed. If something's missing, it moved. You just have to find the move.**
+When data goes "missing" it's almost never actually gone. It got compressed, summarized, filed somewhere else, or renamed. Find the raw source and the truth is still there waiting. Claude Code already writes every session to disk as JSONL. That file is the raw source. Longhand just reads it.
 
-Information works the same way. It doesn't disappear — it gets compressed, summarized, or filed where nobody's looking. Find the raw data and you find the truth.
+### 2. Summarization is a lossy decision disguised as a convenience.
 
-Most AI memory systems summarize conversations and then call the summary "memory." The AI decides what's important and throws the rest away. That's the same thing as letting a family run a business and also being the one counting the inventory. The audit is only as good as the auditor's incentives.
+Most AI memory systems read a conversation and ask the AI to write down "what mattered." The AI is now the gatekeeper of its own memory, and the AI has incentives — brevity, confidence, coherence — that aren't the same as truth. You end up with a story about what happened instead of what happened.
 
-Longhand does it differently. It reads the actual session files Claude Code writes to disk — the complete JSONL transcripts — and stores every event verbatim in a local database you own. No summaries. No compression loss. No AI deciding what matters. Just the raw record, indexed for search and replay.
+Longhand never summarizes. It stores the complete record and lets you query it.
+
+### 3. The raw record is cheap. Acting like it isn't wastes it.
+
+A full Claude Code JSONL file is kilobytes to low megabytes. A year of daily sessions is hundreds of megabytes. That is nothing on modern hardware. There is no engineering reason to throw the data away. Summary-based memory isn't saving space — it's giving away information that was free.
+
+### 4. The thinking is the most valuable part.
+
+When Claude produces a `thinking` block, that's the reasoning behind the decision — usually invisible to the user, almost always more useful than the final answer. Summary-based memory throws thinking blocks away because they're "internal." Longhand treats them as first-class events. "What was I thinking when I chose to use a conditional update?" pulls the verbatim thinking block that contains the answer.
+
+### 5. A fix you can't reproduce is a fix you didn't keep.
+
+If you fixed a bug in March, the state of that file when the bug was fixed is a fact. Longhand reconstructs it deterministically by applying every edit in sequence from the session JSONL. No guessing, no AI inference, just literal application of the diffs. You can see the exact state of any file at any point in any past session.
+
+### 6. Memory should be proactive, not just searchable.
+
+A searchable archive is useful but passive. Real memory answers fuzzy questions. "A couple months ago I was building a game that kept breaking, then you fixed it — bring that fix forward." Longhand parses the time phrase, matches the project, finds the problem→fix episode, and returns the diff. You don't have to know the session ID. You just have to remember that it happened.
+
+### 7. Deterministic beats clever.
+
+Everything in Longhand's analysis is rules-based. Regex error detection. Hash-based project IDs. Forward-walking episode extraction. No LLMs in the core pipeline. That means fast (< 200ms recall queries), reproducible (same input → same output), and fully local (no API keys, no cloud). An LLM layer could go on top later, but the foundation runs on laws, not on a model's opinion.
+
+### 8. Local or nothing.
+
+Your Claude Code history is yours. It goes into a SQLite file and a ChromaDB directory in `~/.longhand/`. No telemetry. No sync. No account. If your laptop is offline, Longhand works. If Anthropic goes down, Longhand works. If you delete the directory, it's gone.
 
 ---
 
 ## What It Actually Does
 
-When you use Claude Code, every session writes a JSONL file to `~/.claude/projects/<project>/<session-id>.jsonl`. That file contains:
+When you use Claude Code, every session writes a JSONL file to `~/.claude/projects/<project>/<session-id>.jsonl`. That file contains every message, every tool call, every thinking block, every file edit with full before/after content, and a millisecond-precise timestamp for each event.
 
-- Every message you typed
-- Every message Claude sent back
-- Every thinking block Claude produced
-- Every tool call Claude made (Edit, Write, Bash, Read, WebFetch, etc.)
-- Every tool result
-- The before and after content for every file edit
+Longhand reads those files. Then it gives you:
 
-Longhand ingests those files into a local SQLite database and a local ChromaDB vector store. Then it gives you:
-
-- **Semantic search** — "find every session where I debugged a race condition"
-- **Tool call archaeology** — "show me every Bash command I've ever run that touched Supabase"
-- **File history across sessions** — "show me every edit ever made to `route.ts`"
-- **Session replay** — "reconstruct what `deals/[id]/pay/route.ts` looked like 30 minutes into the April 8 session" — computed by applying every edit verbatim from the session file
-- **Reasoning retrieval** — "what was I thinking when I decided to use conditional updates for deal status transitions?" pulls the actual `thinking` block Claude produced at that moment
+- **Semantic search** across every event you've ever generated
+- **Filterable search** — by tool, file, session, time range, event type
+- **Tool call archaeology** — "show me every Bash command I ran in March that touched Supabase"
+- **File history across sessions** — every edit to a specific file, chronologically, across all your sessions
+- **Session replay** — reconstruct any file's state at any point in any past session
+- **Reasoning retrieval** — query Claude's verbatim thinking blocks
 - **Timeline view** — chronological playback of any session
-- **MCP server** — lets Claude query Longhand directly during live sessions
-
-None of this is possible with summary-based memory. All of it is possible because Longhand never throws anything away.
+- **Fuzzy recall** — natural-language questions about past work ("that race condition fix from last week")
+- **Project inference** — automatic detection of which projects you've worked on, with categories and aliases
+- **Episode extraction** — automatic detection of problem→fix sequences in your sessions
+- **MCP server** — lets Claude Desktop query Longhand directly during live conversations
+- **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
 
 ---
 
 ## Install
 
 ```bash
-# Core install (CLI + storage)
-pip install longhand
-
-# With MCP server for Claude Desktop / Claude Code integration
-pip install "longhand[mcp]"
+pip install -e .
 ```
+
+Then make it current:
+
+```bash
+longhand ingest                # ingest all your existing Claude Code history
+longhand analyze --all         # run analysis (projects, outcomes, episodes)
+longhand hook install          # auto-ingest every future session
+longhand mcp install           # let Claude Desktop call Longhand as MCP tools
+longhand doctor                # verify everything is wired up
+```
+
+Those five commands take about two minutes the first time and zero maintenance after that.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Ingest every Claude Code session on your machine
-longhand ingest
-
-# See what's indexed
+# What's in the archive?
 longhand stats
-
-# List recent sessions
 longhand sessions
+longhand projects
 
-# Semantic search across everything
-longhand search "race condition fix"
+# Semantic search
+longhand search "race condition"
+longhand search "stripe webhook" --tool Edit
+longhand search "why did we" --type assistant_thinking
 
-# Search only tool calls
-longhand search "supabase migration" --type tool_call
+# Proactive recall (the fun one)
+longhand recall "that clerk type error I fixed a couple weeks ago"
+longhand recall "the python missing module bug last month"
 
-# Search only thinking blocks (the reasoning Claude didn't show you)
-longhand search "why did we choose" --type assistant_thinking
-
-# Show a session timeline
+# Session inspection
 longhand timeline <session-id-prefix>
-
-# Reconstruct a file at the end of a session
 longhand replay <session-id> /path/to/file.ts
-
-# Show the full before/after of a single edit
 longhand diff <event-id>
-
-# Show overall stats
-longhand stats
 ```
 
 Session IDs accept prefix matches — `longhand timeline cf86` is enough if only one session starts with that.
 
 ---
 
+## Recall Example
+
+```
+$ longhand recall "that stripe webhook I was fixing"
+
+╭─ Project matches ───────────────────────────────────────╮
+│ new-product (nextjs web app) · alias: 'stripe' · 1.52   │
+╰─────────────────────────────────────────────────────────╯
+
+Found it: new-product · 2 weeks ago · session a4ba29d1
+
+### What went wrong
+Type error: Property 'current_period_end' does not exist on type 'Subscription'.
+
+### How it was diagnosed
+```
+In Stripe's type definitions, current_period_end moved off the Subscription
+interface. It's still on the actual API payload but the types don't expose it.
+We need to cast through Record<string, unknown> to access it.
+```
+
+### The fix
+Edit on route.ts: 'const periodEnd = sub.current_period_end' → 'const periodEnd
+= (sub as Stripe.Subscription & Record<string, any>).current_period_end as number'
+
+Diff:
+- const periodEnd = sub.current_period_end
++ const periodEnd = (sub as Stripe.Subscription & Record<string, any>).current_period_end as number
+
+✓ Verified — a test passed after the fix.
+
+Other candidates (4)
+• 2 weeks ago: Type error: Module '"@/lib/utils"' has no exported member 'getInitials'.
+• 2 weeks ago: Type error: Property 'role' does not exist on type 'User'.
+```
+
+That's one local command. No API call. The fix came from a session file Claude Code wrote to your disk weeks ago and Longhand had been waiting with the answer the whole time.
+
+---
+
 ## MCP Integration (Claude Desktop)
 
-After installing with `pip install "longhand[mcp]"`, add Longhand to your Claude Desktop config:
+Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has thirteen tools:
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Core (searchable archive):**
+- `search` — semantic search across all events
+- `list_sessions` — recent sessions with filters
+- `get_session_timeline` — chronological view of a session
+- `replay_file` — reconstruct file state at a point in time
+- `get_file_history` — every edit to a file across all sessions
+- `get_stats` — storage statistics
+
+**Proactive memory:**
+- `recall` — fuzzy natural-language recall (use this first)
+- `match_project` — find projects by partial name / category / description
+- `find_episodes` — structured search for problem→fix pairs
+- `get_episode` — full detail for one episode including diff + file state
+- `list_projects` — browse inferred projects
+- `get_project_timeline` — session-level timeline for one project
+
+Once installed, you can ask Claude things like *"what did we decide about the auth middleware in last week's session?"* and it will actually search its own past work.
+
+---
+
+## Auto-Ingest
+
+`longhand hook install` adds a `SessionEnd` hook to `~/.claude/settings.json`:
 
 ```json
 {
-  "mcpServers": {
-    "longhand": {
-      "command": "python",
-      "args": ["-m", "longhand.mcp_server"]
-    }
+  "hooks": {
+    "SessionEnd": [
+      {"command": "longhand ingest-session --transcript \"$CLAUDE_TRANSCRIPT_PATH\""}
+    ]
   }
 }
 ```
 
-Restart Claude Desktop and it'll have access to six new tools:
-- `search` — semantic search across all your Claude Code history
-- `list_sessions` — recent indexed sessions
-- `get_session_timeline` — chronological view of a session
-- `replay_file` — reconstruct file state at a point in time
-- `get_file_history` — every edit ever made to a file
-- `get_stats` — storage statistics
-
-Now you can say things like *"what did we decide about the auth middleware in last week's session?"* and Claude will actually search its own past work.
+Every Claude Code session you have from that point forward will be automatically ingested and analyzed when it ends. Non-blocking. Runs in one to two seconds. You don't have to think about it again.
 
 ---
 
@@ -130,69 +200,78 @@ Now you can say things like *"what did we decide about the auth middleware in la
 
 ```
 longhand/
-├── parser.py       — JSONL → typed Events (no information loss)
-├── types.py        — Pydantic models: Event, Session, FileState
+├── parser.py              — JSONL → typed Events, nothing lost
+├── replay.py              — deterministic file state reconstruction
+├── types.py               — Pydantic models
 ├── storage/
-│   ├── sqlite_store.py  — structured data + full raw JSON preserved
-│   ├── vector_store.py  — ChromaDB semantic search
-│   └── store.py         — unified interface
-├── replay.py       — file state reconstruction engine
-├── cli.py          — Typer-based CLI with Rich output
-└── mcp_server.py   — Model Context Protocol server
+│   ├── migrations.py      — version-aware schema evolution
+│   ├── sqlite_store.py    — structured data + full raw JSON preserved
+│   ├── vector_store.py    — ChromaDB (events + sessions + projects collections)
+│   └── store.py           — unified ingest pipeline
+├── extractors/            — per-event (errors, file refs, topics)
+├── analysis/              — per-session (project, outcomes, episodes, embeddings)
+├── recall/                — per-query (time parsing, project match, narrative)
+├── cli.py                 — Typer CLI with Rich output
+├── mcp_server.py          — Model Context Protocol server (13 tools)
+└── setup_commands.py      — hook install, mcp install, doctor
 ```
 
-**Storage philosophy:** SQLite is the source of truth. ChromaDB is the search index. Every event's raw JSON is preserved in SQLite so nothing is ever lost — the vector store only holds what's needed for semantic retrieval.
+**Source of truth:** SQLite. Every event's raw JSON is preserved as a blob. ChromaDB is the search index — it only holds what's needed for semantic retrieval.
 
-**Replay philosophy:** File state is reconstructed by finding the most recent `Write` tool call that precedes the target point, then applying every `Edit` / `MultiEdit` in sequence up to the target. The `old_string` and `new_string` for every edit are captured verbatim from the session JSONL — no guessing, no diff inference, just literal application.
+**Analysis layer:** Runs at ingest time, not query time. Pre-computes projects, session outcomes, and episodes so recall queries are fast. Fully deterministic, no LLM.
 
----
-
-## How It Compares to Other AI Memory Systems
-
-| | Longhand | Summary-based (Mem0, MemPalace, LangMem) |
-|---|---|---|
-| **Source** | Raw Claude Code JSONL | AI-generated summaries |
-| **Tool calls captured** | Every one, verbatim | Whatever the summarizer decided to keep |
-| **File edits** | Full before/after diffs | Usually not captured |
-| **Thinking blocks** | Yes, verbatim | Usually discarded |
-| **File state replay** | Yes, deterministic | No |
-| **What gets "decided"** | Nothing — everything is stored | The AI decides what matters |
-| **Local-first** | Yes | Most are, some aren't |
-| **Lossless** | Yes | No |
-
-Summary-based memory asks: *"What should I remember about this conversation?"* and then throws the rest away.
-
-Longhand asks: *"What actually happened?"* and keeps the whole record.
-
-Both approaches work. They solve different problems. Summary memory is good for long-term personal assistants that need compressed context. Longhand is good for developers who need forensic access to their past work.
+**Recall pipeline:** `query → time parse → project match → episode search → rank → load artifacts → narrative`. Target latency under 200ms on a warm database.
 
 ---
 
-## Philosophy
+## Comparison
 
-I built a CRM, a compression system, a fraud investigation, and a number system for understanding people. All of them share one principle: **information doesn't disappear. It moves. You just have to find the move.**
+|                          | Longhand                   | Summary-based (Mem0, MemPalace, LangMem) |
+|--------------------------|----------------------------|------------------------------------------|
+| Source                   | Raw Claude Code JSONL      | AI-generated summaries                   |
+| Tool calls captured      | Every one, verbatim        | Whatever the summarizer kept             |
+| File edits               | Full before/after diffs    | Usually not captured                     |
+| Thinking blocks          | First-class events         | Usually discarded                        |
+| File state replay        | Deterministic              | Not possible                             |
+| Problem→fix extraction   | Rules-based, at ingest     | Depends on summarizer                    |
+| Fuzzy recall             | Yes, with artifacts        | Text search over summaries               |
+| What gets "decided"      | Nothing — store everything | The AI decides what matters              |
+| Local-first              | Yes                        | Most                                     |
+| Lossless                 | Yes                        | No                                       |
+| LLM calls to function    | Zero                       | Varies                                   |
 
-Longhand is that principle applied to AI memory. The information Claude produces in your sessions doesn't need to be summarized to be useful. It needs to be findable. That's a different problem with a different solution.
-
-The powersports family cooked the books by migrating to a new CRM every year and letting the old data become unreadable. Summary-based memory is the same shape: make the old data unreadable by design, then tell yourself the summary is the truth. I don't think that's the right approach for a tool you'll want to trust in five years when something breaks and you need to know why.
-
-Store everything. Make it findable. Trust the raw record.
+Summary memory and Longhand solve different problems. Summary memory is good for long-term personal assistants that need compressed context across many conversations. Longhand is good for developers who need forensic access to their past Claude Code work — the kind of access where you need the exact diff, not a paraphrase.
 
 ---
 
-## Who Built This
+## Stats
 
-Nate Nelson at **BlackSheep OI** in Idaho Falls. No computer science degree. Fourteen industries of business experience. Founder of a company working on lossless compression at the information-theoretic level — Longhand is one of the first public applications of that thesis.
+Tested end-to-end on a real 721-file Claude Code history:
+- 102 unique sessions
+- 51,000 events
+- 18,000 tool calls
+- 3,000 file edits
+- 224 thinking blocks
+- 34 projects inferred automatically
+- 74 problem→fix episodes extracted
+- Vector search: ~126ms on 47k indexed events
+- SQL queries: <30ms
+- Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
 
-**Non Gregis. Not of the herd.**
+45/45 unit tests passing. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
 
-If you need systems like this built — forensic tools, data integrity audits, lossless memory layers, or anything where the official answer doesn't match reality — I'm available for hire.
+---
 
-- GitHub: [Wynelson94](https://github.com/Wynelson94)
-- Company: [BlackSheep OI](https://blacksheephq.ai)
+## Author
+
+Nate Nelson. Idaho Falls. No computer science degree. Fourteen industries of building software by describing what I see and letting the translation happen.
+
+I'm available for hire — forensic tools, data integrity audits, AI memory layers, anything where the official answer doesn't match reality.
+
+GitHub: [Wynelson94](https://github.com/Wynelson94)
 
 ---
 
 ## License
 
-MIT. Do whatever you want with it. If it saves your ass, let me know.
+MIT. Do whatever you want with it.

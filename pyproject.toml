@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longhand"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lossless local memory for Claude Code sessions. The full, unabbreviated version."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Nate Nelson", email = "nate@blacksheephq.ai" },
+    { name = "Nate Nelson" },
 ]
 requires-python = ">=3.10"
-keywords = ["claude", "claude-code", "ai-memory", "lossless", "forensic", "search", "blacksheep"]
+keywords = ["claude", "claude-code", "ai-memory", "lossless", "forensic", "search", "recall"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
