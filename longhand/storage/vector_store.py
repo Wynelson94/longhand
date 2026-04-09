@@ -43,6 +43,16 @@ class VectorStore:
             metadata={"description": "All session events, embedded for semantic search"},
         )
 
+        self.sessions_collection = self.client.get_or_create_collection(
+            name="sessions",
+            metadata={"description": "One embedding per session for fuzzy recall (v0.2)"},
+        )
+
+        self.projects_collection = self.client.get_or_create_collection(
+            name="projects",
+            metadata={"description": "One embedding per project for fuzzy project matching"},
+        )
+
     def add_events(self, events: list[Event]) -> int:
         """Add a batch of events to the vector index.
 
@@ -156,10 +166,127 @@ class VectorStore:
     def count(self) -> int:
         return self.events_collection.count()
 
-    def reset(self) -> None:
-        """Delete and recreate the events collection."""
+    # ─── Sessions collection (v0.2 proactive memory) ───────────────────────
+
+    def add_session_embedding(
+        self,
+        session_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert one embedding per session for fuzzy recall."""
+        if not text or not text.strip():
+            return
+        self.sessions_collection.upsert(
+            ids=[session_id],
+            documents=[text[:MAX_EMBED_CHARS]],
+            metadatas=[metadata],
+        )
+
+    def search_sessions(
+        self,
+        query: str,
+        n_results: int = 10,
+        project_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fuzzy session search with optional project/time filters."""
+        where_clauses: list[dict[str, Any]] = []
+        if project_id:
+            where_clauses.append({"project_id": project_id})
+        if since:
+            where_clauses.append({"started_at": {"$gte": since}})
+        if until:
+            where_clauses.append({"started_at": {"$lte": until}})
+
+        where: dict[str, Any] | None = None
+        if len(where_clauses) == 1:
+            where = where_clauses[0]
+        elif len(where_clauses) > 1:
+            where = {"$and": where_clauses}
+
         try:
-            self.client.delete_collection(name="events")
+            results = self.sessions_collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=where,
+            )
         except Exception:
-            pass
+            return []
+
+        ids = results.get("ids", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        hits: list[dict[str, Any]] = []
+        for i, sid in enumerate(ids):
+            hits.append({
+                "session_id": sid,
+                "document": documents[i] if i < len(documents) else "",
+                "metadata": metadatas[i] if i < len(metadatas) else {},
+                "distance": distances[i] if i < len(distances) else 1.0,
+            })
+        return hits
+
+    # ─── Projects collection ───────────────────────────────────────────────
+
+    def add_project_embedding(
+        self,
+        project_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert one embedding per project (keyword blob + category + name)."""
+        if not text or not text.strip():
+            return
+        self.projects_collection.upsert(
+            ids=[project_id],
+            documents=[text[:MAX_EMBED_CHARS]],
+            metadatas=[metadata],
+        )
+
+    def search_projects(
+        self,
+        query: str,
+        n_results: int = 10,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic search over project descriptions."""
+        where = {"category": category} if category else None
+
+        try:
+            results = self.projects_collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=where,
+            )
+        except Exception:
+            return []
+
+        ids = results.get("ids", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        hits: list[dict[str, Any]] = []
+        for i, pid in enumerate(ids):
+            hits.append({
+                "project_id": pid,
+                "document": documents[i] if i < len(documents) else "",
+                "metadata": metadatas[i] if i < len(metadatas) else {},
+                "distance": distances[i] if i < len(distances) else 1.0,
+            })
+        return hits
+
+    def reset(self) -> None:
+        """Delete and recreate all collections."""
+        for name in ("events", "sessions", "projects"):
+            try:
+                self.client.delete_collection(name=name)
+            except Exception:
+                pass
         self.events_collection = self.client.get_or_create_collection(name="events")
+        self.sessions_collection = self.client.get_or_create_collection(name="sessions")
+        self.projects_collection = self.client.get_or_create_collection(name="projects")

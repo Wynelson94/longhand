@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from longhand.storage.migrations import apply_migrations
 from longhand.types import Event, EventType, FileOperation, Session
 
 
@@ -92,6 +93,7 @@ class SQLiteStore:
     def _init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            apply_migrations(conn)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -172,6 +174,8 @@ class SQLiteStore:
                     e.old_content,
                     e.new_content,
                     json.dumps(e.raw),
+                    int(e.error_detected),
+                    e.error_snippet,
                 )
                 for e in events
             ]
@@ -181,12 +185,40 @@ class SQLiteStore:
                     event_id, session_id, parent_event_id, event_type, sequence,
                     timestamp, cwd, git_branch, model, content, is_sidechain,
                     tool_name, tool_use_id, tool_input_json, tool_output, tool_success,
-                    file_path, file_operation, old_content, new_content, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    file_path, file_operation, old_content, new_content, raw_json,
+                    error_detected, error_snippet
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
         return len(rows)
+
+    def build_tool_pairs_from_events(self, events: list[Event]) -> list[dict[str, Any]]:
+        """Construct tool_pair rows from a list of parsed events.
+
+        Links tool_use_id on TOOL_CALL events to matching tool_use_id on TOOL_RESULT events.
+        """
+        calls: dict[str, Event] = {}
+        results: dict[str, Event] = {}
+        for e in events:
+            etype = e.event_type if isinstance(e.event_type, str) else e.event_type.value
+            if etype == "tool_call" and e.tool_use_id:
+                calls[e.tool_use_id] = e
+            elif etype == "tool_result" and e.tool_use_id:
+                results[e.tool_use_id] = e
+
+        pairs: list[dict[str, Any]] = []
+        for tool_use_id, call in calls.items():
+            result = results.get(tool_use_id)
+            pairs.append({
+                "tool_use_id": tool_use_id,
+                "call_event_id": call.event_id,
+                "result_event_id": result.event_id if result else None,
+                "success": result.tool_success if result else None,
+                "error_detected": bool(result.error_detected) if result else False,
+                "error_snippet": result.error_snippet if result else None,
+            })
+        return pairs
 
     def log_ingestion(self, transcript_path: str, session_id: str, file_size: int, event_count: int) -> None:
         with self.connect() as conn:
@@ -220,16 +252,47 @@ class SQLiteStore:
     def list_sessions(
         self,
         project_path: str | None = None,
+        project_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        outcome: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        """List sessions with optional filters.
+
+        - project_path: substring match on the cwd path
+        - project_id: exact match on the inferred project
+        - since / until: ISO timestamps filtering by started_at
+        - outcome: filter via session_outcomes join (e.g. 'fixed', 'stuck')
+        """
         with self.connect() as conn:
-            query = "SELECT * FROM sessions"
+            conditions: list[str] = []
             params: list[Any] = []
+
             if project_path:
-                query += " WHERE project_path LIKE ?"
+                conditions.append("s.project_path LIKE ?")
                 params.append(f"%{project_path}%")
-            query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+            if project_id:
+                conditions.append("s.project_id = ?")
+                params.append(project_id)
+            if since:
+                conditions.append("s.started_at >= ?")
+                params.append(since)
+            if until:
+                conditions.append("s.started_at <= ?")
+                params.append(until)
+
+            base = "SELECT s.* FROM sessions s"
+            if outcome:
+                base += " INNER JOIN session_outcomes o ON o.session_id = s.session_id"
+                conditions.append("o.outcome = ?")
+                params.append(outcome)
+
+            query = base
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY s.started_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
@@ -240,6 +303,9 @@ class SQLiteStore:
         event_type: EventType | str | None = None,
         tool_name: str | None = None,
         file_path: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        has_error: bool | None = None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -257,6 +323,15 @@ class SQLiteStore:
             if file_path:
                 conditions.append("file_path LIKE ?")
                 params.append(f"%{file_path}%")
+            if since:
+                conditions.append("timestamp >= ?")
+                params.append(since)
+            if until:
+                conditions.append("timestamp <= ?")
+                params.append(until)
+            if has_error is not None:
+                conditions.append("COALESCE(error_detected, 0) = ?")
+                params.append(1 if has_error else 0)
 
             query = "SELECT * FROM events"
             if conditions:
@@ -303,4 +378,281 @@ class SQLiteStore:
                     "SELECT COUNT(*) FROM events WHERE event_type = 'tool_call' AND file_operation IN ('edit', 'write', 'multi_edit', 'notebook_edit')"
                 ).fetchone()[0],
             }
+            # New proactive memory stats
+            try:
+                stats["projects"] = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+                stats["episodes"] = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+                stats["resolved_episodes"] = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE status = 'resolved'"
+                ).fetchone()[0]
+                stats["outcomes"] = conn.execute("SELECT COUNT(*) FROM session_outcomes").fetchone()[0]
+            except sqlite3.OperationalError:
+                pass
             return stats
+
+    # ─── Projects ──────────────────────────────────────────────────────────
+
+    def upsert_project(self, project: dict[str, Any]) -> None:
+        """Insert or update a project row. Merges keywords/aliases on conflict."""
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT keywords_json, aliases_json, session_count, total_edits, first_seen "
+                "FROM projects WHERE project_id = ?",
+                (project["project_id"],),
+            ).fetchone()
+
+            if existing:
+                existing_keywords = set(json.loads(existing["keywords_json"]))
+                existing_aliases = set(json.loads(existing["aliases_json"]))
+                new_keywords = set(project.get("keywords", []))
+                new_aliases = set(project.get("aliases", []))
+                merged_keywords = sorted(existing_keywords | new_keywords)
+                merged_aliases = sorted(existing_aliases | new_aliases)
+
+                conn.execute(
+                    """
+                    UPDATE projects
+                    SET display_name = ?, aliases_json = ?, keywords_json = ?,
+                        languages_json = ?, category = ?, last_seen = ?,
+                        session_count = session_count + 1,
+                        total_edits = total_edits + ?
+                    WHERE project_id = ?
+                    """,
+                    (
+                        project.get("display_name"),
+                        json.dumps(merged_aliases),
+                        json.dumps(merged_keywords),
+                        json.dumps(project.get("languages", [])),
+                        project.get("category"),
+                        project.get("last_seen"),
+                        project.get("new_edits", 0),
+                        project["project_id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO projects (
+                        project_id, canonical_path, display_name, aliases_json,
+                        keywords_json, languages_json, category,
+                        first_seen, last_seen, session_count, total_edits
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project["project_id"],
+                        project["canonical_path"],
+                        project["display_name"],
+                        json.dumps(project.get("aliases", [])),
+                        json.dumps(project.get("keywords", [])),
+                        json.dumps(project.get("languages", [])),
+                        project.get("category"),
+                        project.get("first_seen"),
+                        project.get("last_seen"),
+                        1,
+                        project.get("new_edits", 0),
+                    ),
+                )
+
+    def get_project(self, project_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_projects(
+        self,
+        keyword: str | None = None,
+        category: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conditions: list[str] = []
+            params: list[Any] = []
+            if category:
+                conditions.append("category = ?")
+                params.append(category)
+            if keyword:
+                conditions.append(
+                    "(display_name LIKE ? OR keywords_json LIKE ? OR aliases_json LIKE ?)"
+                )
+                like = f"%{keyword}%"
+                params.extend([like, like, like])
+
+            query = "SELECT * FROM projects"
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY last_seen DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+
+    def attach_session_to_project(self, session_id: str, project_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET project_id = ? WHERE session_id = ?",
+                (project_id, session_id),
+            )
+
+    # ─── Session outcomes ──────────────────────────────────────────────────
+
+    def upsert_outcome(self, outcome: dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO session_outcomes (
+                    session_id, outcome, confidence, error_count, fix_count,
+                    test_pass_count, test_fail_count,
+                    first_error_event_id, resolution_event_id,
+                    summary, topics_json, computed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome["session_id"],
+                    outcome["outcome"],
+                    outcome.get("confidence", 0.5),
+                    outcome.get("error_count", 0),
+                    outcome.get("fix_count", 0),
+                    outcome.get("test_pass_count", 0),
+                    outcome.get("test_fail_count", 0),
+                    outcome.get("first_error_event_id"),
+                    outcome.get("resolution_event_id"),
+                    outcome.get("summary", ""),
+                    json.dumps(outcome.get("topics", [])),
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def get_outcome(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM session_outcomes WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    # ─── Episodes ──────────────────────────────────────────────────────────
+
+    def insert_episodes(self, episodes: list[dict[str, Any]]) -> int:
+        if not episodes:
+            return 0
+        with self.connect() as conn:
+            rows = [
+                (
+                    ep["episode_id"],
+                    ep["session_id"],
+                    ep.get("project_id"),
+                    ep["started_at"],
+                    ep["ended_at"],
+                    ep.get("problem_event_id"),
+                    ep.get("diagnosis_event_id"),
+                    ep.get("fix_event_id"),
+                    ep.get("verification_event_id"),
+                    ep.get("problem_description", ""),
+                    ep.get("diagnosis_summary", ""),
+                    ep.get("fix_summary", ""),
+                    json.dumps(ep.get("touched_files", [])),
+                    json.dumps(ep.get("tags", [])),
+                    ep.get("confidence", 0.5),
+                    ep.get("status", "unresolved"),
+                )
+                for ep in episodes
+            ]
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO episodes (
+                    episode_id, session_id, project_id, started_at, ended_at,
+                    problem_event_id, diagnosis_event_id, fix_event_id, verification_event_id,
+                    problem_description, diagnosis_summary, fix_summary,
+                    touched_files_json, tags_json, confidence, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def get_episode(self, episode_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def query_episodes(
+        self,
+        project_ids: list[str] | None = None,
+        session_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        status: str | None = None,
+        keyword: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conditions: list[str] = []
+            params: list[Any] = []
+
+            if project_ids:
+                placeholders = ",".join(["?"] * len(project_ids))
+                conditions.append(f"project_id IN ({placeholders})")
+                params.extend(project_ids)
+            if session_id:
+                conditions.append("session_id = ?")
+                params.append(session_id)
+            if since:
+                conditions.append("ended_at >= ?")
+                params.append(since)
+            if until:
+                conditions.append("ended_at <= ?")
+                params.append(until)
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+            if keyword:
+                conditions.append(
+                    "(problem_description LIKE ? OR diagnosis_summary LIKE ? OR fix_summary LIKE ?)"
+                )
+                like = f"%{keyword}%"
+                params.extend([like, like, like])
+
+            query = "SELECT * FROM episodes"
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY ended_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+
+    # ─── Tool pairs ────────────────────────────────────────────────────────
+
+    def upsert_tool_pairs(self, pairs: list[dict[str, Any]]) -> int:
+        if not pairs:
+            return 0
+        with self.connect() as conn:
+            rows = [
+                (
+                    p["tool_use_id"],
+                    p["call_event_id"],
+                    p.get("result_event_id"),
+                    int(p["success"]) if p.get("success") is not None else None,
+                    int(p.get("error_detected", False)),
+                    p.get("error_snippet"),
+                )
+                for p in pairs
+            ]
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO tool_pairs (
+                    tool_use_id, call_event_id, result_event_id, success,
+                    error_detected, error_snippet
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def get_tool_pair(self, tool_use_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tool_pairs WHERE tool_use_id = ?", (tool_use_id,)
+            ).fetchone()
+            return dict(row) if row else None

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from longhand.extractors.errors import detect_error
 from longhand.types import Event, EventType, FileOperation, Session
 
 
@@ -201,16 +202,25 @@ class JSONLParser:
             block_type = block.get("type")
 
             if block_type == "tool_result":
+                result_content = _stringify_tool_result(block.get("content"))
+                error_signal = detect_error(result_content)
+                success_flag = (
+                    tool_use_result.get("success") if isinstance(tool_use_result, dict) else None
+                )
+                # If the harness says it failed, mark as error even if regex didn't fire
+                has_error = bool(error_signal) or (success_flag is False)
                 events.append(Event(
                     event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
                     event_type=EventType.TOOL_RESULT,
                     sequence=base_sequence + offset,
-                    content=_stringify_tool_result(block.get("content")),
+                    content=result_content,
                     tool_use_id=block.get("tool_use_id"),
-                    tool_output=_stringify_tool_result(block.get("content")),
-                    tool_success=(
-                        tool_use_result.get("success") if isinstance(tool_use_result, dict) else None
-                    ),
+                    tool_output=result_content,
+                    tool_success=success_flag,
+                    error_detected=has_error,
+                    error_snippet=error_signal.snippet if error_signal else None,
+                    error_category=error_signal.category if error_signal else None,
+                    error_severity=error_signal.severity if error_signal else None,
                     **common,
                 ))
             else:

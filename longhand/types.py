@@ -72,6 +72,12 @@ class Event(BaseModel):
     old_content: str | None = None
     new_content: str | None = None
 
+    # Error detection (populated on tool_result events during parse)
+    error_detected: bool = False
+    error_snippet: str | None = None
+    error_category: str | None = None
+    error_severity: str | None = None
+
     model_config = ConfigDict(use_enum_values=True)
 
 

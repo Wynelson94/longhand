@@ -2,13 +2,16 @@
 Longhand CLI.
 
 Commands:
-    longhand ingest [path]       — ingest Claude Code session files
-    longhand sessions            — list ingested sessions
-    longhand search <query>      — semantic search across events
-    longhand timeline <id>       — chronological view of a session
-    longhand replay <id> <file>  — reconstruct a file at a point in a session
-    longhand diff <event_id>     — show the before/after of a single edit
-    longhand stats               — overall storage stats
+    longhand ingest [path]          — ingest Claude Code session files
+    longhand sessions               — list ingested sessions
+    longhand search <query>         — semantic search across events
+    longhand timeline <id>          — chronological view of a session
+    longhand replay <id> <file>     — reconstruct a file at a point in a session
+    longhand diff <event_id>        — show the before/after of a single edit
+    longhand stats                  — overall storage stats
+    longhand recall "<question>"    — proactive memory: fuzzy natural-language recall
+    longhand analyze                — re-run analysis on existing sessions
+    longhand projects               — list inferred projects
 """
 
 from __future__ import annotations
@@ -19,10 +22,21 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+
+from longhand.recall import recall as recall_pipeline
+from longhand.setup_commands import (
+    doctor as _doctor,
+    hook_install as _hook_install,
+    hook_uninstall as _hook_uninstall,
+    ingest_single_session as _ingest_single,
+    mcp_install as _mcp_install,
+    mcp_uninstall as _mcp_uninstall,
+)
 
 from longhand.parser import JSONLParser, discover_sessions
 from longhand.replay import ReplayEngine
@@ -447,9 +461,222 @@ def stats(
     table.add_row("Thinking blocks", f"{s['thinking_blocks']:,}")
     table.add_row("File edits", f"{s['file_edits']:,}")
     table.add_row("Vectors indexed", f"{s['vectors_indexed']:,}")
+    if "projects" in s:
+        table.add_row("Projects", f"{s['projects']:,}")
+    if "episodes" in s:
+        table.add_row("Episodes", f"{s['episodes']:,}")
+        resolved = s.get("resolved_episodes", 0)
+        table.add_row("Resolved episodes", f"{resolved:,}")
     table.add_row("Data directory", str(store.data_dir))
 
     console.print(table)
+
+
+# -----------------------------------------------------------------------------
+# RECALL (proactive memory)
+# -----------------------------------------------------------------------------
+
+@app.command()
+def recall(
+    query: str = typer.Argument(..., help="Fuzzy natural-language question about past work"),
+    max_episodes: int = typer.Option(5, "--max", "-n"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    show_raw: bool = typer.Option(False, "--raw", help="Also print raw episode data"),
+):
+    """Proactive memory: answer a fuzzy question about past Claude Code work."""
+    store = _get_store(data_dir)
+    result = recall_pipeline(store, query, max_episodes=max_episodes)
+
+    # Show project matches
+    if result.project_matches:
+        pm_lines = []
+        for pm in result.project_matches[:3]:
+            reasons = ", ".join(pm.reasons[:3])
+            pm_lines.append(f"[cyan]{pm.display_name}[/cyan] [dim]({pm.category or '—'}) · {reasons} · {pm.score:.2f}[/dim]")
+        console.print(Panel("\n".join(pm_lines), title="Project matches", border_style="cyan"))
+
+    # Show time window
+    since, until = result.time_window
+    if since or until:
+        since_str = since.strftime("%Y-%m-%d") if since else "—"
+        until_str = until.strftime("%Y-%m-%d") if until else "now"
+        console.print(f"[dim]Time window:[/dim] {since_str} → {until_str}\n")
+
+    # Narrative
+    console.print(Markdown(result.narrative))
+
+    # Raw
+    if show_raw and result.episodes:
+        console.print()
+        console.print(Panel.fit(f"[bold]{len(result.episodes)} episode(s)[/bold]", border_style="dim"))
+        for ep in result.episodes:
+            console.print(f"  [cyan]{ep['episode_id']}[/cyan]  [dim]{ep.get('ended_at', '')[:16]}[/dim]  confidence={ep.get('confidence', 0):.2f}  status={ep.get('status', '?')}")
+
+
+# -----------------------------------------------------------------------------
+# ANALYZE (backfill analysis on already-ingested sessions)
+# -----------------------------------------------------------------------------
+
+@app.command()
+def analyze(
+    all_sessions: bool = typer.Option(False, "--all", help="Re-analyze every ingested session"),
+    session: Optional[str] = typer.Option(None, "--session", help="Re-analyze a single session (prefix match)"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Re-run analysis (projects, outcomes, episodes) on already-ingested sessions."""
+    store = _get_store(data_dir)
+
+    if not all_sessions and not session:
+        console.print("[yellow]Specify --all or --session <id>[/yellow]")
+        raise typer.Exit(1)
+
+    sessions = store.sqlite.list_sessions(limit=10000)
+    if session:
+        sessions = [s for s in sessions if s["session_id"].startswith(session)]
+
+    if not sessions:
+        console.print("[yellow]No matching sessions.[/yellow]")
+        return
+
+    console.print(f"[cyan]Analyzing {len(sessions)} session(s)...[/cyan]")
+    analyzed = 0
+    errors = 0
+    total_episodes = 0
+
+    for sess_row in sessions:
+        try:
+            # Re-parse the transcript file for full event objects
+            transcript_path = sess_row["transcript_path"]
+            if not Path(transcript_path).exists():
+                errors += 1
+                continue
+            parser = JSONLParser(transcript_path)
+            events = list(parser.parse_events())
+            if not events:
+                continue
+            session_obj = parser.build_session(events)
+            result = store.analyze_session(session_obj, events)
+            total_episodes += result.get("episodes", 0)
+            analyzed += 1
+            if analyzed % 20 == 0:
+                console.print(f"  [dim]{analyzed}/{len(sessions)}...[/dim]")
+        except Exception as e:
+            errors += 1
+            console.print(f"  [red]✗[/red] {sess_row['session_id'][:8]}: {e}")
+
+    console.print()
+    console.print(
+        f"[bold]Analyzed {analyzed}[/bold] sessions, "
+        f"[bold]{total_episodes}[/bold] episodes "
+        f"([dim]{errors} errors[/dim])"
+    )
+
+
+# -----------------------------------------------------------------------------
+# PROJECTS
+# -----------------------------------------------------------------------------
+
+@app.command()
+def projects(
+    keyword: Optional[str] = typer.Option(None, "--keyword", "-k"),
+    category: Optional[str] = typer.Option(None, "--category", "-c"),
+    limit: int = typer.Option(50, "--limit"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """List inferred projects."""
+    store = _get_store(data_dir)
+    rows = store.sqlite.list_projects(keyword=keyword, category=category, limit=limit)
+
+    if not rows:
+        console.print("[yellow]No projects found. Run `longhand analyze --all` first.[/yellow]")
+        return
+
+    table = Table(title=f"Longhand Projects ({len(rows)})", show_lines=False)
+    table.add_column("Project", style="cyan", no_wrap=True)
+    table.add_column("Category", style="magenta")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Edits", justify="right")
+    table.add_column("Last seen", style="dim")
+    table.add_column("Path", style="green", overflow="fold")
+
+    for row in rows:
+        table.add_row(
+            row["display_name"][:30],
+            row.get("category") or "—",
+            str(row["session_count"]),
+            str(row["total_edits"]),
+            _format_timestamp(row["last_seen"]),
+            row["canonical_path"][-50:],
+        )
+
+    console.print(table)
+
+
+# -----------------------------------------------------------------------------
+# INSTALL / AUTO-INGEST / DOCTOR
+# -----------------------------------------------------------------------------
+
+hook_app = typer.Typer(name="hook", help="Claude Code SessionEnd hook (auto-ingest)")
+mcp_app = typer.Typer(name="mcp", help="Claude Desktop MCP server integration")
+
+app.add_typer(hook_app, name="hook")
+app.add_typer(mcp_app, name="mcp")
+
+
+@hook_app.command("install")
+def hook_install_cmd():
+    """Install the SessionEnd hook into ~/.claude/settings.json."""
+    _hook_install()
+
+
+@hook_app.command("uninstall")
+def hook_uninstall_cmd():
+    """Remove the SessionEnd hook."""
+    _hook_uninstall()
+
+
+@mcp_app.command("install")
+def mcp_install_cmd():
+    """Install Longhand's MCP server into Claude Desktop."""
+    _mcp_install()
+
+
+@mcp_app.command("uninstall")
+def mcp_uninstall_cmd():
+    """Remove Longhand's MCP server from Claude Desktop."""
+    _mcp_uninstall()
+
+
+@mcp_app.command("serve")
+def mcp_serve_cmd():
+    """Run the MCP server (stdio). Used by Claude Desktop."""
+    import asyncio
+    from longhand.mcp_server import main as mcp_main
+    asyncio.run(mcp_main())
+
+
+# Short alias so `longhand mcp-server` also works (matches install command)
+@app.command("mcp-server")
+def mcp_server_cmd():
+    """Run the MCP server (stdio). Used by Claude Desktop."""
+    import asyncio
+    from longhand.mcp_server import main as mcp_main
+    asyncio.run(mcp_main())
+
+
+@app.command("ingest-session")
+def ingest_session_cmd(
+    transcript: str = typer.Option(..., "--transcript", "-t", help="Path to a single session JSONL"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Ingest a single session file (called by the SessionEnd hook)."""
+    _ingest_single(transcript, data_dir)
+
+
+@app.command()
+def doctor():
+    """Diagnose Longhand installation and data."""
+    _doctor()
 
 
 if __name__ == "__main__":
