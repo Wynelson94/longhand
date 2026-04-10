@@ -613,6 +613,585 @@ def projects(
 
 
 # -----------------------------------------------------------------------------
+# EXPORT — episode or session as standalone markdown
+# -----------------------------------------------------------------------------
+
+@app.command()
+def export(
+    target: str = typer.Argument(
+        ...,
+        help="Episode ID (ep_*), session ID (prefix), or shortcut: latest, latest-fix",
+    ),
+    output: Optional[str] = typer.Option(None, "--out", "-o", help="Write to file instead of stdout"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Export an episode or session as standalone markdown."""
+    import json as _json
+
+    store = _get_store(data_dir)
+
+    # Resolve shortcut targets
+    if target in ("latest", "latest-fix"):
+        episodes = store.sqlite.query_episodes(
+            status="resolved" if target == "latest-fix" else None,
+            limit=1,
+        )
+        if not episodes:
+            console.print("[red]No episodes found.[/red]")
+            raise typer.Exit(1)
+        target = episodes[0]["episode_id"]
+
+    # Episode export
+    if target.startswith("ep_"):
+        ep = store.sqlite.get_episode(target)
+        if not ep:
+            console.print(f"[red]No episode: {target}[/red]")
+            raise typer.Exit(1)
+
+        md = _episode_to_markdown(store, ep)
+
+        if output:
+            Path(output).write_text(md)
+            console.print(f"[green]✓[/green] Exported to {output}")
+        else:
+            console.print(Markdown(md))
+        return
+
+    # Session export — prefix match
+    sessions_rows = store.sqlite.list_sessions(limit=1000)
+    full_id = None
+    for row in sessions_rows:
+        if row["session_id"].startswith(target):
+            full_id = row["session_id"]
+            break
+
+    if not full_id:
+        console.print(f"[red]No episode or session matching: {target}[/red]")
+        raise typer.Exit(1)
+
+    md = _session_to_markdown(store, full_id)
+
+    if output:
+        Path(output).write_text(md)
+        console.print(f"[green]✓[/green] Exported to {output}")
+    else:
+        console.print(Markdown(md))
+
+
+def _episode_to_markdown(store, ep: dict) -> str:
+    """Render an episode as a self-contained markdown document."""
+    import json as _json
+
+    lines: list[str] = []
+
+    # Header
+    lines.append(f"# Episode: {ep['episode_id']}")
+    lines.append("")
+
+    # Project
+    if ep.get("project_id"):
+        proj = store.sqlite.get_project(ep["project_id"])
+        if proj:
+            lines.append(f"**Project:** {proj['display_name']} ({proj.get('category') or 'uncategorized'})")
+            lines.append(f"**Path:** `{proj['canonical_path']}`")
+
+    lines.append(f"**Session:** `{ep['session_id'][:8]}`")
+    lines.append(f"**Started:** {ep.get('started_at', '')}")
+    lines.append(f"**Ended:** {ep.get('ended_at', '')}")
+    lines.append(f"**Status:** {ep.get('status', 'unknown')}")
+    lines.append(f"**Confidence:** {ep.get('confidence', 0):.2f}")
+    lines.append("")
+
+    # Problem
+    if ep.get("problem_description"):
+        lines.append("## What went wrong")
+        lines.append("")
+        lines.append(ep["problem_description"].strip())
+        lines.append("")
+
+    # Diagnosis
+    if ep.get("diagnosis_summary"):
+        lines.append("## Diagnosis (verbatim thinking block)")
+        lines.append("")
+        lines.append("```")
+        lines.append(ep["diagnosis_summary"].strip())
+        lines.append("```")
+        lines.append("")
+
+    # Fix
+    fix_id = ep.get("fix_event_id")
+    if fix_id:
+        fix_event = store.sqlite.get_event(fix_id)
+        if fix_event:
+            lines.append("## The fix")
+            lines.append("")
+            lines.append(f"**File:** `{fix_event.get('file_path') or '?'}`")
+            lines.append(f"**Tool:** `{fix_event.get('tool_name') or '?'}`")
+            lines.append("")
+            lines.append("```diff")
+            old_lines = (fix_event.get("old_content") or "").splitlines() or [""]
+            new_lines = (fix_event.get("new_content") or "").splitlines() or [""]
+            for line in old_lines:
+                lines.append(f"- {line}")
+            for line in new_lines:
+                lines.append(f"+ {line}")
+            lines.append("```")
+            lines.append("")
+
+            # Reconstructed file state
+            from longhand.replay import ReplayEngine
+            engine = ReplayEngine(store.sqlite)
+            try:
+                state = engine.file_state_at(
+                    file_path=fix_event["file_path"],
+                    session_id=ep["session_id"],
+                    at_event_id=fix_id,
+                )
+                if state and state.content:
+                    lines.append("## File state after the fix")
+                    lines.append("")
+                    ext = Path(fix_event["file_path"]).suffix.lstrip(".") or "text"
+                    lines.append(f"```{ext}")
+                    lines.append(state.content)
+                    lines.append("```")
+                    lines.append("")
+            except Exception:
+                pass
+
+    # Verification
+    if ep.get("verification_event_id"):
+        lines.append("## Verification")
+        lines.append("")
+        lines.append("✓ A test or command succeeded after the fix.")
+        lines.append("")
+
+    # Touched files
+    if ep.get("touched_files_json"):
+        try:
+            touched = _json.loads(ep["touched_files_json"])
+            if touched:
+                lines.append("## Touched files")
+                lines.append("")
+                for f in touched:
+                    lines.append(f"- `{f}`")
+                lines.append("")
+        except Exception:
+            pass
+
+    lines.append("---")
+    lines.append("*Exported from Longhand*")
+
+    return "\n".join(lines)
+
+
+def _session_to_markdown(store, session_id: str) -> str:
+    """Render a session timeline as markdown."""
+    import json as _json
+
+    lines: list[str] = []
+    session = store.sqlite.get_session(session_id)
+    if not session:
+        return f"# Session not found: {session_id}"
+
+    lines.append(f"# Session: {session_id[:8]}")
+    lines.append("")
+
+    if session.get("project_id"):
+        proj = store.sqlite.get_project(session["project_id"])
+        if proj:
+            lines.append(f"**Project:** {proj['display_name']}")
+            lines.append(f"**Path:** `{proj['canonical_path']}`")
+
+    lines.append(f"**Started:** {session.get('started_at', '')}")
+    lines.append(f"**Ended:** {session.get('ended_at', '')}")
+    lines.append(f"**Events:** {session.get('event_count', 0)}")
+
+    outcome = store.sqlite.get_outcome(session_id)
+    if outcome:
+        lines.append(f"**Outcome:** {outcome['outcome']} ({outcome.get('confidence', 0):.2f})")
+    lines.append("")
+
+    # Episodes
+    eps = store.sqlite.query_episodes(session_id=session_id, limit=50)
+    if eps:
+        lines.append(f"## Episodes ({len(eps)})")
+        lines.append("")
+        for ep in eps:
+            status = ep.get("status", "?")
+            problem = (ep.get("problem_description") or "")[:100]
+            lines.append(f"- **{status}** — {problem}")
+        lines.append("")
+
+    # Timeline (visible events only)
+    all_events = store.sqlite.get_events(session_id=session_id, limit=10000)
+    visible = [e for e in all_events if e["event_type"] in ("user_message", "assistant_text", "tool_call", "tool_result")]
+
+    lines.append(f"## Timeline ({len(visible)} events)")
+    lines.append("")
+
+    for e in visible:
+        etype = e["event_type"]
+        ts = e["timestamp"][:16] if e.get("timestamp") else ""
+
+        if etype == "user_message":
+            content = (e.get("content") or "").strip()[:300]
+            lines.append(f"**{ts}** USER")
+            lines.append("")
+            lines.append(f"> {content}")
+            lines.append("")
+        elif etype == "assistant_text":
+            content = (e.get("content") or "").strip()[:300]
+            lines.append(f"**{ts}** CLAUDE")
+            lines.append("")
+            lines.append(content)
+            lines.append("")
+        elif etype == "tool_call":
+            tool = e.get("tool_name") or "?"
+            file_path = e.get("file_path") or ""
+            extra = f" `{Path(file_path).name}`" if file_path else ""
+            lines.append(f"**{ts}** 🔧 {tool}{extra}")
+            lines.append("")
+        elif etype == "tool_result":
+            status_marker = "❌" if e.get("error_detected") else "✓"
+            lines.append(f"**{ts}** {status_marker}")
+            if e.get("error_detected") and e.get("error_snippet"):
+                lines.append(f"> {e['error_snippet'][:200]}")
+            lines.append("")
+
+    lines.append("---")
+    lines.append("*Exported from Longhand*")
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
+# PATTERNS — recurring fix patterns across episodes
+# -----------------------------------------------------------------------------
+
+@app.command()
+def patterns(
+    limit: int = typer.Option(10, "--limit", "-n", help="Top N pattern groups to show"),
+    min_count: int = typer.Option(2, "--min", help="Minimum episode count per pattern"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show recurring fix patterns across all episodes — bugs you keep fixing.
+
+    Groups episodes by error category and shared keywords from problem descriptions.
+    """
+    import json as _json
+    import re as _re
+    from collections import Counter, defaultdict
+
+    store = _get_store(data_dir)
+
+    # Pull all resolved/partial episodes
+    episodes = store.sqlite.query_episodes(limit=10000)
+
+    if not episodes:
+        console.print("[yellow]No episodes found. Run `longhand analyze --all` first.[/yellow]")
+        return
+
+    # Group by (category-tag, normalized error keyword)
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+
+    for ep in episodes:
+        problem = (ep.get("problem_description") or "")[:300].lower()
+
+        # Pull tags
+        tags: list[str] = []
+        if ep.get("tags_json"):
+            try:
+                tags = _json.loads(ep["tags_json"])
+            except Exception:
+                pass
+        category = tags[0] if tags else "unknown"
+
+        # Extract distinctive keywords from problem
+        words = _re.findall(r"[a-z][a-z0-9]{4,}", problem)
+        # Remove common words
+        common = {
+            "error", "type", "test", "tests", "module", "import", "imports", "fail",
+            "failed", "value", "result", "check", "found", "missing", "expected",
+            "received", "actual", "passed", "running",
+        }
+        meaningful = [w for w in words if w not in common]
+        # Most distinctive token (the longest non-common one)
+        keyword = sorted(meaningful, key=len, reverse=True)[0] if meaningful else ""
+
+        if not keyword:
+            keyword = "general"
+
+        groups[(category, keyword)].append(ep)
+
+    # Sort groups by count
+    ranked = sorted(
+        [(key, eps) for key, eps in groups.items() if len(eps) >= min_count],
+        key=lambda kv: len(kv[1]),
+        reverse=True,
+    )[:limit]
+
+    if not ranked:
+        console.print(f"[yellow]No patterns found with at least {min_count} occurrences.[/yellow]")
+        return
+
+    console.print(
+        Panel.fit(
+            f"[bold]Recurring fix patterns[/bold]\n"
+            f"[dim]Found {len(ranked)} pattern(s) across {len(episodes)} episode(s)[/dim]",
+            border_style="cyan",
+        )
+    )
+    console.print()
+
+    for (category, keyword), eps in ranked:
+        # Header
+        header = Text()
+        header.append(f"× {len(eps)}  ", style="bold cyan")
+        header.append(f"{category}", style="magenta")
+        if keyword and keyword != "general":
+            header.append(f" · {keyword}", style="yellow")
+        console.print(header)
+
+        # Show 3 example problems
+        seen_problems: set[str] = set()
+        shown = 0
+        for ep in eps:
+            problem = (ep.get("problem_description") or "")[:120].strip()
+            problem_key = problem.lower()[:60]
+            if problem_key in seen_problems or not problem:
+                continue
+            seen_problems.add(problem_key)
+            console.print(f"  • {problem}")
+            shown += 1
+            if shown >= 3:
+                break
+
+        # If any have a fix summary, show one example fix
+        for ep in eps:
+            if ep.get("fix_summary"):
+                console.print(f"  [dim]example fix:[/dim] {ep['fix_summary'][:160]}")
+                break
+
+        console.print()
+
+
+# -----------------------------------------------------------------------------
+# RECAP — what have I been working on recently
+# -----------------------------------------------------------------------------
+
+@app.command()
+def recap(
+    days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
+    limit: int = typer.Option(10, "--limit", "-n"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project id or name"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show what you've been working on recently — sessions + outcomes + latest context."""
+    from datetime import datetime, timedelta, timezone
+
+    store = _get_store(data_dir)
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    # Resolve project name to id if provided
+    project_id = None
+    if project:
+        if project.startswith("p_"):
+            project_id = project
+        else:
+            matches = store.sqlite.list_projects(keyword=project, limit=5)
+            if matches:
+                project_id = matches[0]["project_id"]
+
+    sessions = store.sqlite.list_sessions(
+        project_id=project_id,
+        since=since,
+        limit=limit * 2,
+    )
+
+    if not sessions:
+        console.print(
+            f"[yellow]No sessions in the last {days} days"
+            + (f" for project '{project}'" if project else "")
+            + ".[/yellow]"
+        )
+        return
+
+    sessions = sessions[:limit]
+
+    header_title = f"Recap — last {days} days"
+    if project:
+        header_title += f" · {project}"
+    console.print(Panel.fit(f"[bold]{header_title}[/bold]", border_style="cyan"))
+    console.print()
+
+    for s in sessions:
+        sid = s["session_id"]
+        outcome = store.sqlite.get_outcome(sid)
+        outcome_str = outcome["outcome"] if outcome else "—"
+        outcome_color = {
+            "shipped": "green",
+            "fixed": "green",
+            "stuck": "red",
+            "abandoned": "dim",
+            "exploratory": "blue",
+        }.get(outcome_str, "white")
+
+        # Get project info if available
+        project_name = "—"
+        if s.get("project_id"):
+            proj = store.sqlite.get_project(s["project_id"])
+            if proj:
+                project_name = proj["display_name"]
+
+        # Get the first real user message
+        user_events = store.sqlite.get_events(
+            session_id=sid, event_type="user_message", limit=3
+        )
+        first_user_msg = ""
+        for ue in user_events:
+            content = (ue.get("content") or "").strip()
+            if content and not content.startswith("<"):
+                first_user_msg = content[:150]
+                break
+
+        # Episode count for this session
+        eps = store.sqlite.query_episodes(session_id=sid, limit=100)
+        resolved = sum(1 for e in eps if e.get("status") == "resolved")
+
+        # Header line
+        header = Text()
+        header.append(f"{_format_timestamp(s['started_at'])}  ", style="dim")
+        header.append(f"{sid[:8]}  ", style="cyan")
+        header.append(f"[{outcome_str}]", style=outcome_color)
+        header.append(f"  {project_name}", style="magenta")
+        if eps:
+            header.append(f"  {resolved}/{len(eps)} episodes", style="yellow")
+        console.print(header)
+
+        if first_user_msg:
+            console.print(f"  [dim]>[/dim] {first_user_msg}")
+
+        if outcome and outcome.get("topics_json"):
+            import json as _json
+            try:
+                topics = _json.loads(outcome["topics_json"])[:5]
+                if topics:
+                    console.print(f"  [dim]topics:[/dim] {', '.join(topics)}")
+            except Exception:
+                pass
+
+        console.print()
+
+
+# -----------------------------------------------------------------------------
+# CONTINUE — pick up where you left off in a session
+# -----------------------------------------------------------------------------
+
+@app.command("continue")
+def continue_cmd(
+    session_id: str = typer.Argument(..., help="Session ID prefix"),
+    n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show the last N events of a session so you can pick up where you left off."""
+    store = _get_store(data_dir)
+
+    sessions_rows = store.sqlite.list_sessions(limit=1000)
+    full_id = None
+    session_row = None
+    for row in sessions_rows:
+        if row["session_id"].startswith(session_id):
+            full_id = row["session_id"]
+            session_row = row
+            break
+
+    if not full_id or not session_row:
+        console.print(f"[red]No session matching: {session_id}[/red]")
+        raise typer.Exit(1)
+
+    # Session header
+    project_name = "—"
+    if session_row.get("project_id"):
+        proj = store.sqlite.get_project(session_row["project_id"])
+        if proj:
+            project_name = proj["display_name"]
+
+    outcome = store.sqlite.get_outcome(full_id)
+
+    header_lines = [
+        f"[bold]{full_id}[/bold]",
+        f"[dim]Project:[/dim] {project_name}",
+        f"[dim]Started:[/dim] {_format_timestamp(session_row['started_at'])}",
+        f"[dim]Ended:[/dim] {_format_timestamp(session_row['ended_at'])}",
+        f"[dim]Events:[/dim] {session_row['event_count']}",
+    ]
+    if outcome:
+        header_lines.append(f"[dim]Outcome:[/dim] {outcome['outcome']}")
+    console.print(Panel.fit("\n".join(header_lines), title="Session", border_style="cyan"))
+    console.print()
+
+    # Grab all events then take the last n (excluding thinking for readability)
+    all_events = store.sqlite.get_events(session_id=full_id, limit=10000)
+    visible_events = [
+        e for e in all_events
+        if e["event_type"] not in ("assistant_thinking", "file_snapshot", "system")
+    ]
+    recent = visible_events[-n:]
+
+    if not recent:
+        console.print("[yellow]No visible events in session.[/yellow]")
+        return
+
+    console.print(f"[bold]Last {len(recent)} event(s):[/bold]\n")
+
+    for e in recent:
+        etype = e["event_type"]
+        ts = _format_timestamp(e["timestamp"])
+        marker = _event_marker(etype)
+
+        content = (e.get("content") or "").strip()
+
+        if etype == "user_message":
+            console.print(f"[dim]{ts}[/dim] {marker} [bold blue]USER[/bold blue]")
+            preview = content[:400]
+            console.print(f"  {preview}")
+        elif etype == "assistant_text":
+            console.print(f"[dim]{ts}[/dim] {marker} [bold green]CLAUDE[/bold green]")
+            preview = content[:400]
+            console.print(f"  {preview}")
+        elif etype == "tool_call":
+            tool = e.get("tool_name") or "?"
+            file_path = e.get("file_path") or ""
+            desc = f"{tool}"
+            if file_path:
+                desc += f" {Path(file_path).name}"
+            console.print(f"[dim]{ts}[/dim] {marker} [magenta]{desc}[/magenta]")
+        elif etype == "tool_result":
+            status = "[red]error[/red]" if e.get("error_detected") else "[green]ok[/green]"
+            console.print(f"[dim]{ts}[/dim] {marker} {status}")
+            if e.get("error_detected") and e.get("error_snippet"):
+                console.print(f"  [red]{e['error_snippet'][:200]}[/red]")
+
+    console.print()
+
+    # Last unresolved question or open episode
+    unresolved_eps = store.sqlite.query_episodes(
+        session_id=full_id, status="unresolved", limit=5
+    )
+    if unresolved_eps:
+        console.print(
+            Panel.fit(
+                f"[yellow]⚠ {len(unresolved_eps)} unresolved episode(s) in this session[/yellow]\n"
+                + "\n".join(
+                    f"  • {(ep.get('problem_description') or '')[:100]}"
+                    for ep in unresolved_eps[:3]
+                ),
+                border_style="yellow",
+            )
+        )
+
+
+# -----------------------------------------------------------------------------
 # HISTORY — cross-session file history
 # -----------------------------------------------------------------------------
 
