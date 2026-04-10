@@ -100,7 +100,39 @@ def recall(
 
     # 2. Project matching on the cleaned query
     project_matches = match_projects(store, cleaned_query, top_k=5, now=now)
-    project_ids = [m.project_id for m in project_matches] if project_matches else None
+
+    # If project matching is weak (top score < 1.0), augment with semantic
+    # session search — find sessions whose summary embedding matches the query
+    # and treat their project_ids as candidates.
+    top_project_score = project_matches[0].score if project_matches else 0.0
+    session_project_ids: set[str] = set()
+    if top_project_score < 1.5 and cleaned_query.strip():
+        try:
+            session_hits = store.vectors.search_sessions(
+                query=cleaned_query,
+                n_results=10,
+                since=since.isoformat() if since else None,
+                until=until.isoformat() if until else None,
+            )
+            for hit in session_hits:
+                meta = hit.get("metadata") or {}
+                pid = meta.get("project_id")
+                if pid:
+                    session_project_ids.add(pid)
+        except Exception:
+            pass
+
+    project_ids: list[str] | None = None
+    if project_matches:
+        project_ids = [m.project_id for m in project_matches]
+        # Merge in project ids from semantic session search
+        if session_project_ids:
+            existing = set(project_ids)
+            for pid in session_project_ids:
+                if pid not in existing:
+                    project_ids.append(pid)
+    elif session_project_ids:
+        project_ids = list(session_project_ids)
 
     since_iso = since.isoformat() if since else None
     until_iso = until.isoformat() if until else None
@@ -159,9 +191,28 @@ def recall(
             limit=max_episodes * 4,
         )
 
-    # 7. Re-rank: keyword hit count dominates, confidence breaks ties
+    # 7. Semantic re-ranking — use the events vector store to find events most
+    # similar to the query, then boost episodes whose problem/diagnosis/fix
+    # events appear in that set.
+    semantic_event_scores: dict[str, float] = {}
+    if cleaned_query.strip():
+        try:
+            event_hits = store.vectors.search(
+                query=cleaned_query,
+                n_results=50,
+            )
+            for hit in event_hits:
+                eid = hit.get("event_id")
+                if eid:
+                    distance = hit.get("distance", 1.0)
+                    semantic_event_scores[eid] = max(0.0, 1.0 - distance)
+        except Exception:
+            pass
+
     def _rank_score(ep: dict[str, Any]) -> float:
         confidence = ep.get("confidence") or 0.5
+
+        # Keyword hit count — substring match on problem/diagnosis/fix text
         keyword_hits = 0
         if query_words:
             searchable = " ".join([
@@ -172,7 +223,30 @@ def recall(
             for word in query_words[:5]:
                 if word.lower() in searchable:
                     keyword_hits += 1
-        return keyword_hits * 10 + confidence
+
+        # Semantic boost — check if any linked event is in the top semantic hits
+        semantic_boost = 0.0
+        for eid_field in ("problem_event_id", "diagnosis_event_id", "fix_event_id"):
+            eid = ep.get(eid_field)
+            if eid and eid in semantic_event_scores:
+                semantic_boost = max(semantic_boost, semantic_event_scores[eid])
+
+        # Recency boost — more recent episodes rank higher for fuzzy time queries
+        recency_boost = 0.0
+        ended_at = ep.get("ended_at")
+        if ended_at:
+            try:
+                ep_time = datetime.fromisoformat(ended_at)
+                if ep_time.tzinfo is None:
+                    ep_time = ep_time.replace(tzinfo=timezone.utc)
+                days_ago = max(1, (now - ep_time).days)
+                recency_boost = max(0.0, 1.0 - (days_ago / 365))
+            except Exception:
+                pass
+
+        # Final: keyword hits dominate (10x), then semantic boost (5x),
+        # then confidence + recency
+        return keyword_hits * 10 + semantic_boost * 5 + confidence + recency_boost * 0.5
 
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 

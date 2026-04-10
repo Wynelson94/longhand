@@ -613,6 +613,87 @@ def projects(
 
 
 # -----------------------------------------------------------------------------
+# HISTORY — cross-session file history
+# -----------------------------------------------------------------------------
+
+@app.command()
+def history(
+    file_path: str = typer.Argument(..., help="File path (exact or substring match)"),
+    limit: int = typer.Option(50, "--limit"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show every edit to a file across all sessions, chronologically."""
+    store = _get_store(data_dir)
+
+    # Try exact match first
+    edits = store.sqlite.get_file_edits(file_path)
+
+    # Fall back to substring match
+    if not edits:
+        events = store.sqlite.get_events(
+            file_path=file_path, event_type="tool_call", limit=limit * 4
+        )
+        edits = [
+            e for e in events
+            if e.get("file_operation") in ("edit", "write", "multi_edit", "notebook_edit")
+        ]
+
+    if not edits:
+        console.print(f"[yellow]No edits found for '{file_path}'[/yellow]")
+        return
+
+    edits = edits[:limit]
+
+    # Group by resolved file path to handle substring matches touching multiple files
+    unique_files = sorted({e.get("file_path") or file_path for e in edits})
+    unique_sessions = len({e["session_id"] for e in edits})
+
+    console.print(
+        Panel.fit(
+            f"[bold]{file_path}[/bold]\n"
+            f"[dim]{len(edits)} edit(s) across "
+            f"{unique_sessions} session(s) · {len(unique_files)} matching file(s)[/dim]",
+            title="File History",
+            border_style="cyan",
+        )
+    )
+
+    last_session: str | None = None
+    last_file: str | None = None
+    for e in edits:
+        session_id = e["session_id"]
+        resolved_file = e.get("file_path") or ""
+
+        if session_id != last_session:
+            console.print()
+            console.print(f"[cyan]Session {session_id[:8]}[/cyan]")
+            last_session = session_id
+            last_file = None
+
+        if resolved_file != last_file and len(unique_files) > 1:
+            console.print(f"  [green]{resolved_file}[/green]")
+            last_file = resolved_file
+
+        ts = _format_timestamp(e["timestamp"])
+        tool = e.get("tool_name") or "?"
+
+        # Short preview of the change
+        old = (e.get("old_content") or "").strip().replace("\n", " ")[:60]
+        new = (e.get("new_content") or "").strip().replace("\n", " ")[:60]
+        preview = ""
+        if tool == "Edit" and old and new:
+            preview = f"[red]{old}[/red] → [green]{new}[/green]"
+        elif tool == "Write":
+            char_count = len(e.get("new_content") or "")
+            preview = f"[green]wrote {char_count} chars[/green]"
+        elif tool == "MultiEdit":
+            preview = "[green]multi-edit[/green]"
+
+        console.print(f"    [dim]{ts}[/dim] {tool}  {preview}")
+        console.print(f"      [dim]event:[/dim] {e['event_id']}")
+
+
+# -----------------------------------------------------------------------------
 # INSTALL / AUTO-INGEST / DOCTOR
 # -----------------------------------------------------------------------------
 

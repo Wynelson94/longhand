@@ -67,11 +67,62 @@ _CATEGORY_SIGNALS: list[tuple[str, list[str]]] = [
 ]
 
 
+# Files/directories that indicate a project root
+_PROJECT_ROOT_MARKERS = (
+    ".git",           # git repo
+    "package.json",   # node
+    "pyproject.toml", # python (modern)
+    "setup.py",       # python (legacy)
+    "Cargo.toml",     # rust
+    "go.mod",         # go
+    "pom.xml",        # java maven
+    "build.gradle",   # java gradle
+    "Gemfile",        # ruby
+    "composer.json",  # php
+    "mix.exs",        # elixir
+    "pubspec.yaml",   # dart/flutter
+)
+
+
+def _find_project_root(path: Path, max_walk: int = 8) -> Path:
+    """Walk up from `path` to find the nearest directory containing a project marker.
+
+    This collapses subdirectories of the same repo into one canonical project
+    path. If no marker is found within `max_walk` levels, returns `path` as-is.
+    """
+    current = path
+    for _ in range(max_walk):
+        try:
+            for marker in _PROJECT_ROOT_MARKERS:
+                if (current / marker).exists():
+                    return current
+            # Also match *.xcodeproj wildcard
+            try:
+                if any(current.glob("*.xcodeproj")):
+                    return current
+            except (OSError, PermissionError):
+                pass
+        except (OSError, PermissionError):
+            break
+
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    return path
+
+
 def _canonicalize_path(path: str | None) -> str | None:
+    """Resolve and walk up to the project root (git/package marker)."""
     if not path:
         return None
     try:
-        return str(Path(path).resolve())
+        resolved = Path(path).resolve()
+        if resolved.is_file():
+            resolved = resolved.parent
+        root = _find_project_root(resolved)
+        return str(root)
     except Exception:
         return path
 

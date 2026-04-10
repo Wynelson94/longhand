@@ -27,6 +27,18 @@ FILE_EDIT_TOOLS = {
 
 FILE_READ_TOOLS = {"Read"}
 
+# Tools whose results can legitimately contain error output.
+# Read tool output is usually source code — its contents shouldn't be scanned
+# for errors because it may contain regex patterns, test fixtures, etc.
+COMMAND_EXECUTING_TOOLS = {
+    "Bash",
+    "BashOutput",
+    "KillShell",
+    "run_command",
+    "shell",
+    "execute_command",
+}
+
 
 def _parse_timestamp(value: str | None) -> datetime:
     """Parse an ISO timestamp, handling Claude Code's 'Z' suffix.
@@ -110,6 +122,9 @@ class JSONLParser:
         self.file_path = Path(file_path)
         if not self.file_path.exists():
             raise FileNotFoundError(f"Session file not found: {file_path}")
+        # Track tool_name for each tool_use_id so we can gate error detection
+        # on tool_result events. Populated as tool_use blocks are parsed.
+        self._tool_name_by_id: dict[str, str] = {}
 
     def parse_events(self) -> Iterator[Event]:
         """Yield Event objects from the session file, in file order.
@@ -203,18 +218,28 @@ class JSONLParser:
 
             if block_type == "tool_result":
                 result_content = _stringify_tool_result(block.get("content"))
-                error_signal = detect_error(result_content)
+                tool_use_id = block.get("tool_use_id")
+                paired_tool = self._tool_name_by_id.get(tool_use_id or "", "")
+
+                # Only run error detection on results from command-executing tools.
+                # Read/Glob/Grep/WebFetch output is usually source code or file
+                # contents — it can legitimately contain strings that look like
+                # errors (regex patterns, test fixtures, log lines in docs).
+                error_signal = None
+                if paired_tool in COMMAND_EXECUTING_TOOLS:
+                    error_signal = detect_error(result_content)
+
                 success_flag = (
                     tool_use_result.get("success") if isinstance(tool_use_result, dict) else None
                 )
-                # If the harness says it failed, mark as error even if regex didn't fire
                 has_error = bool(error_signal) or (success_flag is False)
+
                 events.append(Event(
                     event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
                     event_type=EventType.TOOL_RESULT,
                     sequence=base_sequence + offset,
                     content=result_content,
-                    tool_use_id=block.get("tool_use_id"),
+                    tool_use_id=tool_use_id,
                     tool_output=result_content,
                     tool_success=success_flag,
                     error_detected=has_error,
@@ -292,6 +317,11 @@ class JSONLParser:
                 tool_name = block.get("name", "")
                 tool_input = block.get("input", {}) or {}
                 tool_use_id = block.get("id", "")
+
+                # Remember the tool_name for this tool_use_id — the tool_result
+                # that follows will look it up to gate error detection.
+                if tool_use_id:
+                    self._tool_name_by_id[tool_use_id] = tool_name
 
                 file_path = None
                 file_operation = None
