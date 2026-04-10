@@ -56,30 +56,55 @@ def _save_json(path: Path, data: dict) -> None:
 
 # ─── Hook install ──────────────────────────────────────────────────────────
 
+def _wrap_hook_command(command: str, matcher: str = "") -> dict:
+    """Build a hook entry in Claude Code's expected schema.
+
+    Claude Code requires:
+        {
+            "matcher": "<tool name or empty>",
+            "hooks": [
+                {"type": "command", "command": "..."}
+            ]
+        }
+    """
+    return {
+        "matcher": matcher,
+        "hooks": [{"type": "command", "command": command}],
+    }
+
+
+def _entry_contains_command(entry: dict, needle: str) -> bool:
+    """Check if a hook entry (in either flat or wrapped format) contains a command substring."""
+    if not isinstance(entry, dict):
+        return False
+    # Wrapped format
+    inner = entry.get("hooks")
+    if isinstance(inner, list):
+        for h in inner:
+            if isinstance(h, dict) and needle in (h.get("command") or ""):
+                return True
+    # Flat (legacy) format
+    if needle in (entry.get("command") or ""):
+        return True
+    return False
+
+
 def hook_install() -> None:
     """Install the SessionEnd hook into ~/.claude/settings.json."""
     settings = _load_json(CLAUDE_SETTINGS_PATH)
     backup = _backup(CLAUDE_SETTINGS_PATH)
 
     longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
-
-    hook_entry = {
-        "command": f"{longhand_bin} ingest-session --transcript \"$CLAUDE_TRANSCRIPT_PATH\""
-    }
+    command = f"{longhand_bin} ingest-session --transcript \"$CLAUDE_TRANSCRIPT_PATH\""
 
     hooks = settings.setdefault("hooks", {})
     session_end = hooks.setdefault("SessionEnd", [])
 
-    # Avoid duplicates
-    already = any(
-        isinstance(h, dict) and "longhand ingest-session" in h.get("command", "")
-        for h in session_end
-    )
-    if already:
+    if any(_entry_contains_command(h, "longhand ingest-session") for h in session_end):
         console.print("[yellow]Longhand SessionEnd hook already installed.[/yellow]")
         return
 
-    session_end.append(hook_entry)
+    session_end.append(_wrap_hook_command(command))
     _save_json(CLAUDE_SETTINGS_PATH, settings)
 
     console.print(
@@ -100,23 +125,16 @@ def prompt_hook_install() -> None:
     backup = _backup(CLAUDE_SETTINGS_PATH)
 
     longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
-
-    hook_entry = {
-        "command": f"{longhand_bin} __prompt-hook-run"
-    }
+    command = f"{longhand_bin} __prompt-hook-run"
 
     hooks = settings.setdefault("hooks", {})
     user_prompt = hooks.setdefault("UserPromptSubmit", [])
 
-    already = any(
-        isinstance(h, dict) and "__prompt-hook-run" in h.get("command", "")
-        for h in user_prompt
-    )
-    if already:
+    if any(_entry_contains_command(h, "__prompt-hook-run") for h in user_prompt):
         console.print("[yellow]Longhand prompt hook already installed.[/yellow]")
         return
 
-    user_prompt.append(hook_entry)
+    user_prompt.append(_wrap_hook_command(command))
     _save_json(CLAUDE_SETTINGS_PATH, settings)
 
     console.print(
@@ -145,7 +163,7 @@ def prompt_hook_uninstall() -> None:
 
     filtered = [
         h for h in user_prompt
-        if not (isinstance(h, dict) and "__prompt-hook-run" in h.get("command", ""))
+        if not _entry_contains_command(h, "__prompt-hook-run")
     ]
 
     if len(filtered) == len(user_prompt):
@@ -241,7 +259,7 @@ def hook_uninstall() -> None:
 
     filtered = [
         h for h in session_end
-        if not (isinstance(h, dict) and "longhand ingest-session" in h.get("command", ""))
+        if not _entry_contains_command(h, "longhand ingest-session")
     ]
 
     if len(filtered) == len(session_end):
@@ -363,11 +381,11 @@ def doctor() -> None:
     if CLAUDE_SETTINGS_PATH.exists():
         settings = _load_json(CLAUDE_SETTINGS_PATH)
         for h in settings.get("hooks", {}).get("SessionEnd", []):
-            if isinstance(h, dict) and "longhand ingest-session" in h.get("command", ""):
+            if _entry_contains_command(h, "longhand ingest-session"):
                 hook_installed = True
                 break
         for h in settings.get("hooks", {}).get("UserPromptSubmit", []):
-            if isinstance(h, dict) and "__prompt-hook-run" in h.get("command", ""):
+            if _entry_contains_command(h, "__prompt-hook-run"):
                 prompt_hook_installed = True
                 break
 
