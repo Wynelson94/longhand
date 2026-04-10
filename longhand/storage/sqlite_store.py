@@ -82,6 +82,28 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+# Maximum length we accept for any user-provided keyword/path filter.
+# Caps DoS via giant LIKE patterns and absurd query payloads.
+MAX_FILTER_LENGTH = 500
+
+
+def _escape_like(value: str) -> str:
+    r"""Escape SQLite LIKE wildcards (%, _, \) so user input matches literally.
+
+    Caps the length to MAX_FILTER_LENGTH to prevent pathological pattern DoS.
+    Use with `LIKE ? ESCAPE '\'` so SQLite knows to honor the backslash.
+    """
+    if not value:
+        return ""
+    truncated = value[:MAX_FILTER_LENGTH]
+    return (
+        truncated
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
 class SQLiteStore:
     """SQLite-backed structured storage for Longhand events and sessions."""
 
@@ -271,8 +293,8 @@ class SQLiteStore:
             params: list[Any] = []
 
             if project_path:
-                conditions.append("s.project_path LIKE ?")
-                params.append(f"%{project_path}%")
+                conditions.append("s.project_path LIKE ? ESCAPE '\\'")
+                params.append(f"%{_escape_like(project_path)}%")
             if project_id:
                 conditions.append("s.project_id = ?")
                 params.append(project_id)
@@ -321,8 +343,8 @@ class SQLiteStore:
                 conditions.append("tool_name = ?")
                 params.append(tool_name)
             if file_path:
-                conditions.append("file_path LIKE ?")
-                params.append(f"%{file_path}%")
+                conditions.append("file_path LIKE ? ESCAPE '\\'")
+                params.append(f"%{_escape_like(file_path)}%")
             if since:
                 conditions.append("timestamp >= ?")
                 params.append(since)
@@ -474,9 +496,11 @@ class SQLiteStore:
                 params.append(category)
             if keyword:
                 conditions.append(
-                    "(display_name LIKE ? OR keywords_json LIKE ? OR aliases_json LIKE ?)"
+                    "(display_name LIKE ? ESCAPE '\\' "
+                    "OR keywords_json LIKE ? ESCAPE '\\' "
+                    "OR aliases_json LIKE ? ESCAPE '\\')"
                 )
-                like = f"%{keyword}%"
+                like = f"%{_escape_like(keyword)}%"
                 params.extend([like, like, like])
 
             query = "SELECT * FROM projects"
@@ -609,9 +633,11 @@ class SQLiteStore:
                 params.append(status)
             if keyword:
                 conditions.append(
-                    "(problem_description LIKE ? OR diagnosis_summary LIKE ? OR fix_summary LIKE ?)"
+                    "(problem_description LIKE ? ESCAPE '\\' "
+                    "OR diagnosis_summary LIKE ? ESCAPE '\\' "
+                    "OR fix_summary LIKE ? ESCAPE '\\')"
                 )
-                like = f"%{keyword}%"
+                like = f"%{_escape_like(keyword)}%"
                 params.extend([like, like, like])
 
             query = "SELECT * FROM episodes"

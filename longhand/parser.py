@@ -18,6 +18,12 @@ from longhand.extractors.errors import detect_error
 from longhand.types import Event, EventType, FileOperation, Session
 
 
+# Hard limits — keep the parser bounded so a malicious or corrupted JSONL
+# can't crash or OOM the ingest pipeline.
+MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500MB per session file
+MAX_LINE_LENGTH = 50 * 1024 * 1024        # 50MB per JSONL line
+
+
 FILE_EDIT_TOOLS = {
     "Edit": FileOperation.EDIT,
     "Write": FileOperation.WRITE,
@@ -122,6 +128,15 @@ class JSONLParser:
         self.file_path = Path(file_path)
         if not self.file_path.exists():
             raise FileNotFoundError(f"Session file not found: {file_path}")
+        # Bound the file size to prevent OOM on malicious or corrupted JSONLs
+        try:
+            size = self.file_path.stat().st_size
+            if size > MAX_FILE_SIZE_BYTES:
+                raise ValueError(
+                    f"Session file exceeds {MAX_FILE_SIZE_BYTES // (1024 * 1024)}MB limit: {file_path}"
+                )
+        except OSError:
+            pass
         # Track tool_name for each tool_use_id so we can gate error detection
         # on tool_result events. Populated as tool_use blocks are parsed.
         self._tool_name_by_id: dict[str, str] = {}
@@ -137,6 +152,9 @@ class JSONLParser:
         seen_ids: dict[str, int] = {}
         with self.file_path.open("r", encoding="utf-8", errors="replace") as f:
             for line_num, line in enumerate(f, start=1):
+                # Skip lines that exceed the hard line-length limit
+                if len(line) > MAX_LINE_LENGTH:
+                    continue
                 line = line.strip()
                 if not line:
                     continue

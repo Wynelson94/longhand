@@ -180,6 +180,10 @@ def prompt_hook_uninstall() -> None:
     console.print("[green]✓[/green] Removed UserPromptSubmit hook")
 
 
+_HOOK_STDIN_MAX_BYTES = 256 * 1024  # 256KB — Claude Code prompts never exceed this
+_HOOK_PROMPT_MAX_LEN = 8000          # Cap the prompt we pass to the recall pipeline
+
+
 def run_prompt_hook() -> None:
     """Read stdin JSON, run longhand context, and emit hookSpecificOutput JSON.
 
@@ -190,7 +194,11 @@ def run_prompt_hook() -> None:
     import json as _json
 
     try:
-        raw = sys.stdin.read()
+        # Bounded read — never accept more than 256KB of stdin
+        raw = sys.stdin.read(_HOOK_STDIN_MAX_BYTES + 1)
+        if len(raw) > _HOOK_STDIN_MAX_BYTES:
+            print("{}")
+            return
         if not raw.strip():
             print("{}")
             return
@@ -206,6 +214,10 @@ def run_prompt_hook() -> None:
         if not isinstance(prompt, str) or len(prompt.strip()) < 12:
             print("{}")
             return
+
+        # Cap prompt length before recall — protects against pathological queries
+        if len(prompt) > _HOOK_PROMPT_MAX_LEN:
+            prompt = prompt[:_HOOK_PROMPT_MAX_LEN]
 
         # Capture context output
         from longhand.cli import context as context_cmd
