@@ -29,7 +29,7 @@ class LonghandStore:
 
     def __init__(self, data_dir: str | Path | None = None):
         self.data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
         self.sqlite = SQLiteStore(self.data_dir / "longhand.db")
         self.vectors = VectorStore(self.data_dir / "chroma")

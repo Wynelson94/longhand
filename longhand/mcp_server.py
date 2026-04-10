@@ -63,6 +63,10 @@ def _truncate_output(text: str, max_chars: int) -> str:
     )
 
 
+MAX_LIMIT = 1000
+MAX_OUTPUT_CHARS = 200000
+
+
 def _int(value: Any, default: int) -> int:
     """Coerce a value to int, handling string inputs from MCP bridge."""
     if value is None:
@@ -71,6 +75,16 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _limit(value: Any, default: int) -> int:
+    """Coerce to int and cap at MAX_LIMIT to prevent OOM on huge result sets."""
+    return min(_int(value, default), MAX_LIMIT)
+
+
+def _max_chars(value: Any, default: int) -> int:
+    """Coerce to int and cap at MAX_OUTPUT_CHARS."""
+    return min(_int(value, default), MAX_OUTPUT_CHARS)
 
 
 def _bool(value: Any, default: bool) -> bool:
@@ -318,8 +332,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     store = LonghandStore()
 
     if name == "search":
-        limit = _int(arguments.get("limit"), 10)
-        max_chars = _int(arguments.get("max_chars"), 12000)
+        limit = _limit(arguments.get("limit"), 10)
+        max_chars = _max_chars(arguments.get("max_chars"), 12000)
 
         # Resolve session_id prefix if provided
         search_session_id = None
@@ -380,7 +394,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     if name == "list_sessions":
         rows = store.sqlite.list_sessions(
             project_path=arguments.get("project"),
-            limit=_int(arguments.get("limit"), 20),
+            limit=_limit(arguments.get("limit"), 20),
         )
         output = json.dumps(rows, indent=2, default=str)
         return [TextContent(type="text", text=_truncate_output(output, 16000))]
@@ -390,10 +404,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         if not full_id:
             return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
-        tail = _int(arguments.get("tail"), 0)
+        tail = _limit(arguments.get("tail"), 0)
         offset = _int(arguments.get("offset"), 0)
-        limit = _int(arguments.get("limit"), 100)
-        max_chars = _int(arguments.get("max_chars"), 16000)
+        limit = _limit(arguments.get("limit"), 100)
+        max_chars = _max_chars(arguments.get("max_chars"), 16000)
         include_thinking = _bool(arguments.get("include_thinking"), True)
         summary_only = _bool(arguments.get("summary_only"), False)
 
@@ -504,7 +518,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         result = recall_pipeline(
             store=store,
             query=arguments["query"],
-            max_episodes=_int(arguments.get("max_episodes"), 5),
+            max_episodes=_limit(arguments.get("max_episodes"), 5),
         )
         payload = {
             "query": result.query,
@@ -527,7 +541,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             "artifacts": result.artifacts,
             "narrative": result.narrative,
         }
-        max_chars = _int(arguments.get("max_chars"), 16000)
+        max_chars = _max_chars(arguments.get("max_chars"), 16000)
         output = json.dumps(payload, indent=2, default=str)
         return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
@@ -535,7 +549,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         matches = match_projects(
             store=store,
             query=arguments["query"],
-            top_k=_int(arguments.get("top_k"), 5),
+            top_k=_limit(arguments.get("top_k"), 5),
         )
         payload = [
             {
@@ -556,7 +570,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             since=arguments.get("since"),
             until=arguments.get("until"),
             keyword=arguments.get("keyword"),
-            limit=_int(arguments.get("limit"), 20),
+            limit=_limit(arguments.get("limit"), 20),
         )
         if _bool(arguments.get("has_fix"), True):
             episodes = [e for e in episodes if e.get("fix_event_id")]
@@ -608,7 +622,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         rows = store.sqlite.list_projects(
             keyword=arguments.get("keyword"),
             category=arguments.get("category"),
-            limit=_int(arguments.get("limit"), 20),
+            limit=_limit(arguments.get("limit"), 20),
         )
         if _bool(arguments.get("verbose"), False):
             output = json.dumps(rows, indent=2, default=str)
@@ -623,7 +637,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             project_id=arguments["project_id"],
             since=arguments.get("since"),
             until=arguments.get("until"),
-            limit=_int(arguments.get("limit"), 50),
+            limit=_limit(arguments.get("limit"), 50),
         )
         # Enrich with outcome
         enriched = []
