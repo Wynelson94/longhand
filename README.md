@@ -1,12 +1,12 @@
 # Longhand
 
-**Lossless local memory for Claude Code. The full, unabbreviated version.**
+**Persistent AI memory without tokens.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
-Every tool call. Every file edit. Every thinking block. Every before-and-after. Stored verbatim on your machine. Searchable. Replayable. Recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
+> *Status: v0.2.5 — stable enough to use daily, security-reviewed, undergoing red team review. Built in a single day by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 346 problem→fix episodes. The bones are right; the body is being made.*
 
 ---
 
-## Persistent Memory Without Tokens
+## The Inversion
 
 Everyone is solving AI memory by making the context window bigger. 1M tokens. 2M tokens. Context-infinite. The whole industry is racing in the same direction: make the model carry more state.
 
