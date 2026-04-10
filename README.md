@@ -302,7 +302,6 @@ Tested end-to-end on a real 721-file Claude Code history:
 
 Nate Nelson. Idaho Falls. No computer science degree. Fourteen industries of building software by describing what I see and letting the translation happen.
 
-I'm available for hire — forensic tools, data integrity audits, AI memory layers, anything where the official answer doesn't match reality.
 
 GitHub: [Wynelson94](https://github.com/Wynelson94)
 
