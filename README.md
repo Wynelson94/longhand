@@ -6,6 +6,30 @@ Every tool call. Every file edit. Every thinking block. Every before-and-after. 
 
 ---
 
+## Persistent Memory Without Tokens
+
+Everyone is solving AI memory by making the context window bigger. 1M tokens. 2M tokens. Context-infinite. The whole industry is racing in the same direction: make the model carry more state.
+
+Longhand goes the other direction. **The model doesn't need to carry the memory. The disk does.**
+
+|                      | Bigger context windows                       | Longhand                          |
+|----------------------|----------------------------------------------|-----------------------------------|
+| **Where it lives**   | Rented from a model provider                 | A SQLite file + ChromaDB on your laptop |
+| **Cost per query**   | Tokens × dollars                             | Zero                              |
+| **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
+| **Speed**            | Seconds to minutes for large contexts        | ~126ms                            |
+| **Loss**             | Attention degrades in the middle of long contexts | Forensically lossless        |
+| **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |
+| **Across model versions** | Doesn't transfer                        | Same data, any model              |
+| **Offline**          | No                                            | Yes                               |
+| **Scales with**      | Provider's pricing                           | Your hard drive                   |
+
+The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLite is from 2000. ChromaDB is two years old. Both run on a laptop. Longhand bypasses the crisis by ignoring it — your past sessions are already on disk, written by Claude Code itself, in JSONL files that contain every single event verbatim. Longhand reads those files, indexes them locally, and gives you semantic recall over your entire history without ever sending a token through someone else's API.
+
+**More secure than tokens. Lossless. Yours.**
+
+---
+
 ## The Principles
 
 Longhand is built on a handful of principles. If you disagree with them, you probably want a different tool.
