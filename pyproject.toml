@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longhand"
-version = "0.2.0"
-description = "Lossless local memory for Claude Code sessions. The full, unabbreviated version."
+version = "0.2.8"
+description = "Persistent AI memory without tokens. Lossless local recall for Claude Code sessions."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Nate Nelson" },
+    { name = "Nate Nelson", email = "wynelson94@gmail.com" },
 ]
 requires-python = ">=3.10"
 keywords = ["claude", "claude-code", "ai-memory", "lossless", "forensic", "search", "recall"]
