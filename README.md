@@ -2,7 +2,7 @@
 
 **Persistent AI memory without tokens.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
-> *Status: v0.2.5 — stable enough to use daily, security-reviewed, undergoing red team review. Built in a single day by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 346 problem→fix episodes. The bones are right; the body is being made.*
+> *Status: v0.2.8 — stable, daily-driver tested, stress-tested by a fresh Claude against all 13 MCP tools. Built in a single day by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 346 problem→fix episodes across 37 inferred projects. The bones are right; the body is being made.*
 
 ---
 
@@ -77,17 +77,18 @@ When you use Claude Code, every session writes a JSONL file to `~/.claude/projec
 Longhand reads those files. Then it gives you:
 
 - **Semantic search** across every event you've ever generated
-- **Filterable search** — by tool, file, session, time range, event type
+- **Filterable search** — by tool, file, session, project, time range, event type — all filters combinable
 - **Tool call archaeology** — "show me every Bash command I ran in March that touched Supabase"
 - **File history across sessions** — every edit to a specific file, chronologically, across all your sessions
 - **Session replay** — reconstruct any file's state at any point in any past session
 - **Reasoning retrieval** — query Claude's verbatim thinking blocks
-- **Timeline view** — chronological playback of any session
+- **Timeline view** — chronological playback with pagination (offset, tail, summary-only scan mode)
 - **Fuzzy recall** — natural-language questions about past work ("that race condition fix from last week")
 - **Project inference** — automatic detection of which projects you've worked on, with categories and aliases
 - **Episode extraction** — automatic detection of problem→fix sequences in your sessions
-- **MCP server** — lets Claude Desktop query Longhand directly during live conversations
+- **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
+- **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message
 
 ---
 
@@ -195,9 +196,9 @@ That's one local command. No API call. The fix came from a session file Claude C
 Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has thirteen tools:
 
 **Core (searchable archive):**
-- `search` — semantic search across all events
-- `list_sessions` — recent sessions with filters
-- `get_session_timeline` — chronological view of a session
+- `search` — semantic search with session, project, tool, file, and event_type filters (all combinable)
+- `list_sessions` — recent sessions with project/time filters
+- `get_session_timeline` — chronological view with offset/tail pagination and summary-only scan mode
 - `replay_file` — reconstruct file state at a point in time
 - `get_file_history` — every edit to a file across all sessions
 - `get_stats` — storage statistics
@@ -207,8 +208,10 @@ Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After 
 - `match_project` — find projects by partial name / category / description
 - `find_episodes` — structured search for problem→fix pairs
 - `get_episode` — full detail for one episode including diff + file state
-- `list_projects` — browse inferred projects
+- `list_projects` — browse inferred projects (compact by default, verbose optional)
 - `get_project_timeline` — session-level timeline for one project
+
+All tools support `max_chars` output capping with pagination hints. No more 96k dumps crashing your context.
 
 Once installed, you can ask Claude things like *"what did we decide about the auth middleware in last week's session?"* and it will actually search its own past work.
 
@@ -282,19 +285,20 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 
 ## Stats
 
-Tested end-to-end on a real 721-file Claude Code history:
+Tested end-to-end on a real Claude Code history:
 - 102 unique sessions
-- 51,000 events
-- 18,000 tool calls
-- 3,000 file edits
+- 51,623 events
+- 18,621 tool calls
+- 3,086 file edits
 - 224 thinking blocks
-- 34 projects inferred automatically
-- 74 problem→fix episodes extracted
-- Vector search: ~126ms on 47k indexed events
+- 37 projects inferred automatically
+- 346 problem→fix episodes extracted (64 resolved)
+- 47,818 vectors indexed
+- Vector search: ~126ms
 - SQL queries: <30ms
 - Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
 
-45/45 unit tests passing. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
+45/45 unit tests passing. All 13 MCP tools stress-tested by a fresh Claude with zero context — combined multi-filter queries, edge cases, pagination, and truncation all verified. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
 
 ---
 
