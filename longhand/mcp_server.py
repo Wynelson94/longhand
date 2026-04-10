@@ -33,6 +33,7 @@ from longhand.recall import recall as recall_pipeline
 from longhand.recall.project_match import match_projects
 from longhand.replay import ReplayEngine
 from longhand.storage import LonghandStore
+from longhand.storage.sqlite_store import _escape_like
 
 
 server: Server = Server("longhand")
@@ -110,7 +111,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language query"},
-                    "limit": {"type": "integer", "default": 10},
+                    "limit": {"default": 10, "description": "Max results (default 10)"},
                     "session_id": {"type": "string", "description": "Scope search to a single session (prefix match)"},
                     "project_id": {"type": "string", "description": "Scope search to a project by project_id"},
                     "project_name": {"type": "string", "description": "Scope search to a project by name substring (e.g. 'gonzo')"},
@@ -120,7 +121,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "tool_name": {"type": "string", "description": "Filter by tool name (Edit, Bash, Read, etc.)"},
                     "file_path_contains": {"type": "string", "description": "Filter to events with an explicit file_path containing this string (tool_call/tool_result events only — user messages won't have file_path metadata)"},
-                    "max_chars": {"type": "integer", "default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
+                    "max_chars": {"default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
                 },
                 "required": ["query"],
             },
@@ -132,7 +133,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Filter by project path substring"},
-                    "limit": {"type": "integer", "default": 20},
+                    "limit": {"default": 20, "description": "Max results (default 20)"},
                 },
             },
         ),
@@ -147,9 +148,9 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 100, "description": "Max events to return (default 100)"},
-                    "offset": {"type": "integer", "default": 0, "description": "Skip first N events (for pagination)"},
-                    "tail": {"type": "integer", "description": "Return only the last N events of the session"},
+                    "limit": {"default": 100, "description": "Max events to return (default 100)"},
+                    "offset": {"default": 0, "description": "Skip first N events (for pagination)"},
+                    "tail": {"description": "Return only the last N events of the session"},
                     "include_thinking": {"type": "boolean", "default": True},
                     "event_type": {"type": "string", "description": "Filter to a single event type"},
                     "summary_only": {
@@ -157,7 +158,7 @@ async def list_tools() -> list[Tool]:
                         "default": False,
                         "description": "Return only event_type, timestamp, tool_name, file_path — no content. Great for scanning long sessions.",
                     },
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
+                    "max_chars": {"default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["session_id"],
             },
@@ -209,8 +210,8 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language question"},
-                    "max_episodes": {"type": "integer", "default": 5},
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
+                    "max_episodes": {"default": 5, "description": "Max episodes to return"},
+                    "max_chars": {"default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["query"],
             },
@@ -226,7 +227,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 5},
+                    "top_k": {"default": 5, "description": "Max project matches to return"},
                 },
                 "required": ["query"],
             },
@@ -246,7 +247,7 @@ async def list_tools() -> list[Tool]:
                     "until": {"type": "string", "description": "ISO timestamp"},
                     "keyword": {"type": "string"},
                     "has_fix": {"type": "boolean", "default": True},
-                    "limit": {"type": "integer", "default": 20},
+                    "limit": {"default": 20, "description": "Max results (default 20)"},
                 },
             },
         ),
@@ -274,7 +275,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "keyword": {"type": "string"},
                     "category": {"type": "string"},
-                    "limit": {"type": "integer", "default": 20},
+                    "limit": {"default": 20, "description": "Max results (default 20)"},
                     "verbose": {
                         "type": "boolean",
                         "default": False,
@@ -296,7 +297,7 @@ async def list_tools() -> list[Tool]:
                     "project_id": {"type": "string"},
                     "since": {"type": "string"},
                     "until": {"type": "string"},
-                    "limit": {"type": "integer", "default": 50},
+                    "limit": {"default": 50, "description": "Max results (default 50)"},
                 },
                 "required": ["project_id"],
             },
@@ -337,6 +338,20 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             if project_id:
                 proj_sessions = store.sqlite.list_sessions(project_id=project_id, limit=1000)
                 project_session_ids = {s["session_id"] for s in proj_sessions}
+
+                # Fallback: if no sessions linked via project_id, find sessions
+                # that edited files in the project's directory
+                if not project_session_ids:
+                    proj = store.sqlite.get_project(project_id)
+                    if proj and proj.get("canonical_path"):
+                        canon = proj["canonical_path"]
+                        with store.sqlite.connect() as conn:
+                            rows = conn.execute(
+                                "SELECT DISTINCT session_id FROM events "
+                                "WHERE file_path LIKE ? ESCAPE '\\'",
+                                (f"%{_escape_like(canon)}%",),
+                            ).fetchall()
+                            project_session_ids = {r["session_id"] for r in rows}
 
         # When post-filters are active, request extra results so we have enough after filtering
         has_post_filter = project_session_ids is not None or arguments.get("file_path_contains")
