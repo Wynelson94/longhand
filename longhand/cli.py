@@ -36,6 +36,9 @@ from longhand.setup_commands import (
     ingest_single_session as _ingest_single,
     mcp_install as _mcp_install,
     mcp_uninstall as _mcp_uninstall,
+    prompt_hook_install as _prompt_hook_install,
+    prompt_hook_uninstall as _prompt_hook_uninstall,
+    run_prompt_hook as _run_prompt_hook,
 )
 
 from longhand.parser import JSONLParser, discover_sessions
@@ -610,6 +613,149 @@ def projects(
         )
 
     console.print(table)
+
+
+# -----------------------------------------------------------------------------
+# CONTEXT — output relevant past context for hook injection
+# -----------------------------------------------------------------------------
+
+@app.command()
+def context(
+    query: str = typer.Argument(..., help="The user's prompt or query"),
+    max_episodes: int = typer.Option(2, "--max", "-n"),
+    min_relevance: float = typer.Option(
+        2.0, "--threshold", help="Minimum rank score to inject context (filters noise)"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Restrict to a project name or id"
+    ),
+    silent_if_empty: bool = typer.Option(
+        True, "--silent/--always",
+        help="Print nothing when nothing relevant is found (vs. print 'no context')",
+    ),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Output relevant past context for a query in a hook-injectable format.
+
+    Designed to be called from a UserPromptSubmit hook so Claude Code can
+    automatically pull in past context before responding. Returns plain text
+    (no Rich formatting). Returns silently when nothing is relevant enough
+    to inject — avoids polluting prompts with low-quality matches.
+    """
+    import sys
+    from longhand.recall import recall as _recall
+
+    store = _get_store(data_dir)
+
+    # Skip very short queries — usually not worth recalling
+    if len(query.strip()) < 10:
+        if not silent_if_empty:
+            print("(query too short for recall)")
+        return
+
+    try:
+        result = _recall(store, query, max_episodes=max_episodes)
+    except Exception as e:
+        # Hooks must never crash the parent process
+        if not silent_if_empty:
+            print(f"(longhand error: {e})", file=sys.stderr)
+        return
+
+    # Project filter (post-recall)
+    if project and result.episodes:
+        proj_id = None
+        if project.startswith("p_"):
+            proj_id = project
+        else:
+            matches = store.sqlite.list_projects(keyword=project, limit=5)
+            if matches:
+                proj_id = matches[0]["project_id"]
+        if proj_id:
+            result.episodes = [e for e in result.episodes if e.get("project_id") == proj_id]
+
+    # Quality gate — only inject if we have a strong match
+    if not result.episodes:
+        if not silent_if_empty:
+            print("(no relevant past context)")
+        return
+
+    top = result.episodes[0]
+    confidence = top.get("confidence") or 0.0
+
+    # Compute relevance: high confidence + matching keywords
+    import re as _re
+    query_words = set(_re.findall(r"[a-z]{4,}", query.lower()))
+    searchable = " ".join([
+        top.get("problem_description") or "",
+        top.get("diagnosis_summary") or "",
+        top.get("fix_summary") or "",
+    ]).lower()
+    keyword_overlap = sum(1 for w in query_words if w in searchable)
+    relevance = keyword_overlap * 1.0 + confidence * 2.0
+
+    if relevance < min_relevance:
+        if not silent_if_empty:
+            print(f"(relevance {relevance:.2f} below threshold {min_relevance})")
+        return
+
+    # Build the injection block — plain text, parseable by humans and AIs
+    lines: list[str] = []
+    lines.append("[Longhand recall — relevant past context]")
+    lines.append("")
+
+    # Project info
+    if top.get("project_id"):
+        proj = store.sqlite.get_project(top["project_id"])
+        if proj:
+            lines.append(f"Project: {proj['display_name']}")
+
+    # Time
+    when = top.get("started_at", "")[:16]
+    lines.append(f"Found in session {top['session_id'][:8]} at {when}")
+    lines.append("")
+
+    # Problem
+    if top.get("problem_description"):
+        lines.append("Problem:")
+        lines.append(top["problem_description"][:300].strip())
+        lines.append("")
+
+    # Diagnosis (if we have one)
+    if top.get("diagnosis_summary"):
+        lines.append("Diagnosis:")
+        lines.append(top["diagnosis_summary"][:400].strip())
+        lines.append("")
+
+    # Fix
+    if top.get("fix_summary"):
+        lines.append("Fix:")
+        lines.append(top["fix_summary"][:300])
+        lines.append("")
+
+    # Diff (if available)
+    fix = result.artifacts.get("fix") if result.artifacts else None
+    if fix and (fix.get("old") or fix.get("new")):
+        lines.append("Diff:")
+        old = (fix.get("old") or "").strip()[:600]
+        new = (fix.get("new") or "").strip()[:600]
+        if old:
+            for line in old.split("\n")[:10]:
+                lines.append(f"- {line}")
+        if new:
+            for line in new.split("\n")[:10]:
+                lines.append(f"+ {line}")
+        lines.append("")
+
+    # File reference
+    if fix and fix.get("file_path"):
+        lines.append(f"File: {fix['file_path']}")
+        lines.append("")
+
+    lines.append(f"(Use `longhand export {top['episode_id']}` for full detail.)")
+    lines.append("[end Longhand recall]")
+
+    # Plain print, not rich.console — hooks consume stdout directly
+    print("\n".join(lines))
 
 
 # -----------------------------------------------------------------------------
@@ -1293,6 +1439,35 @@ def hook_install_cmd():
 def hook_uninstall_cmd():
     """Remove the SessionEnd hook."""
     _hook_uninstall()
+
+
+# Prompt hook subcommands — auto-context injection on user message
+prompt_hook_app = typer.Typer(
+    name="prompt-hook",
+    help="Claude Code UserPromptSubmit hook (auto-context injection)",
+)
+app.add_typer(prompt_hook_app, name="prompt-hook")
+
+
+@prompt_hook_app.command("install")
+def prompt_hook_install_cmd():
+    """Install the UserPromptSubmit hook for auto-context injection."""
+    _prompt_hook_install()
+
+
+@prompt_hook_app.command("uninstall")
+def prompt_hook_uninstall_cmd():
+    """Remove the UserPromptSubmit hook."""
+    _prompt_hook_uninstall()
+
+
+@app.command("__prompt-hook-run", hidden=True)
+def prompt_hook_run_cmd():
+    """Internal: read stdin JSON, return additionalContext via hookSpecificOutput.
+
+    Called by the UserPromptSubmit hook wiring. Not for direct user invocation.
+    """
+    _run_prompt_hook()
 
 
 @mcp_app.command("install")

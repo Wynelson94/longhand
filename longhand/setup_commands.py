@@ -94,6 +94,141 @@ def hook_install() -> None:
     )
 
 
+def prompt_hook_install() -> None:
+    """Install the UserPromptSubmit hook for auto-context injection."""
+    settings = _load_json(CLAUDE_SETTINGS_PATH)
+    backup = _backup(CLAUDE_SETTINGS_PATH)
+
+    longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
+
+    hook_entry = {
+        "command": f"{longhand_bin} __prompt-hook-run"
+    }
+
+    hooks = settings.setdefault("hooks", {})
+    user_prompt = hooks.setdefault("UserPromptSubmit", [])
+
+    already = any(
+        isinstance(h, dict) and "__prompt-hook-run" in h.get("command", "")
+        for h in user_prompt
+    )
+    if already:
+        console.print("[yellow]Longhand prompt hook already installed.[/yellow]")
+        return
+
+    user_prompt.append(hook_entry)
+    _save_json(CLAUDE_SETTINGS_PATH, settings)
+
+    console.print(
+        Panel.fit(
+            f"[green]✓[/green] Installed UserPromptSubmit hook\n"
+            f"[dim]Config:[/dim] {CLAUDE_SETTINGS_PATH}\n"
+            f"[dim]Backup:[/dim] {backup or 'n/a'}\n\n"
+            f"Longhand will now auto-inject relevant past context into your "
+            f"Claude Code prompts when there's a strong match. Quiet by default —\n"
+            f"only injects when relevance is high.",
+            title="Prompt hook installed",
+            border_style="green",
+        )
+    )
+
+
+def prompt_hook_uninstall() -> None:
+    """Remove the UserPromptSubmit hook."""
+    if not CLAUDE_SETTINGS_PATH.exists():
+        console.print("[yellow]No Claude settings file found.[/yellow]")
+        return
+
+    settings = _load_json(CLAUDE_SETTINGS_PATH)
+    hooks = settings.get("hooks", {})
+    user_prompt = hooks.get("UserPromptSubmit", [])
+
+    filtered = [
+        h for h in user_prompt
+        if not (isinstance(h, dict) and "__prompt-hook-run" in h.get("command", ""))
+    ]
+
+    if len(filtered) == len(user_prompt):
+        console.print("[yellow]Longhand prompt hook was not installed.[/yellow]")
+        return
+
+    if filtered:
+        hooks["UserPromptSubmit"] = filtered
+    else:
+        hooks.pop("UserPromptSubmit", None)
+
+    _backup(CLAUDE_SETTINGS_PATH)
+    _save_json(CLAUDE_SETTINGS_PATH, settings)
+    console.print("[green]✓[/green] Removed UserPromptSubmit hook")
+
+
+def run_prompt_hook() -> None:
+    """Read stdin JSON, run longhand context, and emit hookSpecificOutput JSON.
+
+    This is what the hook actually invokes. Designed to be silent and fail-safe
+    so it can never break Claude Code.
+    """
+    import io as _io
+    import json as _json
+
+    try:
+        raw = sys.stdin.read()
+        if not raw.strip():
+            print("{}")
+            return
+
+        data = _json.loads(raw)
+        if not isinstance(data, dict):
+            print("{}")
+            return
+
+        prompt = data.get("prompt") or ""
+        cwd = data.get("cwd")
+
+        if not isinstance(prompt, str) or len(prompt.strip()) < 12:
+            print("{}")
+            return
+
+        # Capture context output
+        from longhand.cli import context as context_cmd
+        import contextlib
+
+        captured = _io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            try:
+                # Call the typer function directly with default args
+                context_cmd(
+                    query=prompt,
+                    max_episodes=2,
+                    min_relevance=2.5,
+                    project=None,
+                    silent_if_empty=True,
+                    data_dir=None,
+                )
+            except SystemExit:
+                pass
+            except Exception:
+                pass
+
+        injected = captured.getvalue().strip()
+
+        if not injected:
+            print("{}")
+            return
+
+        # Emit hookSpecificOutput JSON for Claude Code to inject
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": injected,
+            }
+        }
+        print(_json.dumps(output))
+    except Exception:
+        # Hooks must NEVER crash the parent process
+        print("{}")
+
+
 def hook_uninstall() -> None:
     """Remove the SessionEnd hook from ~/.claude/settings.json."""
     if not CLAUDE_SETTINGS_PATH.exists():
@@ -224,19 +359,32 @@ def doctor() -> None:
 
     # 2. SessionEnd hook installed?
     hook_installed = False
+    prompt_hook_installed = False
     if CLAUDE_SETTINGS_PATH.exists():
         settings = _load_json(CLAUDE_SETTINGS_PATH)
         for h in settings.get("hooks", {}).get("SessionEnd", []):
             if isinstance(h, dict) and "longhand ingest-session" in h.get("command", ""):
                 hook_installed = True
                 break
+        for h in settings.get("hooks", {}).get("UserPromptSubmit", []):
+            if isinstance(h, dict) and "__prompt-hook-run" in h.get("command", ""):
+                prompt_hook_installed = True
+                break
 
     if hook_installed:
-        table.add_row("SessionEnd hook", "[green]✓[/green] installed")
+        table.add_row("SessionEnd hook", "[green]✓[/green] installed (auto-ingest)")
     else:
         table.add_row(
             "SessionEnd hook",
             "[yellow]⚠[/yellow] not installed (run [bold]longhand hook install[/bold])",
+        )
+
+    if prompt_hook_installed:
+        table.add_row("UserPromptSubmit hook", "[green]✓[/green] installed (auto-context)")
+    else:
+        table.add_row(
+            "UserPromptSubmit hook",
+            "[yellow]⚠[/yellow] not installed (run [bold]longhand prompt-hook install[/bold])",
         )
 
     # 3. Claude Desktop MCP installed?
@@ -251,7 +399,27 @@ def doctor() -> None:
     else:
         table.add_row(
             "Claude Desktop MCP",
-            "[yellow]⚠[/yellow] not installed (run [bold]longhand mcp install[/bold])",
+            "[dim]—[/dim] not installed (run [bold]longhand mcp install[/bold])",
+        )
+
+    # 4. Claude Code MCP installed?
+    cc_mcp_installed = False
+    cc_config = Path.home() / ".claude.json"
+    if cc_config.exists():
+        try:
+            cc_data = _load_json(cc_config)
+            servers = cc_data.get("mcpServers", {})
+            if "longhand" in servers:
+                cc_mcp_installed = True
+        except Exception:
+            pass
+
+    if cc_mcp_installed:
+        table.add_row("Claude Code MCP", "[green]✓[/green] installed")
+    else:
+        table.add_row(
+            "Claude Code MCP",
+            "[dim]—[/dim] not installed (run [bold]claude mcp add longhand -s user -- longhand mcp-server[/bold])",
         )
 
     # 4. Data directory

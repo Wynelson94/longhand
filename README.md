@@ -95,6 +95,13 @@ longhand stats
 longhand sessions
 longhand projects
 
+# Daily-use commands
+longhand recap                              # what have I been up to
+longhand recap --days 30 --project bsoi     # filtered recap
+longhand continue <session-id>              # pick up where I left off
+longhand patterns                           # what bugs do I keep fixing
+longhand history src/app/route.ts           # every edit ever to a file
+
 # Semantic search
 longhand search "race condition"
 longhand search "stripe webhook" --tool Edit
@@ -108,6 +115,11 @@ longhand recall "the python missing module bug last month"
 longhand timeline <session-id-prefix>
 longhand replay <session-id> /path/to/file.ts
 longhand diff <event-id>
+
+# Export
+longhand export latest-fix                  # most recent resolved episode
+longhand export ep_<id> --out fix.md        # specific episode to file
+longhand export <session-id-prefix>         # full session timeline
 ```
 
 Session IDs accept prefix matches — `longhand timeline cf86` is enough if only one session starts with that.
