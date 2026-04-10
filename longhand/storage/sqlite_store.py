@@ -329,6 +329,7 @@ class SQLiteStore:
         until: str | None = None,
         has_error: bool | None = None,
         limit: int = 500,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         with self.connect() as conn:
             conditions: list[str] = []
@@ -358,8 +359,8 @@ class SQLiteStore:
             query = "SELECT * FROM events"
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
-            query += " ORDER BY timestamp ASC, sequence ASC LIMIT ?"
-            params.append(limit)
+            query += " ORDER BY timestamp ASC, sequence ASC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
 

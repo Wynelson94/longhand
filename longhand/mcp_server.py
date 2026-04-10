@@ -38,7 +38,7 @@ from longhand.storage import LonghandStore
 server: Server = Server("longhand")
 
 
-def _format_event(row: dict[str, Any]) -> dict[str, Any]:
+def _format_event(row: dict[str, Any], content_chars: int = 1500) -> dict[str, Any]:
     """Turn a raw SQLite event row into a compact dict for Claude."""
     return {
         "event_id": row["event_id"],
@@ -47,8 +47,19 @@ def _format_event(row: dict[str, Any]) -> dict[str, Any]:
         "timestamp": row["timestamp"],
         "tool_name": row.get("tool_name"),
         "file_path": row.get("file_path"),
-        "content": (row.get("content") or "")[:1500],
+        "content": (row.get("content") or "")[:content_chars],
     }
+
+
+def _truncate_output(text: str, max_chars: int) -> str:
+    """Cap output size and append a pagination hint if truncated."""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars] + (
+        "\n\n[... truncated at "
+        + str(max_chars)
+        + " chars. Use offset/limit, tail, or narrower filters to paginate.]"
+    )
 
 
 @server.list_tools()
@@ -59,19 +70,23 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Semantic search across all stored Claude Code session events. "
                 "Returns events matching a natural language query, with optional "
-                "filters by event type, session, tool, or file path."
+                "filters by event type, session, project, tool, or file path."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language query"},
                     "limit": {"type": "integer", "default": 10},
+                    "session_id": {"type": "string", "description": "Scope search to a single session (prefix match)"},
+                    "project_id": {"type": "string", "description": "Scope search to a project by project_id"},
+                    "project_name": {"type": "string", "description": "Scope search to a project by name substring (e.g. 'gonzo')"},
                     "event_type": {
                         "type": "string",
                         "description": "Filter: user_message, assistant_text, assistant_thinking, tool_call, tool_result",
                     },
                     "tool_name": {"type": "string", "description": "Filter by tool name (Edit, Bash, Read, etc.)"},
                     "file_path_contains": {"type": "string", "description": "Filter results where file path contains this string"},
+                    "max_chars": {"type": "integer", "default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
                 },
                 "required": ["query"],
             },
@@ -89,13 +104,26 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_session_timeline",
-            description="Get a chronological timeline of events in a session. Supports session id prefix match.",
+            description=(
+                "Get a chronological timeline of events in a session. Supports session "
+                "id prefix match. Use 'tail' to get only the last N events (great for "
+                "checking how a session ended). Use 'offset' to paginate through long sessions."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 200},
+                    "limit": {"type": "integer", "default": 100, "description": "Max events to return (default 100)"},
+                    "offset": {"type": "integer", "default": 0, "description": "Skip first N events (for pagination)"},
+                    "tail": {"type": "integer", "description": "Return only the last N events of the session"},
                     "include_thinking": {"type": "boolean", "default": True},
+                    "event_type": {"type": "string", "description": "Filter to a single event type"},
+                    "summary_only": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Return only event_type, timestamp, tool_name, file_path — no content. Great for scanning long sessions.",
+                    },
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["session_id"],
             },
@@ -148,6 +176,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "query": {"type": "string", "description": "Natural language question"},
                     "max_episodes": {"type": "integer", "default": 5},
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["query"],
             },
@@ -246,38 +275,109 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     store = LonghandStore()
 
     if name == "search":
+        # Resolve session_id prefix if provided
+        search_session_id = None
+        if arguments.get("session_id"):
+            search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+
+        # Resolve project_name → set of session_ids for post-filtering
+        project_session_ids: set[str] | None = None
+        project_id = arguments.get("project_id")
+        project_name = arguments.get("project_name")
+        if project_id or project_name:
+            # Find sessions belonging to this project
+            if project_name and not project_id:
+                projects = store.sqlite.list_projects(keyword=project_name, limit=5)
+                if projects:
+                    project_id = projects[0]["project_id"]
+            if project_id:
+                proj_sessions = store.sqlite.list_sessions(project_id=project_id, limit=1000)
+                project_session_ids = {s["session_id"] for s in proj_sessions}
+
         hits = store.vectors.search(
             query=arguments["query"],
-            n_results=arguments.get("limit", 10),
+            n_results=arguments.get("limit", 10) * (3 if project_session_ids else 1),
             event_type=arguments.get("event_type"),
+            session_id=search_session_id,
             tool_name=arguments.get("tool_name"),
             file_path_contains=arguments.get("file_path_contains"),
         )
-        return [TextContent(type="text", text=json.dumps(hits, indent=2, default=str))]
+
+        # Post-filter by project if needed
+        if project_session_ids is not None:
+            hits = [
+                h for h in hits
+                if (h.get("metadata") or {}).get("session_id") in project_session_ids
+            ]
+            hits = hits[: arguments.get("limit", 10)]
+
+        max_chars = arguments.get("max_chars", 12000)
+        output = json.dumps(hits, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "list_sessions":
         rows = store.sqlite.list_sessions(
             project_path=arguments.get("project"),
             limit=arguments.get("limit", 20),
         )
-        return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
+        output = json.dumps(rows, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, 16000))]
 
     if name == "get_session_timeline":
         full_id = _resolve_session_prefix(store, arguments["session_id"])
         if not full_id:
             return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
-        events = store.sqlite.get_events(
-            session_id=full_id,
-            limit=arguments.get("limit", 200),
-        )
+        tail = arguments.get("tail")
+        offset = arguments.get("offset", 0)
+        limit = arguments.get("limit", 100)
 
-        include_thinking = arguments.get("include_thinking", True)
-        if not include_thinking:
-            events = [e for e in events if e["event_type"] != "assistant_thinking"]
+        if tail:
+            # For tail: fetch all events (up to a reasonable cap) then slice the end
+            all_events = store.sqlite.get_events(
+                session_id=full_id,
+                event_type=arguments.get("event_type"),
+                limit=5000,
+            )
+            include_thinking = arguments.get("include_thinking", True)
+            if not include_thinking:
+                all_events = [e for e in all_events if e["event_type"] != "assistant_thinking"]
+            events = all_events[-tail:]
+        else:
+            events = store.sqlite.get_events(
+                session_id=full_id,
+                event_type=arguments.get("event_type"),
+                limit=limit,
+                offset=offset,
+            )
+            include_thinking = arguments.get("include_thinking", True)
+            if not include_thinking:
+                events = [e for e in events if e["event_type"] != "assistant_thinking"]
 
-        formatted = [_format_event(e) for e in events]
-        return [TextContent(type="text", text=json.dumps(formatted, indent=2, default=str))]
+        summary_only = arguments.get("summary_only", False)
+        if summary_only:
+            formatted = [
+                {
+                    "event_id": e["event_id"],
+                    "event_type": e["event_type"],
+                    "timestamp": e["timestamp"],
+                    "tool_name": e.get("tool_name"),
+                    "file_path": e.get("file_path"),
+                }
+                for e in events
+            ]
+        else:
+            formatted = [_format_event(e) for e in events]
+
+        # Add pagination metadata
+        meta = {"session_id": full_id, "returned": len(formatted), "offset": offset}
+        if tail:
+            meta["tail"] = tail
+        payload = {"meta": meta, "events": formatted}
+
+        max_chars = arguments.get("max_chars", 16000)
+        output = json.dumps(payload, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "replay_file":
         full_id = _resolve_session_prefix(store, arguments["session_id"])
@@ -358,7 +458,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             "artifacts": result.artifacts,
             "narrative": result.narrative,
         }
-        return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+        max_chars = arguments.get("max_chars", 16000)
+        output = json.dumps(payload, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "match_project":
         matches = match_projects(
