@@ -1,5 +1,6 @@
 # Longhand
 
+[![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 **Persistent AI memory without tokens.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
 > *Status: v0.3.2 — stable, daily-driver tested, security-audited (zero critical findings), stress-tested by a fresh Claude against all 15 MCP tools. Built by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 665 git operations / 346 problem→fix episodes across 37 inferred projects. 71 unit tests passing.*
