@@ -2,7 +2,7 @@
 
 **Persistent AI memory without tokens.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
-> *Status: v0.2.8 — stable, daily-driver tested, stress-tested by a fresh Claude against all 13 MCP tools. Built in a single day by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 346 problem→fix episodes across 37 inferred projects. The bones are right; the body is being made.*
+> *Status: v0.3.2 — stable, daily-driver tested, security-audited (zero critical findings), stress-tested by a fresh Claude against all 15 MCP tools. Built by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 665 git operations / 346 problem→fix episodes across 37 inferred projects. 71 unit tests passing.*
 
 ---
 
@@ -86,9 +86,11 @@ Longhand reads those files. Then it gives you:
 - **Fuzzy recall** — natural-language questions about past work ("that race condition fix from last week")
 - **Project inference** — automatic detection of which projects you've worked on, with categories and aliases
 - **Episode extraction** — automatic detection of problem→fix sequences in your sessions
-- **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
+- **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
+- **MCP server** — 15 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
-- **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message
+- **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message (configurable threshold and size cap)
+- **Configurable** — `longhand config` to tune injection relevance, token budget, and behavior without editing code
 
 ---
 
@@ -104,7 +106,9 @@ Then make it current:
 longhand ingest                # ingest all your existing Claude Code history
 longhand analyze --all         # run analysis (projects, outcomes, episodes)
 longhand hook install          # auto-ingest every future session
+longhand prompt-hook install   # (optional) auto-inject past context into new prompts
 longhand mcp install           # let Claude Desktop call Longhand as MCP tools
+longhand config                # view/tune hook behavior (relevance threshold, injection size)
 longhand doctor                # verify everything is wired up
 ```
 
@@ -141,10 +145,21 @@ longhand timeline <session-id-prefix>
 longhand replay <session-id> /path/to/file.ts
 longhand diff <event-id>
 
+# Git history
+longhand git-log                            # recent git operations across all sessions
+longhand git-log <session-id>               # git ops in a specific session
+longhand git-log --type commit              # only commits
+longhand git-log --query "fix parser"       # search commit messages
+
 # Export
 longhand export latest-fix                  # most recent resolved episode
 longhand export ep_<id> --out fix.md        # specific episode to file
 longhand export <session-id-prefix>         # full session timeline
+
+# Configuration
+longhand config                             # show current hook settings
+longhand config --set hook.min_relevance=3.0  # tune injection threshold
+longhand config --set hook.max_inject_chars=1000  # cap token usage
 ```
 
 Session IDs accept prefix matches — `longhand timeline cf86` is enough if only one session starts with that.
@@ -193,7 +208,7 @@ That's one local command. No API call. The fix came from a session file Claude C
 
 ## MCP Integration (Claude Desktop)
 
-Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has thirteen tools:
+Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has fifteen tools:
 
 **Core (searchable archive):**
 - `search` — semantic search with session, project, tool, file, and event_type filters (all combinable)
@@ -210,6 +225,10 @@ Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After 
 - `get_episode` — full detail for one episode including diff + file state
 - `list_projects` — browse inferred projects (compact by default, verbose optional)
 - `get_project_timeline` — session-level timeline for one project
+
+**Git history:**
+- `get_session_commits` — all git operations in a session (commits, pushes, checkouts, merges)
+- `find_commits` — search across all sessions by commit message, hash prefix, or branch name
 
 All tools support `max_chars` output capping with pagination hints. No more 96k dumps crashing your context.
 
@@ -247,12 +266,12 @@ longhand/
 │   ├── sqlite_store.py    — structured data + full raw JSON preserved
 │   ├── vector_store.py    — ChromaDB (events + sessions + projects collections)
 │   └── store.py           — unified ingest pipeline
-├── extractors/            — per-event (errors, file refs, topics)
+├── extractors/            — per-event (errors, file refs, topics, git ops)
 ├── analysis/              — per-session (project, outcomes, episodes, embeddings)
 ├── recall/                — per-query (time parsing, project match, narrative)
 ├── cli.py                 — Typer CLI with Rich output
-├── mcp_server.py          — Model Context Protocol server (13 tools)
-└── setup_commands.py      — hook install, mcp install, doctor
+├── mcp_server.py          — Model Context Protocol server (15 tools)
+└── setup_commands.py      — hook install, mcp install, config, doctor
 ```
 
 **Source of truth:** SQLite. Every event's raw JSON is preserved as a blob. ChromaDB is the search index — it only holds what's needed for semantic retrieval.
@@ -293,12 +312,13 @@ Tested end-to-end on a real Claude Code history:
 - 224 thinking blocks
 - 37 projects inferred automatically
 - 346 problem→fix episodes extracted (64 resolved)
+- 665 git operations extracted (22 commits linked)
 - 47,818 vectors indexed
 - Vector search: ~126ms
 - SQL queries: <30ms
 - Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
 
-45/45 unit tests passing. All 13 MCP tools stress-tested by a fresh Claude with zero context — combined multi-filter queries, edge cases, pagination, and truncation all verified. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
+71 unit tests passing. All 15 MCP tools stress-tested by a fresh Claude with zero context. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
 
 ---
 

@@ -83,6 +83,23 @@ MAX_FILTER_LENGTH = 500  # max length for any user-provided keyword/path filter
 
 Every keyword, file path, and project filter is truncated to 500 chars before use. The `_escape_like()` helper applies the truncation and escapes `%`, `_`, and `\`.
 
+### Input bounds (mcp_server.py)
+
+```python
+MAX_LIMIT = 1000        # max result count for any MCP tool
+MAX_OUTPUT_CHARS = 200000  # max output size for any MCP response
+```
+
+All MCP tool `limit` parameters are capped at 1000 via `_limit()`. All `max_chars` parameters are capped at 200KB via `_max_chars()`. Integer and boolean parameters are coerced from strings via `_int()`/`_bool()` to handle MCP bridge type mismatches.
+
+### SQLite concurrency
+
+```python
+conn.execute("PRAGMA busy_timeout = 5000")
+```
+
+Every SQLite connection sets a 5-second busy timeout, preventing `SQLITE_BUSY` errors when the SessionEnd hook fires while a manual `longhand ingest` is running.
+
 ### Input bounds (setup_commands.py)
 
 ```python
@@ -91,6 +108,19 @@ _HOOK_PROMPT_MAX_LEN  = 8000        # max prompt length passed to recall
 ```
 
 The UserPromptSubmit hook reads at most 256KB from stdin. The prompt is truncated to 8000 chars before being passed to the recall pipeline.
+
+### File permissions
+
+The `~/.longhand/` data directory is created with `mode=0o700` (owner-only read/write/execute). On shared systems, other users cannot read your session data, thinking blocks, or indexed content.
+
+### Configurable injection
+
+The `UserPromptSubmit` hook is tunable via `~/.longhand/config.json`:
+- `hook.min_relevance` — minimum relevance score to inject context (default 2.5)
+- `hook.max_inject_chars` — cap injection size to control token usage (default 2000 chars)
+- `hook.enabled` — disable entirely without uninstalling
+
+Users concerned about token costs or stale context injection can raise the threshold or cap the size.
 
 ### Fail-open hooks
 
@@ -115,6 +145,7 @@ Every `conn.execute()` call uses bound parameters. There are zero f-string SQL c
 
 - `~/.longhand/longhand.db` (SQLite)
 - `~/.longhand/chroma/` (ChromaDB persistent collections)
+- `~/.longhand/config.json` (only when you explicitly run `longhand config --set`)
 - `~/.claude/settings.json` (only when you explicitly run `longhand hook install` or `longhand prompt-hook install`)
 - `~/.claude/settings.json.longhand-backup` (created automatically before any settings.json modification)
 
