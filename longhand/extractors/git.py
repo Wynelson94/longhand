@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -292,7 +293,7 @@ def _parse_generic(subcommand: str, command: str, output: str) -> GitSignal:
 
 # --- Dispatcher ---
 
-_PARSERS: dict[str, any] = {
+_PARSERS: dict[str, Any] = {
     "commit": _parse_commit,
     "push": _parse_push,
     "pull": _parse_pull,

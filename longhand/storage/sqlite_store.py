@@ -587,6 +587,7 @@ class SQLiteStore:
                     json.dumps(ep.get("tags", [])),
                     ep.get("confidence", 0.5),
                     ep.get("status", "unresolved"),
+                    ep.get("fix_commit_hash"),
                 )
                 for ep in episodes
             ]
@@ -596,8 +597,8 @@ class SQLiteStore:
                     episode_id, session_id, project_id, started_at, ended_at,
                     problem_event_id, diagnosis_event_id, fix_event_id, verification_event_id,
                     problem_description, diagnosis_summary, fix_summary,
-                    touched_files_json, tags_json, confidence, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    touched_files_json, tags_json, confidence, status, fix_commit_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

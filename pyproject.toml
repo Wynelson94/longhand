@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longhand"
-version = "0.2.8"
+version = "0.3.0"
 description = "Persistent AI memory without tokens. Lossless local recall for Claude Code sessions."
 readme = "README.md"
 license = { text = "MIT" }

@@ -60,6 +60,15 @@ def _get_store(data_dir: Optional[str] = None) -> LonghandStore:
     return LonghandStore(data_dir=data_dir)
 
 
+def _resolve_prefix(store: LonghandStore, prefix: str) -> str | None:
+    """Resolve a session ID prefix to a full session ID."""
+    rows = store.sqlite.list_sessions(limit=1000)
+    for row in rows:
+        if row["session_id"].startswith(prefix):
+            return row["session_id"]
+    return None
+
+
 def _format_timestamp(iso: str) -> str:
     try:
         dt = datetime.fromisoformat(iso)

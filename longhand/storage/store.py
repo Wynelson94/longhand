@@ -134,11 +134,32 @@ class LonghandStore:
 
     @staticmethod
     def _extract_git_operations(session_id: str, events: list[Event]) -> list[dict]:
-        """Build git_operations rows from events with git_operation set."""
+        """Build git_operations rows from events with git_operation set.
+
+        The full GitSignal is re-extracted here to capture fields (remote,
+        files_changed_count, success) that aren't stored on the Event model.
+        """
+        from longhand.extractors.git import extract_git_signal
+
         ops: list[dict] = []
+        # Build tool_input lookup for paired tool_calls
+        tool_inputs: dict[str, dict] = {}
+        for e in events:
+            etype = e.event_type if isinstance(e.event_type, str) else e.event_type.value
+            if etype == "tool_call" and e.tool_use_id and e.tool_input:
+                tool_inputs[e.tool_use_id] = e.tool_input
+
         for e in events:
             if not e.git_operation:
                 continue
+
+            # Re-extract full signal to get remote, files_changed, success
+            command = ""
+            if e.tool_use_id:
+                paired_input = tool_inputs.get(e.tool_use_id, {})
+                command = paired_input.get("command", "")
+            signal = extract_git_signal(command, e.tool_output or "")
+
             op_id = "gitop_" + hashlib.sha1(
                 f"{session_id}:{e.event_id}".encode()
             ).hexdigest()[:16]
@@ -149,11 +170,11 @@ class LonghandStore:
                 "operation_type": e.git_operation,
                 "commit_hash": e.git_commit_hash,
                 "commit_message": e.git_commit_message,
-                "branch": e.git_branch,
-                "remote": None,
-                "files_changed_count": None,
+                "branch": signal.branch if signal else e.git_branch,
+                "remote": signal.remote if signal else None,
+                "files_changed_count": signal.files_changed_count if signal else None,
                 "timestamp": e.timestamp.isoformat(),
-                "success": True,
+                "success": signal.success if signal else True,
             })
         return ops
 
