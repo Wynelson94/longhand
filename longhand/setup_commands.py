@@ -183,6 +183,31 @@ def prompt_hook_uninstall() -> None:
 _HOOK_STDIN_MAX_BYTES = 256 * 1024  # 256KB — Claude Code prompts never exceed this
 _HOOK_PROMPT_MAX_LEN = 8000          # Cap the prompt we pass to the recall pipeline
 
+# Configurable hook behavior — users can override via ~/.longhand/config.json
+_DEFAULT_HOOK_CONFIG = {
+    "min_relevance": 2.5,        # Minimum relevance score to inject (higher = less noise)
+    "max_inject_chars": 2000,    # Max characters injected into prompt
+    "max_episodes": 2,           # Max episodes to consider
+    "enabled": True,             # Set to false to disable without uninstalling
+}
+
+
+def _load_hook_config() -> dict:
+    """Load hook configuration from ~/.longhand/config.json, falling back to defaults."""
+    import json as _json
+    config_path = Path.home() / ".longhand" / "config.json"
+    config = dict(_DEFAULT_HOOK_CONFIG)
+    try:
+        if config_path.exists():
+            user = _json.loads(config_path.read_text())
+            if isinstance(user, dict) and "hook" in user:
+                for k, v in user["hook"].items():
+                    if k in config:
+                        config[k] = v
+    except Exception:
+        pass
+    return config
+
 
 def run_prompt_hook() -> None:
     """Read stdin JSON, run longhand context, and emit hookSpecificOutput JSON.
@@ -215,6 +240,13 @@ def run_prompt_hook() -> None:
             print("{}")
             return
 
+        # Load user-configurable hook settings
+        hook_config = _load_hook_config()
+
+        if not hook_config.get("enabled", True):
+            print("{}")
+            return
+
         # Cap prompt length before recall — protects against pathological queries
         if len(prompt) > _HOOK_PROMPT_MAX_LEN:
             prompt = prompt[:_HOOK_PROMPT_MAX_LEN]
@@ -226,11 +258,10 @@ def run_prompt_hook() -> None:
         captured = _io.StringIO()
         with contextlib.redirect_stdout(captured):
             try:
-                # Call the typer function directly with default args
                 context_cmd(
                     query=prompt,
-                    max_episodes=2,
-                    min_relevance=2.5,
+                    max_episodes=hook_config.get("max_episodes", 2),
+                    min_relevance=hook_config.get("min_relevance", 2.5),
                     project=None,
                     silent_if_empty=True,
                     data_dir=None,
@@ -241,6 +272,11 @@ def run_prompt_hook() -> None:
                 pass
 
         injected = captured.getvalue().strip()
+
+        # Cap injection size to limit token usage
+        max_inject = hook_config.get("max_inject_chars", 2000)
+        if len(injected) > max_inject:
+            injected = injected[:max_inject] + "\n[... capped at " + str(max_inject) + " chars]"
 
         if not injected:
             print("{}")

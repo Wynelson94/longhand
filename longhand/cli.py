@@ -685,6 +685,91 @@ def git_log(
 
 
 # -----------------------------------------------------------------------------
+# CONFIG — view and edit hook configuration
+# -----------------------------------------------------------------------------
+
+@app.command()
+def config(
+    show: bool = typer.Option(True, "--show/--edit", help="Show current config (default) or open for editing"),
+    set_key: Optional[str] = typer.Option(None, "--set", help="Set a config key, e.g. --set hook.min_relevance=3.0"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """View or edit Longhand hook configuration.
+
+    Config lives at ~/.longhand/config.json. Controls prompt hook behavior:
+    - hook.min_relevance: minimum score to inject context (default 2.5, higher = less noise)
+    - hook.max_inject_chars: max characters injected per prompt (default 2000)
+    - hook.max_episodes: max episodes to consider (default 2)
+    - hook.enabled: true/false to enable/disable without uninstalling
+    """
+    import json as _json
+
+    config_path = Path.home() / ".longhand" / "config.json"
+
+    if set_key:
+        # Parse key=value
+        if "=" not in set_key:
+            console.print("[red]Use format: --set hook.key=value[/red]")
+            return
+        key_path, value_str = set_key.split("=", 1)
+        parts = key_path.split(".")
+        if len(parts) != 2 or parts[0] != "hook":
+            console.print("[red]Only hook.* keys are supported. E.g. --set hook.min_relevance=3.0[/red]")
+            return
+
+        # Load existing config
+        current: dict = {}
+        if config_path.exists():
+            try:
+                current = _json.loads(config_path.read_text())
+            except Exception:
+                current = {}
+
+        if "hook" not in current:
+            current["hook"] = {}
+
+        # Parse value type
+        key = parts[1]
+        if value_str.lower() in ("true", "false"):
+            current["hook"][key] = value_str.lower() == "true"
+        else:
+            try:
+                current["hook"][key] = float(value_str)
+                if current["hook"][key] == int(current["hook"][key]):
+                    current["hook"][key] = int(current["hook"][key])
+            except ValueError:
+                current["hook"][key] = value_str
+
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(_json.dumps(current, indent=2) + "\n")
+        console.print(f"[green]Set {key_path} = {current['hook'][key]}[/green]")
+        return
+
+    # Show current config
+    from longhand.setup_commands import _load_hook_config
+    hook = _load_hook_config()
+
+    table = Table(title="Longhand Hook Config", show_lines=False)
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="yellow")
+    table.add_column("Description", style="dim")
+
+    descriptions = {
+        "min_relevance": "Minimum relevance score to inject context (higher = less noise)",
+        "max_inject_chars": "Max characters injected per prompt (controls token usage)",
+        "max_episodes": "Max episodes to consider per query",
+        "enabled": "Whether the prompt hook is active",
+    }
+
+    for k, v in hook.items():
+        table.add_row(f"hook.{k}", str(v), descriptions.get(k, ""))
+
+    console.print(table)
+    console.print(f"\n[dim]Config file: {config_path}[/dim]")
+    console.print("[dim]Edit with: longhand config --set hook.min_relevance=3.0[/dim]")
+
+
+# -----------------------------------------------------------------------------
 # CONTEXT — output relevant past context for hook injection
 # -----------------------------------------------------------------------------
 
