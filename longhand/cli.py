@@ -48,7 +48,7 @@ from longhand.storage import LonghandStore
 
 app = typer.Typer(
     name="longhand",
-    help="Lossless local memory for Claude Code sessions. The full, unabbreviated version.",
+    help="Persistent local memory for Claude Code sessions. Every event, every edit, nothing summarized.",
     no_args_is_help=True,
     add_completion=False,
 )

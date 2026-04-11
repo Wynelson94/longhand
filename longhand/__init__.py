@@ -1,5 +1,5 @@
 """
-Longhand — lossless local memory for Claude Code.
+Longhand — persistent local memory for Claude Code.
 
 The full, unabbreviated version. Nothing summarized. Nothing lost.
 

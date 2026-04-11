@@ -1,6 +1,6 @@
 # Longhand
 
-**Persistent AI memory without tokens.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
+**Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
 > *Status: v0.3.2 — stable, daily-driver tested, security-audited (zero critical findings), stress-tested by a fresh Claude against all 15 MCP tools. Built by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 665 git operations / 346 problem→fix episodes across 37 inferred projects. 71 unit tests passing.*
 
@@ -18,7 +18,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 | **Cost per query**   | Tokens × dollars                             | Zero                              |
 | **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
 | **Speed**            | Seconds to minutes for large contexts        | ~126ms                            |
-| **Loss**             | Attention degrades in the middle of long contexts | Forensically lossless        |
+| **Loss**             | Attention degrades in the middle of long contexts | Every event from the source file, nothing dropped |
 | **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |
 | **Across model versions** | Doesn't transfer                        | Same data, any model              |
 | **Offline**          | No                                            | Yes                               |
@@ -26,7 +26,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 
 The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLite is from 2000. ChromaDB is two years old. Both run on a laptop. Longhand bypasses the crisis by ignoring it — your past sessions are already on disk, written by Claude Code itself, in JSONL files that contain every single event verbatim. Longhand reads those files, indexes them locally, and gives you semantic recall over your entire history without ever sending a token through someone else's API.
 
-**More secure than tokens. Lossless. Yours.**
+**Local. Complete. Yours.**
 
 ---
 
@@ -295,7 +295,7 @@ longhand/
 | Fuzzy recall             | Yes, with artifacts        | Text search over summaries               |
 | What gets "decided"      | Nothing — store everything | The AI decides what matters              |
 | Local-first              | Yes                        | Most                                     |
-| Lossless                 | Yes                        | No                                       |
+| Completeness             | Every event from the session file | Whatever the summarizer kept             |
 | LLM calls to function    | Zero                       | Varies                                   |
 
 Summary memory and Longhand solve different problems. Summary memory is good for long-term personal assistants that need compressed context across many conversations. Longhand is good for developers who need forensic access to their past Claude Code work — the kind of access where you need the exact diff, not a paraphrase.
