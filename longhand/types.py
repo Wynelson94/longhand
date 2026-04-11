@@ -78,6 +78,11 @@ class Event(BaseModel):
     error_category: str | None = None
     error_severity: str | None = None
 
+    # Git operation detection (populated on tool_result events from Bash git commands)
+    git_operation: str | None = None
+    git_commit_hash: str | None = None
+    git_commit_message: str | None = None
+
     model_config = ConfigDict(use_enum_values=True)
 
 

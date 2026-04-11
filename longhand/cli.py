@@ -616,6 +616,66 @@ def projects(
 
 
 # -----------------------------------------------------------------------------
+# GIT LOG — show git operations from sessions
+
+@app.command()
+def git_log(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID (prefix match). Shows recent across all sessions if omitted."),
+    operation: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by operation type (commit, push, etc.)"),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search commit messages"),
+    limit: int = typer.Option(50, "--limit"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show git operations from Claude Code sessions."""
+    store = _get_store(data_dir)
+
+    if query:
+        full_session = None
+        if session_id:
+            full_session = _resolve_prefix(store, session_id)
+        ops = store.sqlite.search_git_operations(
+            query=query, session_id=full_session, operation_type=operation, limit=limit
+        )
+    elif session_id:
+        full_session = _resolve_prefix(store, session_id)
+        if not full_session:
+            console.print(f"[red]No session matching: {session_id}[/red]")
+            return
+        ops = store.sqlite.get_git_operations(
+            session_id=full_session, operation_type=operation, limit=limit
+        )
+    else:
+        # Show recent git operations across all sessions
+        ops = store.sqlite.search_git_operations(
+            query="", operation_type=operation, limit=limit
+        )
+
+    if not ops:
+        console.print("[yellow]No git operations found.[/yellow]")
+        return
+
+    table = Table(title=f"Git Operations ({len(ops)})", show_lines=False)
+    table.add_column("Time", style="dim", no_wrap=True)
+    table.add_column("Op", style="cyan", no_wrap=True)
+    table.add_column("Hash", style="yellow", no_wrap=True)
+    table.add_column("Branch", style="magenta")
+    table.add_column("Message", overflow="fold")
+    table.add_column("Session", style="dim", no_wrap=True)
+
+    for op in ops:
+        table.add_row(
+            _format_timestamp(op["timestamp"]),
+            op["operation_type"],
+            (op.get("commit_hash") or "")[:8],
+            op.get("branch") or "—",
+            (op.get("commit_message") or "")[:60],
+            op["session_id"][:8],
+        )
+
+    console.print(table)
+
+
+# -----------------------------------------------------------------------------
 # CONTEXT — output relevant past context for hook injection
 # -----------------------------------------------------------------------------
 

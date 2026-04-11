@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from longhand.extractors.errors import detect_error
+from longhand.extractors.git import extract_git_signal
 from longhand.types import Event, EventType, FileOperation, Session
 
 
@@ -137,9 +138,10 @@ class JSONLParser:
                 )
         except OSError:
             pass
-        # Track tool_name for each tool_use_id so we can gate error detection
-        # on tool_result events. Populated as tool_use blocks are parsed.
+        # Track tool_name and tool_input for each tool_use_id so we can gate
+        # error detection and git extraction on tool_result events.
         self._tool_name_by_id: dict[str, str] = {}
+        self._tool_input_by_id: dict[str, dict[str, Any]] = {}
 
     def parse_events(self) -> Iterator[Event]:
         """Yield Event objects from the session file, in file order.
@@ -244,8 +246,15 @@ class JSONLParser:
                 # contents — it can legitimately contain strings that look like
                 # errors (regex patterns, test fixtures, log lines in docs).
                 error_signal = None
+                git_signal = None
                 if paired_tool in COMMAND_EXECUTING_TOOLS:
                     error_signal = detect_error(result_content)
+                    # Extract structured git data from Bash git commands
+                    paired_input = self._tool_input_by_id.get(tool_use_id or "", {})
+                    git_signal = extract_git_signal(
+                        command=paired_input.get("command", ""),
+                        output=result_content,
+                    )
 
                 success_flag = (
                     tool_use_result.get("success") if isinstance(tool_use_result, dict) else None
@@ -264,6 +273,9 @@ class JSONLParser:
                     error_snippet=error_signal.snippet if error_signal else None,
                     error_category=error_signal.category if error_signal else None,
                     error_severity=error_signal.severity if error_signal else None,
+                    git_operation=git_signal.operation_type if git_signal else None,
+                    git_commit_hash=git_signal.commit_hash if git_signal else None,
+                    git_commit_message=git_signal.commit_message if git_signal else None,
                     **common,
                 ))
             else:
@@ -336,10 +348,11 @@ class JSONLParser:
                 tool_input = block.get("input", {}) or {}
                 tool_use_id = block.get("id", "")
 
-                # Remember the tool_name for this tool_use_id — the tool_result
-                # that follows will look it up to gate error detection.
+                # Remember the tool_name and input for this tool_use_id — the tool_result
+                # that follows will look them up to gate error detection and git extraction.
                 if tool_use_id:
                     self._tool_name_by_id[tool_use_id] = tool_name
+                    self._tool_input_by_id[tool_use_id] = tool_input
 
                 file_path = None
                 file_operation = None

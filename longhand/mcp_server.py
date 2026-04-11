@@ -279,6 +279,43 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_session_commits",
+            description=(
+                "Get all git operations (commits, pushes, merges, checkouts, etc.) from a "
+                "session, chronologically. Links session work to git history — the in-between "
+                "that git log doesn't capture."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID (prefix match)"},
+                    "operation_type": {"type": "string", "description": "Filter: commit, push, pull, checkout, merge, etc."},
+                    "limit": {"default": 100, "description": "Max results"},
+                    "max_chars": {"default": 12000, "description": "Max output characters"},
+                },
+                "required": ["session_id"],
+            },
+        ),
+        Tool(
+            name="find_commits",
+            description=(
+                "Search across all sessions for git commits matching a query — by commit "
+                "message, hash prefix, or branch name. Great for 'find that commit where "
+                "we fixed the parser' queries."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Commit message substring, hash prefix, or branch name"},
+                    "session_id": {"type": "string", "description": "Optional: scope to a single session (prefix match)"},
+                    "operation_type": {"type": "string", "description": "Filter by operation type (default: all)"},
+                    "limit": {"default": 20, "description": "Max results"},
+                    "max_chars": {"default": 12000, "description": "Max output characters"},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
             name="list_projects",
             description=(
                 "Browse inferred projects by keyword, category, or recency. "
@@ -617,6 +654,33 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     pass
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+
+    if name == "get_session_commits":
+        full_id = _resolve_session_prefix(store, arguments["session_id"])
+        if not full_id:
+            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+        ops = store.sqlite.get_git_operations(
+            session_id=full_id,
+            operation_type=arguments.get("operation_type"),
+            limit=_limit(arguments.get("limit"), 100),
+        )
+        max_chars = _max_chars(arguments.get("max_chars"), 12000)
+        output = json.dumps(ops, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+    if name == "find_commits":
+        search_session_id = None
+        if arguments.get("session_id"):
+            search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+        ops = store.sqlite.search_git_operations(
+            query=arguments["query"],
+            session_id=search_session_id,
+            operation_type=arguments.get("operation_type"),
+            limit=_limit(arguments.get("limit"), 20),
+        )
+        max_chars = _max_chars(arguments.get("max_chars"), 12000)
+        output = json.dumps(ops, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "list_projects":
         rows = store.sqlite.list_projects(

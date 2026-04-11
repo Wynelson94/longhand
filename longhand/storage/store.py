@@ -6,6 +6,7 @@ SQLite is the source of truth. ChromaDB is the search index.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from longhand.analysis.episode_extraction import extract_episodes
@@ -56,6 +57,10 @@ class LonghandStore:
         pairs = self.sqlite.build_tool_pairs_from_events(events)
         pairs_stored = self.sqlite.upsert_tool_pairs(pairs)
 
+        # Extract git operations from Bash tool results
+        git_ops = self._extract_git_operations(session.session_id, events)
+        git_ops_stored = self.sqlite.insert_git_operations(git_ops)
+
         transcript_size = (
             Path(session.transcript_path).stat().st_size
             if Path(session.transcript_path).exists()
@@ -69,6 +74,7 @@ class LonghandStore:
             "events_stored": sql_inserted,
             "events_indexed": vec_inserted,
             "tool_pairs": pairs_stored,
+            "git_operations": git_ops_stored,
             "episodes": 0,
         }
 
@@ -125,6 +131,31 @@ class LonghandStore:
             "outcome": outcome["outcome"],
             "episodes": episodes_stored,
         }
+
+    @staticmethod
+    def _extract_git_operations(session_id: str, events: list[Event]) -> list[dict]:
+        """Build git_operations rows from events with git_operation set."""
+        ops: list[dict] = []
+        for e in events:
+            if not e.git_operation:
+                continue
+            op_id = "gitop_" + hashlib.sha1(
+                f"{session_id}:{e.event_id}".encode()
+            ).hexdigest()[:16]
+            ops.append({
+                "git_op_id": op_id,
+                "session_id": session_id,
+                "event_id": e.event_id,
+                "operation_type": e.git_operation,
+                "commit_hash": e.git_commit_hash,
+                "commit_message": e.git_commit_message,
+                "branch": e.git_branch,
+                "remote": None,
+                "files_changed_count": None,
+                "timestamp": e.timestamp.isoformat(),
+                "success": True,
+            })
+        return ops
 
     def stats(self) -> dict:
         sql_stats = self.sqlite.get_stats()

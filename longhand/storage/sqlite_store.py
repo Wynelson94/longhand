@@ -412,6 +412,13 @@ class SQLiteStore:
                 stats["outcomes"] = conn.execute("SELECT COUNT(*) FROM session_outcomes").fetchone()[0]
             except sqlite3.OperationalError:
                 pass
+            try:
+                stats["git_operations"] = conn.execute("SELECT COUNT(*) FROM git_operations").fetchone()[0]
+                stats["git_commits"] = conn.execute(
+                    "SELECT COUNT(*) FROM git_operations WHERE operation_type = 'commit'"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                pass
             return stats
 
     # ─── Projects ──────────────────────────────────────────────────────────
@@ -684,3 +691,90 @@ class SQLiteStore:
                 "SELECT * FROM tool_pairs WHERE tool_use_id = ?", (tool_use_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    # ─── Git operations ───────────────────────────────────────────────────
+
+    def insert_git_operations(self, ops: list[dict[str, Any]]) -> int:
+        if not ops:
+            return 0
+        with self.connect() as conn:
+            rows = [
+                (
+                    op["git_op_id"],
+                    op["session_id"],
+                    op["event_id"],
+                    op["operation_type"],
+                    op.get("commit_hash"),
+                    op.get("commit_message"),
+                    op.get("branch"),
+                    op.get("remote"),
+                    op.get("files_changed_count"),
+                    op["timestamp"],
+                    int(op.get("success", True)),
+                )
+                for op in ops
+            ]
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO git_operations (
+                    git_op_id, session_id, event_id, operation_type,
+                    commit_hash, commit_message, branch, remote,
+                    files_changed_count, timestamp, success
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def get_git_operations(
+        self,
+        session_id: str,
+        operation_type: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conditions = ["session_id = ?"]
+            params: list[Any] = [session_id]
+            if operation_type:
+                conditions.append("operation_type = ?")
+                params.append(operation_type)
+            query = "SELECT * FROM git_operations WHERE " + " AND ".join(conditions)
+            query += " ORDER BY timestamp ASC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+
+    def search_git_operations(
+        self,
+        query: str,
+        session_id: str | None = None,
+        operation_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conditions: list[str] = []
+            params: list[Any] = []
+
+            if query:
+                escaped = _escape_like(query)
+                conditions.append(
+                    "(commit_message LIKE ? ESCAPE '\\' "
+                    "OR commit_hash LIKE ? ESCAPE '\\' "
+                    "OR branch LIKE ? ESCAPE '\\')"
+                )
+                like = f"%{escaped}%"
+                params.extend([like, like, like])
+            if session_id:
+                conditions.append("session_id = ?")
+                params.append(session_id)
+            if operation_type:
+                conditions.append("operation_type = ?")
+                params.append(operation_type)
+
+            sql = "SELECT * FROM git_operations"
+            if conditions:
+                sql += " WHERE " + " AND ".join(conditions)
+            sql += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]

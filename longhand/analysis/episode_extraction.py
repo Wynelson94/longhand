@@ -179,7 +179,34 @@ def extract_episodes(
         # (or from the next event if we didn't find one)
         i = max(j, i + 1)
 
+    # Link episodes to git commits: look forward from each fix for a commit
+    _link_commits_to_episodes(episodes, events)
+
     return episodes
+
+
+def _link_commits_to_episodes(episodes: list[dict], events: list[Event]) -> None:
+    """Post-pass: for each episode with a fix, find the next git commit and link it."""
+    # Build index: event_id → sequence position
+    event_seq: dict[str, int] = {e.event_id: idx for idx, e in enumerate(events)}
+
+    # Collect commit events
+    commit_events = [
+        (idx, e) for idx, e in enumerate(events)
+        if e.git_operation == "commit" and e.git_commit_hash
+    ]
+
+    for ep in episodes:
+        fix_eid = ep.get("fix_event_id")
+        if not fix_eid or fix_eid not in event_seq:
+            continue
+
+        fix_idx = event_seq[fix_eid]
+        # Look for the next commit within 30 events of the fix
+        for commit_idx, commit_event in commit_events:
+            if commit_idx > fix_idx and (commit_idx - fix_idx) <= 30:
+                ep["fix_commit_hash"] = commit_event.git_commit_hash
+                break
 
 
 def _extract_keywords(text: str) -> list[str]:

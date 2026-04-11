@@ -88,6 +88,27 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX IF NOT EXISTS idx_tool_pairs_call ON tool_pairs(call_event_id);
     CREATE INDEX IF NOT EXISTS idx_tool_pairs_error ON tool_pairs(error_detected) WHERE error_detected = 1;
     """,
+    2: """
+    -- v2: git operation tracking
+
+    CREATE TABLE IF NOT EXISTS git_operations (
+        git_op_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        commit_hash TEXT,
+        commit_message TEXT,
+        branch TEXT,
+        remote TEXT,
+        files_changed_count INTEGER,
+        timestamp TEXT NOT NULL,
+        success INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_git_ops_session ON git_operations(session_id, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_git_ops_hash ON git_operations(commit_hash) WHERE commit_hash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_git_ops_type ON git_operations(operation_type);
+    """,
 }
 
 
@@ -98,6 +119,9 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
     """ALTER TABLE operations that need guarding (not idempotent across SQLite versions)."""
+    if version == 2:
+        if not _column_exists(conn, "episodes", "fix_commit_hash"):
+            conn.execute("ALTER TABLE episodes ADD COLUMN fix_commit_hash TEXT")
     if version == 1:
         if not _column_exists(conn, "sessions", "project_id"):
             conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT")
