@@ -387,6 +387,21 @@ class SQLiteStore:
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
 
+    def get_events_by_sequence_range(
+        self,
+        session_id: str,
+        seq_start: int,
+        seq_end: int,
+    ) -> list[dict[str, Any]]:
+        """Get events within a sequence number range for a session."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM events WHERE session_id = ? AND sequence BETWEEN ? AND ? "
+                "ORDER BY sequence ASC",
+                (session_id, seq_start, seq_end),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_stats(self) -> dict[str, int]:
         with self.connect() as conn:
             stats = {

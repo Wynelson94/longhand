@@ -119,7 +119,10 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Semantic search across all stored Claude Code session events. "
                 "Returns events matching a natural language query, with optional "
-                "filters by event type, session, project, tool, or file path."
+                "filters by event type, session, project, tool, or file path. "
+                "IMPORTANT: Always pass session_id when you know which session to search — "
+                "unscoped search returns noisy results. For finding a discussion WITH "
+                "surrounding conversation context, use search_in_context instead."
             ),
             inputSchema={
                 "type": "object",
@@ -141,6 +144,29 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="search_in_context",
+            description=(
+                "Search within a specific session and return matches WITH surrounding "
+                "conversation context. This is the tool you want when you know WHICH "
+                "session to look in but need to FIND a specific discussion or event. "
+                "Returns each semantic match plus N events before/after it from the "
+                "timeline, so you can read the full conversation flow. "
+                "Much more efficient than paginating get_session_timeline manually."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID (prefix match)"},
+                    "query": {"type": "string", "description": "Natural language query to find within the session"},
+                    "context_events": {"default": 5, "description": "Number of events to include before AND after each match (default 5)"},
+                    "limit": {"default": 3, "description": "Max number of matches to return with context (default 3)"},
+                    "event_type": {"type": "string", "description": "Optional: filter matches to a single event type"},
+                    "max_chars": {"default": 20000, "description": "Max total output characters (default 20000)"},
+                },
+                "required": ["session_id", "query"],
+            },
+        ),
+        Tool(
             name="list_sessions",
             description="List recent Claude Code sessions that Longhand has indexed.",
             inputSchema={
@@ -156,7 +182,9 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Get a chronological timeline of events in a session. Supports session "
                 "id prefix match. Use 'tail' to get only the last N events (great for "
-                "checking how a session ended). Use 'offset' to paginate through long sessions."
+                "checking how a session ended). Use 'offset' to paginate through long sessions. "
+                "NOT for searching — if you're looking for something specific in a session, "
+                "use search_in_context instead of paginating this tool in a loop."
             ),
             inputSchema={
                 "type": "object",
@@ -213,12 +241,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="recall",
             description=(
-                "PROACTIVE MEMORY. Answer a fuzzy natural-language question about past "
-                "Claude Code work. Handles phrases like 'a couple months ago I was building "
-                "a game and you fixed a bug'. Returns: matched projects, relevant episodes "
-                "(problem→fix pairs), the fix diff, verbatim thinking blocks, reconstructed "
-                "file state after the fix, and a prebuilt markdown narrative. Use this as "
-                "the FIRST tool for any 'do you remember when...' style question."
+                "PROACTIVE MEMORY — START HERE for any 'do you remember...' question. "
+                "Handles fuzzy time references ('a couple months ago'), project matching "
+                "('that game project'), and episode retrieval in ONE call. Returns: matched "
+                "projects, relevant episodes (problem→fix pairs), diffs, verbatim thinking "
+                "blocks, reconstructed file states, and a prebuilt markdown narrative. "
+                "Do NOT manually search and paginate — use this tool first."
             ),
             inputSchema={
                 "type": "object",
@@ -426,6 +454,100 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         hits = hits[:limit]
         output = json.dumps(hits, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+    if name == "search_in_context":
+        full_id = _resolve_session_prefix(store, arguments["session_id"])
+        if not full_id:
+            return [TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")]
+
+        context_n = _int(arguments.get("context_events"), 5)
+        limit = _limit(arguments.get("limit"), 3)
+        max_chars = _max_chars(arguments.get("max_chars"), 20000)
+
+        # Semantic search scoped to this session
+        hits = store.vectors.search(
+            query=arguments["query"],
+            n_results=limit * 3,  # fetch extra for dedup
+            session_id=full_id,
+            event_type=arguments.get("event_type"),
+        )
+
+        if not hits:
+            return [TextContent(type="text", text="No matches found in this session.")]
+
+        # Build context windows from sequence numbers
+        windows: list[dict[str, Any]] = []
+        for hit in hits:
+            seq = (hit.get("metadata") or {}).get("sequence")
+            if seq is None:
+                continue
+            seq = int(seq)
+            windows.append({
+                "match_event_id": hit["event_id"],
+                "match_distance": hit.get("distance", 1.0),
+                "seq_start": max(0, seq - context_n),
+                "seq_end": seq + context_n,
+            })
+
+        if not windows:
+            return [TextContent(type="text", text="Matches found but no sequence metadata available.")]
+
+        # Merge overlapping windows
+        windows.sort(key=lambda w: w["seq_start"])
+        merged: list[dict[str, Any]] = []
+        for w in windows:
+            if merged and w["seq_start"] <= merged[-1]["seq_end"] + 1:
+                merged[-1]["seq_end"] = max(merged[-1]["seq_end"], w["seq_end"])
+                merged[-1]["match_event_ids"].append(w["match_event_id"])
+            else:
+                merged.append({
+                    "seq_start": w["seq_start"],
+                    "seq_end": w["seq_end"],
+                    "match_event_ids": [w["match_event_id"]],
+                })
+
+        # Deduplicate: keep only the first `limit` unique matches
+        all_match_ids: list[str] = []
+        for mw in merged:
+            for mid in mw["match_event_ids"]:
+                if mid not in all_match_ids:
+                    all_match_ids.append(mid)
+        all_match_ids = all_match_ids[:limit]
+        match_id_set = set(all_match_ids)
+
+        # Re-filter merged windows to only those containing kept matches
+        final_windows: list[dict[str, Any]] = []
+        for mw in merged:
+            kept = [m for m in mw["match_event_ids"] if m in match_id_set]
+            if kept:
+                mw["match_event_ids"] = kept
+                final_windows.append(mw)
+
+        # Fetch events for each window
+        results = []
+        for mw in final_windows:
+            events = store.sqlite.get_events_by_sequence_range(
+                full_id, mw["seq_start"], mw["seq_end"]
+            )
+            formatted = []
+            for e in events:
+                fe = _format_event(e)
+                fe["is_match"] = e["event_id"] in match_id_set
+                formatted.append(fe)
+            results.append({
+                "sequence_range": [mw["seq_start"], mw["seq_end"]],
+                "events": formatted,
+            })
+
+        payload = {
+            "session_id": full_id,
+            "query": arguments["query"],
+            "total_matches": len(hits),
+            "showing": len(all_match_ids),
+            "context_windows": results,
+        }
+        output = json.dumps(payload, indent=2, default=str)
         return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "list_sessions":
