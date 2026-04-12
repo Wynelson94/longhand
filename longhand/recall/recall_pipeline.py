@@ -254,8 +254,11 @@ def recall(
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 
     # 7.5. Episode quality gate — detect when episode results are garbage
+    # Threshold 15.0 requires either 2+ keyword hits or 1 keyword + strong semantic boost.
+    # A single short-word match (e.g., "body" matching a JS variable) scores ~11 and should NOT
+    # be enough to override the segment/fallback path.
     best_episode_score = _rank_score(episodes[0]) if episodes else 0.0
-    episodes_are_relevant = best_episode_score >= 3.0
+    episodes_are_relevant = best_episode_score >= 15.0
 
     # 7.6. Parallel segment search — always run, results prioritized by quality gate
     segments: list[dict[str, Any]] = []
@@ -272,20 +275,28 @@ def recall(
         except Exception:
             pass
 
-    # 7.7. Event-level fallback — when both episodes and segments miss
+    # 7.7. Event-level fallback — always run when episodes are irrelevant,
+    # regardless of segment quality. If segments exist, they'll be used;
+    # if not, fallback snippets provide the answer.
     fallback_snippets: list[dict[str, Any]] = []
-    good_segments = [s for s in segments if s.get("_distance", 1.0) < 0.6]
-    if not episodes_are_relevant and not good_segments and cleaned_query.strip():
-        # Reuse the semantic event hits from step 7 (already computed)
-        conversational = [
-            hit for hit in (
-                store.vectors.search(query=cleaned_query, n_results=30)
-                if cleaned_query.strip() else []
-            )
-            if (hit.get("metadata") or {}).get("event_type") in (
-                "user_message", "assistant_text", "assistant_thinking",
-            )
-        ]
+    if not episodes_are_relevant and cleaned_query.strip():
+        # Run filtered searches to find actual conversations, not tool noise
+        # user_message events are the strongest signal for topic recall
+        user_hits = store.vectors.search(
+            query=cleaned_query, n_results=20, event_type="user_message",
+        )
+        asst_hits = store.vectors.search(
+            query=cleaned_query, n_results=10, event_type="assistant_text",
+        )
+        # Merge and dedupe by event_id
+        seen_ids: set[str] = set()
+        conversational: list[dict[str, Any]] = []
+        for hit in user_hits + asst_hits:
+            eid = hit.get("event_id", "")
+            if eid not in seen_ids:
+                seen_ids.add(eid)
+                conversational.append(hit)
+
         # Group by session, take top 3 sessions
         session_groups: dict[str, list[dict[str, Any]]] = {}
         for hit in conversational:
@@ -307,23 +318,12 @@ def recall(
 
     # 8. Decide what to present based on quality
     # If episodes are relevant (score >= 3.0), use them as primary
-    # If segments are better, use those
-    # If both are garbage, use fallback snippets
-    use_segments_as_primary = (
-        not episodes_are_relevant
-        and good_segments
-    )
-    use_fallback = (
-        not episodes_are_relevant
-        and not good_segments
-        and fallback_snippets
-    )
+    # Otherwise, clear garbage episodes and use segments or fallback
+    if not episodes_are_relevant:
+        episodes = []  # always clear irrelevant episodes
 
-    # When segments win, deprioritize episodes (don't show garbage)
-    if use_segments_as_primary:
-        episodes = []
-    if use_fallback:
-        episodes = []
+    use_segments_as_primary = not episodes_are_relevant and bool(segments)
+    use_fallback = not episodes_are_relevant and not segments and bool(fallback_snippets)
 
     # 9. Load artifacts for the top episode (only if episodes are the primary result)
     artifacts: dict[str, Any] = {}
@@ -337,7 +337,7 @@ def recall(
         episodes=episodes,
         artifacts=artifacts,
         time_window=(since, until),
-        segments=good_segments if use_segments_as_primary else [],
+        segments=segments if use_segments_as_primary else [],
         fallback_snippets=fallback_snippets if use_fallback else [],
     )
 
@@ -346,7 +346,7 @@ def recall(
         project_matches=project_matches,
         time_window=(since, until),
         episodes=episodes,
-        segments=good_segments if use_segments_as_primary else segments,
+        segments=segments,
         artifacts=artifacts,
         narrative=narrative,
     )

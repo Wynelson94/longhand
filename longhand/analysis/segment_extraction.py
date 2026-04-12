@@ -4,7 +4,7 @@ Conversation segment extraction.
 Clusters contiguous related messages into "segments" — groups of events
 about the same topic. Segments are the non-episode retrieval unit: they
 capture stories, design discussions, personal conversations, and planning
-that don't follow the problem→fix episode pattern.
+that don't follow the problem->fix episode pattern.
 
 Deterministic (no LLM). Runs at ingest time alongside episode extraction.
 """
@@ -29,7 +29,7 @@ _PLANNING_KEYWORDS = frozenset({
     "plan", "todo", "roadmap", "next", "milestone", "sprint", "goal",
     "timeline", "schedule", "priority", "backlog", "task",
 })
-_STORY_MIN_AVG_LENGTH = 200  # avg user message length for "story" classification
+_STORY_MIN_AVG_LENGTH = 120  # lowered from 200 — real stories avg ~150 chars/msg
 
 
 def _event_type_str(e: Event) -> str:
@@ -72,7 +72,7 @@ def _classify_segment_type(
 
     Priority: debugging > design > planning > story > discussion
     """
-    # Check for errors → debugging
+    # Check for errors -> debugging
     for e in events:
         if getattr(e, "error_detected", False):
             return "debugging"
@@ -100,18 +100,18 @@ def _classify_segment_type(
     return "discussion"
 
 
-def _build_summary(events: list[Event], max_chars: int = 1500) -> str:
-    """Concatenate user_message + assistant_text content for embedding.
+def _build_summary(events: list[Event], max_chars: int = 2000) -> str:
+    """Concatenate conversational content for embedding.
 
-    Excludes thinking blocks and tool calls — those are noise for
-    topic-level retrieval. The summary captures what was discussed,
-    not how it was implemented.
+    Includes user_message, assistant_text, AND assistant_thinking — thinking
+    blocks contain design reasoning and diagnosis which are valuable for recall.
+    Excludes tool_call and tool_result (noise for topic-level retrieval).
     """
     parts: list[str] = []
     total = 0
     for e in events:
         etype = _event_type_str(e)
-        if etype not in ("user_message", "assistant_text"):
+        if etype not in ("user_message", "assistant_text", "assistant_thinking"):
             continue
         if not e.content or not e.content.strip():
             continue
@@ -134,10 +134,10 @@ def extract_segments(
     """Extract conversation segments from a session's events.
 
     Walks events in sequence order, splitting into segments at:
-    - Tool gaps: 3+ tool_call/tool_result events followed by a user_message
+    - Tool gaps: 6+ tool_call/tool_result events followed by a user_message
     - Topic shifts: < 20% keyword overlap between adjacent user messages
     - Time gaps: > 10 minutes between consecutive events
-    - Hard cap: segment exceeds 30 events
+    - Hard cap: segment exceeds 80 events
 
     Returns a list of segment dicts ready for SQLite insertion.
     """
@@ -160,8 +160,10 @@ def extract_segments(
             for e in seg_events
             if _event_type_str(e) == "user_message" and e.content and e.content.strip()
         ]
-        if len(user_texts) < 2:
-            return  # trivial — single-turn interactions aren't worth segmenting
+        # Allow single user message segments — the event_count >= 3 check
+        # already filters truly trivial interactions
+        if len(user_texts) < 1:
+            return
 
         # Build segment fields
         topic = user_texts[0][:200] if user_texts else ""
@@ -207,8 +209,9 @@ def extract_segments(
                 should_split = False
                 segment_length = i - current_start
 
-                # Boundary: tool gap — 3+ tool events then a user message
-                if tool_run_length >= 3 and segment_length > 3:
+                # Boundary: tool gap — 6+ tool events then a user message
+                # (3 was too aggressive — a single read+result+edit+result is 4 events)
+                if tool_run_length >= 6 and segment_length > 3:
                     should_split = True
 
                 # Boundary: topic shift — low keyword overlap
@@ -221,18 +224,20 @@ def extract_segments(
                     prev_user_keywords = current_keywords
 
                 # Boundary: time gap — > 10 minutes since last event
+                # No minimum segment_length guard — a time gap is always a boundary
                 if i > 0:
                     try:
                         prev_ts = events[i - 1].timestamp
                         curr_ts = event.timestamp
                         gap_seconds = (curr_ts - prev_ts).total_seconds()
-                        if gap_seconds > 600 and segment_length > 3:
+                        if gap_seconds > 600:
                             should_split = True
                     except Exception:
                         pass
 
                 # Boundary: hard cap — segment too long
-                if segment_length >= 30:
+                # No minimum guard — always split at 80 events
+                if segment_length >= 80:
                     should_split = True
 
                 if should_split and i > current_start:
