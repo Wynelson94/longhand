@@ -50,32 +50,37 @@ def find_segments(
             if (h.get("metadata") or {}).get("project_id") in project_set
         ]
 
-    # Phase 3: enrich from SQLite (full segment row with topic, keywords, etc.)
+    # Phase 3: enrich from SQLite — single connection for all lookups
     enriched: list[dict[str, Any]] = []
-    for hit in hits[:limit]:
-        seg_id = hit.get("segment_id")
-        if not seg_id:
-            continue
+    seg_ids = [h.get("segment_id") for h in hits[:limit] if h.get("segment_id")]
+    if not seg_ids:
+        return []
 
-        # Look up the full segment row from SQLite
-        rows = store.sqlite.query_segments(
-            session_id=None,
-            limit=1,
-        )
-        # Direct lookup by segment_id
-        try:
-            from longhand.storage.sqlite_store import SQLiteStore
-            with store.sqlite.connect() as conn:
-                row = conn.execute(
-                    "SELECT * FROM conversation_segments WHERE segment_id = ?",
-                    (seg_id,),
-                ).fetchone()
-                if row:
-                    segment = dict(row)
-                    segment["_distance"] = hit.get("distance", 1.0)
-                    enriched.append(segment)
-        except Exception:
-            # If SQLite lookup fails, use what we have from the vector hit
+    # Build a distance map for later attachment
+    distance_map = {
+        h.get("segment_id"): h.get("distance", 1.0)
+        for h in hits[:limit]
+        if h.get("segment_id")
+    }
+
+    try:
+        with store.sqlite.connect() as conn:
+            placeholders = ",".join(["?"] * len(seg_ids))
+            rows = conn.execute(
+                f"SELECT * FROM conversation_segments WHERE segment_id IN ({placeholders})",
+                seg_ids,
+            ).fetchall()
+            for row in rows:
+                segment = dict(row)
+                segment["_distance"] = distance_map.get(segment["segment_id"], 1.0)
+                enriched.append(segment)
+    except Exception:
+        # If SQLite lookup fails (e.g., table doesn't exist pre-migration),
+        # fall back to vector hit metadata
+        for hit in hits[:limit]:
+            seg_id = hit.get("segment_id")
+            if not seg_id:
+                continue
             enriched.append({
                 "segment_id": seg_id,
                 "session_id": (hit.get("metadata") or {}).get("session_id", ""),
@@ -83,5 +88,8 @@ def find_segments(
                 "summary": hit.get("document", ""),
                 "_distance": hit.get("distance", 1.0),
             })
+
+    # Sort by distance (best match first) to preserve semantic ranking
+    enriched.sort(key=lambda s: s.get("_distance", 1.0))
 
     return enriched

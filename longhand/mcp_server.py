@@ -31,6 +31,7 @@ except ImportError:
 
 from longhand.recall import recall as recall_pipeline
 from longhand.recall.project_match import match_projects
+from longhand.recall.recall_pipeline import recall_project_status
 from longhand.replay import ReplayEngine
 from longhand.storage import LonghandStore
 from longhand.storage.sqlite_store import _escape_like
@@ -730,7 +731,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
     if name == "recall_project_status":
-        from longhand.recall.recall_pipeline import recall_project_status
         status = recall_project_status(
             store=store,
             project_name_or_id=arguments["project"],

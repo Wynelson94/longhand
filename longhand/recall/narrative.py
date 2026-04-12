@@ -170,9 +170,9 @@ def _build_segment_narrative(
 
     # Metadata
     seg_type = top.get("segment_type", "discussion")
-    keywords_raw = top.get("keywords_json", "[]")
+    keywords_raw = top.get("keywords_json") or top.get("keywords") or "[]"
     try:
-        keywords = json.loads(keywords_raw) if isinstance(keywords_raw, str) else keywords_raw
+        keywords = json.loads(keywords_raw) if isinstance(keywords_raw, str) else (keywords_raw or [])
     except Exception:
         keywords = []
     if keywords:

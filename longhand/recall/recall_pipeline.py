@@ -339,6 +339,8 @@ def recall(
     if not episodes_are_relevant:
         episodes = []  # always clear irrelevant episodes
 
+    # These are mutually exclusive: if segments exist, use_fallback is False.
+    # Priority: episodes (if relevant) > segments > fallback snippets.
     use_segments_as_primary = not episodes_are_relevant and bool(segments)
     use_fallback = not episodes_are_relevant and not segments and bool(fallback_snippets)
 

@@ -354,7 +354,10 @@ class VectorStore:
 
     def segment_count(self) -> int:
         """Return the number of segment embeddings."""
-        return self.segments_collection.count()
+        try:
+            return self.segments_collection.count()
+        except Exception:
+            return 0
 
     def reset(self) -> None:
         """Delete and recreate all collections."""
