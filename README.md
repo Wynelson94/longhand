@@ -17,6 +17,8 @@ longhand recall "that stripe webhook bug from last week"
 
 > *Status: v0.5.1 — stable, daily-driver tested, security-audited (zero critical findings). Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 86 unit tests passing.*
 
+![Longhand demo](demo/longhand-demo.gif)
+
 ---
 
 ## The Inversion
