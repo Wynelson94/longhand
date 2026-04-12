@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longhand"
-version = "0.3.0"
+version = "0.5.1"
 description = "Persistent local memory for Claude Code. Total recall from your session files — no API calls, no summaries, no AI deciding what matters."
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ authors = [
     { name = "Nate Nelson", email = "wynelson94@gmail.com" },
 ]
 requires-python = ">=3.10"
-keywords = ["claude", "claude-code", "ai-memory", "total-recall", "forensic", "search", "recall"]
+keywords = ["claude", "claude-code", "ai-memory", "mcp", "total-recall", "forensic", "search", "recall"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -21,6 +21,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Version Control",
 ]
@@ -30,12 +32,10 @@ dependencies = [
     "typer>=0.12.0,<1.0",
     "rich>=13.7.0,<15.0",
     "pydantic>=2.6.0,<3.0",
+    "mcp>=1.0.0,<2.0",
 ]
 
 [project.optional-dependencies]
-mcp = [
-    "mcp>=1.0.0,<2.0",
-]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
