@@ -12,6 +12,7 @@ from pathlib import Path
 from longhand.analysis.episode_extraction import extract_episodes
 from longhand.analysis.outcomes import classify_session
 from longhand.analysis.project_inference import infer_project
+from longhand.analysis.segment_extraction import extract_segments
 from longhand.analysis.session_summary_embedding import (
     build_project_text,
     build_session_metadata,
@@ -117,6 +118,28 @@ class LonghandStore:
         )
         episodes_stored = self.sqlite.insert_episodes(episodes)
 
+        # 3b. Conversation segment extraction
+        segments = extract_segments(
+            session_id=session.session_id,
+            project_id=project["project_id"],
+            events=events,
+        )
+        segments_stored = self.sqlite.insert_segments(segments)
+
+        # 3c. Segment embeddings
+        for seg in segments:
+            self.vectors.add_segment_embedding(
+                segment_id=seg["segment_id"],
+                text=seg["summary"],
+                metadata={
+                    "session_id": session.session_id,
+                    "project_id": project["project_id"] or "",
+                    "segment_type": seg.get("segment_type", "discussion"),
+                    "started_at": seg["started_at"],
+                    "ended_at": seg["ended_at"],
+                },
+            )
+
         # 4. Session summary embedding
         session_text = build_session_text(session, events, outcome, project)
         session_meta = build_session_metadata(session, outcome, project)
@@ -130,6 +153,7 @@ class LonghandStore:
             "project_id": project["project_id"],
             "outcome": outcome["outcome"],
             "episodes": episodes_stored,
+            "segments": segments_stored,
         }
 
     @staticmethod

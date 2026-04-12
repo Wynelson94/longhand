@@ -434,6 +434,12 @@ class SQLiteStore:
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 pass
+            try:
+                stats["segments"] = conn.execute(
+                    "SELECT COUNT(*) FROM conversation_segments"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                pass
             return stats
 
     # ─── Projects ──────────────────────────────────────────────────────────
@@ -793,4 +799,88 @@ class SQLiteStore:
             sql += " ORDER BY timestamp DESC LIMIT ?"
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+
+    # ─── Conversation segments ────────────────────────────────────────────
+
+    def insert_segments(self, segments: list[dict[str, Any]]) -> int:
+        """Insert or replace conversation segments."""
+        if not segments:
+            return 0
+        with self.connect() as conn:
+            rows = [
+                (
+                    seg["segment_id"],
+                    seg["session_id"],
+                    seg.get("project_id"),
+                    seg["started_at"],
+                    seg["ended_at"],
+                    seg["start_sequence"],
+                    seg["end_sequence"],
+                    seg.get("segment_type", "discussion"),
+                    seg.get("topic", ""),
+                    seg.get("summary", ""),
+                    seg.get("event_count", 0),
+                    seg.get("user_message_count", 0),
+                    json.dumps(seg.get("keywords", [])),
+                )
+                for seg in segments
+            ]
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO conversation_segments (
+                    segment_id, session_id, project_id, started_at, ended_at,
+                    start_sequence, end_sequence, segment_type, topic, summary,
+                    event_count, user_message_count, keywords_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def query_segments(
+        self,
+        project_ids: list[str] | None = None,
+        session_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        segment_type: str | None = None,
+        keyword: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Query conversation segments with optional filters."""
+        with self.connect() as conn:
+            conditions: list[str] = []
+            params: list[Any] = []
+
+            if project_ids:
+                placeholders = ",".join(["?"] * len(project_ids))
+                conditions.append(f"project_id IN ({placeholders})")
+                params.extend(project_ids)
+            if session_id:
+                conditions.append("session_id = ?")
+                params.append(session_id)
+            if since:
+                conditions.append("ended_at >= ?")
+                params.append(since)
+            if until:
+                conditions.append("ended_at <= ?")
+                params.append(until)
+            if segment_type:
+                conditions.append("segment_type = ?")
+                params.append(segment_type)
+            if keyword:
+                escaped = _escape_like(keyword)
+                conditions.append(
+                    "(topic LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')"
+                )
+                like = f"%{escaped}%"
+                params.extend([like, like])
+
+            query = "SELECT * FROM conversation_segments"
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY ended_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]

@@ -697,6 +697,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 "until": result.time_window[1].isoformat() if result.time_window[1] else None,
             },
             "episodes": result.episodes,
+            "segments": result.segments,
             "artifacts": result.artifacts,
             "narrative": result.narrative,
         }

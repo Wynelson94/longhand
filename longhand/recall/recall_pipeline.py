@@ -5,6 +5,7 @@ Takes a fuzzy natural-language query and returns a RecallResult with:
 - project matches
 - time window
 - ranked episodes
+- conversation segments (non-episode matches)
 - artifacts (diffs, reconstructed file states, verbatim thinking blocks)
 - narrative (prebuilt markdown story)
 """
@@ -18,6 +19,7 @@ from typing import Any
 from longhand.recall.episode_search import find_episodes
 from longhand.recall.narrative import build_narrative
 from longhand.recall.project_match import ProjectMatch, match_projects
+from longhand.recall.segment_search import find_segments
 from longhand.recall.time_parser import parse_time_phrase
 from longhand.replay import ReplayEngine
 from longhand.storage.store import LonghandStore
@@ -29,6 +31,7 @@ class RecallResult:
     project_matches: list[ProjectMatch] = field(default_factory=list)
     time_window: tuple[datetime | None, datetime | None] = (None, None)
     episodes: list[dict[str, Any]] = field(default_factory=list)
+    segments: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
     narrative: str = ""
 
@@ -250,18 +253,92 @@ def recall(
 
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 
-    # 8. Load artifacts for the top episode
+    # 7.5. Episode quality gate — detect when episode results are garbage
+    best_episode_score = _rank_score(episodes[0]) if episodes else 0.0
+    episodes_are_relevant = best_episode_score >= 3.0
+
+    # 7.6. Parallel segment search — always run, results prioritized by quality gate
+    segments: list[dict[str, Any]] = []
+    if cleaned_query.strip():
+        try:
+            segments = find_segments(
+                store=store,
+                query=cleaned_query,
+                project_ids=project_ids,
+                since=since_iso,
+                until=until_iso,
+                limit=max_episodes,
+            )
+        except Exception:
+            pass
+
+    # 7.7. Event-level fallback — when both episodes and segments miss
+    fallback_snippets: list[dict[str, Any]] = []
+    good_segments = [s for s in segments if s.get("_distance", 1.0) < 0.6]
+    if not episodes_are_relevant and not good_segments and cleaned_query.strip():
+        # Reuse the semantic event hits from step 7 (already computed)
+        conversational = [
+            hit for hit in (
+                store.vectors.search(query=cleaned_query, n_results=30)
+                if cleaned_query.strip() else []
+            )
+            if (hit.get("metadata") or {}).get("event_type") in (
+                "user_message", "assistant_text", "assistant_thinking",
+            )
+        ]
+        # Group by session, take top 3 sessions
+        session_groups: dict[str, list[dict[str, Any]]] = {}
+        for hit in conversational:
+            sid = (hit.get("metadata") or {}).get("session_id", "")
+            if sid:
+                session_groups.setdefault(sid, []).append(hit)
+        for sid, hits in sorted(
+            session_groups.items(),
+            key=lambda x: min(h.get("distance", 1.0) for h in x[1]),
+        )[:3]:
+            best_hit = min(hits, key=lambda h: h.get("distance", 1.0))
+            fallback_snippets.append({
+                "session_id": sid,
+                "content": best_hit.get("document", "")[:500],
+                "event_type": (best_hit.get("metadata") or {}).get("event_type", ""),
+                "timestamp": (best_hit.get("metadata") or {}).get("timestamp", ""),
+                "_distance": best_hit.get("distance", 1.0),
+            })
+
+    # 8. Decide what to present based on quality
+    # If episodes are relevant (score >= 3.0), use them as primary
+    # If segments are better, use those
+    # If both are garbage, use fallback snippets
+    use_segments_as_primary = (
+        not episodes_are_relevant
+        and good_segments
+    )
+    use_fallback = (
+        not episodes_are_relevant
+        and not good_segments
+        and fallback_snippets
+    )
+
+    # When segments win, deprioritize episodes (don't show garbage)
+    if use_segments_as_primary:
+        episodes = []
+    if use_fallback:
+        episodes = []
+
+    # 9. Load artifacts for the top episode (only if episodes are the primary result)
     artifacts: dict[str, Any] = {}
     if episodes:
         artifacts = _load_episode_artifacts(store, episodes[0])
 
-    # 9. Build narrative
+    # 10. Build narrative
     narrative = build_narrative(
         query=query,
         project_matches=project_matches,
         episodes=episodes,
         artifacts=artifacts,
         time_window=(since, until),
+        segments=good_segments if use_segments_as_primary else [],
+        fallback_snippets=fallback_snippets if use_fallback else [],
     )
 
     return RecallResult(
@@ -269,6 +346,7 @@ def recall(
         project_matches=project_matches,
         time_window=(since, until),
         episodes=episodes,
+        segments=good_segments if use_segments_as_primary else segments,
         artifacts=artifacts,
         narrative=narrative,
     )

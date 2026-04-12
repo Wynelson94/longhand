@@ -48,11 +48,21 @@ def build_narrative(
     episodes: list[dict[str, Any]],
     artifacts: dict[str, Any],
     time_window: tuple[datetime | None, datetime | None] | None = None,
+    segments: list[dict[str, Any]] | None = None,
+    fallback_snippets: list[dict[str, Any]] | None = None,
 ) -> str:
     """Produce a markdown narrative from the recall results."""
     lines: list[str] = []
 
     lines.append(f"**You asked:** _{query.strip()}_\n")
+
+    # If segments are the primary result, render segment narrative
+    if segments:
+        return _build_segment_narrative(lines, query, project_matches, segments)
+
+    # If fallback snippets are the primary result, render fallback narrative
+    if fallback_snippets:
+        return _build_fallback_narrative(lines, query, project_matches, fallback_snippets)
 
     if not episodes:
         lines.append("_No matching episodes found in Longhand memory._\n")
@@ -126,5 +136,92 @@ def build_narrative(
             ep_when = _humanize_timestamp(ep.get("started_at"))
             summary = (ep.get("problem_description") or "")[:100]
             lines.append(f"- {ep_when}: {summary}")
+
+    return "\n".join(lines)
+
+
+def _build_segment_narrative(
+    lines: list[str],
+    query: str,
+    project_matches: list[ProjectMatch],
+    segments: list[dict[str, Any]],
+) -> str:
+    """Build a narrative from conversation segment results."""
+    top = segments[0]
+
+    # Header
+    project_name = "unknown project"
+    if project_matches:
+        project_name = project_matches[0].display_name
+    when = _humanize_timestamp(top.get("started_at"))
+    session_short = (top.get("session_id") or "")[:8]
+
+    lines.append(f"**Found it:** {project_name} · {when} · session `{session_short}`\n")
+
+    # Conversation topic
+    topic = top.get("topic", "")
+    if topic:
+        lines.append(f"### Conversation: {topic[:100]}\n")
+
+    # Summary
+    summary = top.get("summary", "")
+    if summary:
+        lines.append(summary[:800] + "\n")
+
+    # Metadata
+    seg_type = top.get("segment_type", "discussion")
+    keywords_raw = top.get("keywords_json", "[]")
+    try:
+        keywords = json.loads(keywords_raw) if isinstance(keywords_raw, str) else keywords_raw
+    except Exception:
+        keywords = []
+    if keywords:
+        lines.append(f"**Type:** {seg_type} · **Keywords:** {', '.join(keywords[:8])}")
+
+    event_count = top.get("event_count", 0)
+    start = _humanize_timestamp(top.get("started_at"))
+    end = _humanize_timestamp(top.get("ended_at"))
+    lines.append(f"**Duration:** {start} to {end} ({event_count} events)\n")
+
+    # Drill-down hint
+    lines.append(
+        f'[Use `search_in_context("{session_short}", "{query[:50]}")` '
+        f"to read the full conversation.]\n"
+    )
+
+    # Other segment candidates
+    if len(segments) > 1:
+        lines.append(f"### Other matches ({len(segments) - 1})")
+        for seg in segments[1:4]:
+            seg_when = _humanize_timestamp(seg.get("started_at"))
+            seg_topic = (seg.get("topic") or "")[:80]
+            lines.append(f"- {seg_when}: {seg_topic}")
+
+    return "\n".join(lines)
+
+
+def _build_fallback_narrative(
+    lines: list[str],
+    query: str,
+    project_matches: list[ProjectMatch],
+    fallback_snippets: list[dict[str, Any]],
+) -> str:
+    """Build a narrative from event-level fallback results."""
+    lines.append(
+        "_No episodes or conversation segments matched directly. "
+        "Closest event-level matches:_\n"
+    )
+
+    for snippet in fallback_snippets[:3]:
+        session_short = (snippet.get("session_id") or "")[:8]
+        when = _humanize_timestamp(snippet.get("timestamp"))
+        content = (snippet.get("content") or "")[:300]
+
+        lines.append(f"### From session `{session_short}` ({when})")
+        lines.append(f"> {content}\n")
+        lines.append(
+            f'[Use `search_in_context("{session_short}", "{query[:50]}")` '
+            f"for full context.]\n"
+        )
 
     return "\n".join(lines)

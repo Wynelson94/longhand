@@ -53,6 +53,11 @@ class VectorStore:
             metadata={"description": "One embedding per project for fuzzy project matching"},
         )
 
+        self.segments_collection = self.client.get_or_create_collection(
+            name="segments",
+            metadata={"description": "One embedding per conversation segment for topic-level recall"},
+        )
+
     def add_events(self, events: list[Event]) -> int:
         """Add a batch of events to the vector index.
 
@@ -280,9 +285,80 @@ class VectorStore:
             })
         return hits
 
+    # ─── Segments collection ─────────────────────────────────────────────
+
+    def add_segment_embedding(
+        self,
+        segment_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert one embedding per conversation segment."""
+        if not text or not text.strip():
+            return
+        self.segments_collection.upsert(
+            ids=[segment_id],
+            documents=[text[:MAX_EMBED_CHARS]],
+            metadatas=[metadata],
+        )
+
+    def search_segments(
+        self,
+        query: str,
+        n_results: int = 10,
+        project_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        segment_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic search over conversation segments."""
+        where_clauses: list[dict[str, Any]] = []
+        if project_id:
+            where_clauses.append({"project_id": project_id})
+        if segment_type:
+            where_clauses.append({"segment_type": segment_type})
+        if since:
+            where_clauses.append({"started_at": {"$gte": since}})
+        if until:
+            where_clauses.append({"started_at": {"$lte": until}})
+
+        where: dict[str, Any] | None = None
+        if len(where_clauses) == 1:
+            where = where_clauses[0]
+        elif len(where_clauses) > 1:
+            where = {"$and": where_clauses}
+
+        try:
+            results = self.segments_collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=where,
+            )
+        except Exception:
+            return []
+
+        ids = results.get("ids", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        hits: list[dict[str, Any]] = []
+        for i, sid in enumerate(ids):
+            hits.append({
+                "segment_id": sid,
+                "document": documents[i] if i < len(documents) else "",
+                "metadata": metadatas[i] if i < len(metadatas) else {},
+                "distance": distances[i] if i < len(distances) else 1.0,
+            })
+        return hits
+
+    def segment_count(self) -> int:
+        """Return the number of segment embeddings."""
+        return self.segments_collection.count()
+
     def reset(self) -> None:
         """Delete and recreate all collections."""
-        for name in ("events", "sessions", "projects"):
+        for name in ("events", "sessions", "projects", "segments"):
             try:
                 self.client.delete_collection(name=name)
             except Exception:
@@ -290,3 +366,4 @@ class VectorStore:
         self.events_collection = self.client.get_or_create_collection(name="events")
         self.sessions_collection = self.client.get_or_create_collection(name="sessions")
         self.projects_collection = self.client.get_or_create_collection(name="projects")
+        self.segments_collection = self.client.get_or_create_collection(name="segments")

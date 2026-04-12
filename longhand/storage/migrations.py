@@ -109,6 +109,31 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX IF NOT EXISTS idx_git_ops_hash ON git_operations(commit_hash) WHERE commit_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_git_ops_type ON git_operations(operation_type);
     """,
+    3: """
+    -- v3: conversation segment extraction for non-episode recall
+
+    CREATE TABLE IF NOT EXISTS conversation_segments (
+        segment_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        project_id TEXT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        start_sequence INTEGER NOT NULL,
+        end_sequence INTEGER NOT NULL,
+        segment_type TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        event_count INTEGER NOT NULL,
+        user_message_count INTEGER NOT NULL,
+        keywords_json TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_segments_session ON conversation_segments(session_id);
+    CREATE INDEX IF NOT EXISTS idx_segments_project ON conversation_segments(project_id);
+    CREATE INDEX IF NOT EXISTS idx_segments_ended_at ON conversation_segments(ended_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_segments_type ON conversation_segments(segment_type);
+    """,
 }
 
 
