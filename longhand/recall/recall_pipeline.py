@@ -36,6 +36,23 @@ class RecallResult:
     narrative: str = ""
 
 
+@dataclass
+class ProjectStatus:
+    """Result of a git-aware project status query."""
+    project_id: str
+    display_name: str
+    canonical_path: str
+    category: str | None
+    last_commits: list[dict[str, Any]] = field(default_factory=list)
+    active_branch: str | None = None
+    recent_sessions: list[dict[str, Any]] = field(default_factory=list)
+    recent_episodes: list[dict[str, Any]] = field(default_factory=list)
+    unresolved_episodes: list[dict[str, Any]] = field(default_factory=list)
+    recent_segments: list[dict[str, Any]] = field(default_factory=list)
+    last_outcome: dict[str, Any] | None = None
+    narrative: str = ""
+
+
 def _load_episode_artifacts(store: LonghandStore, episode: dict[str, Any]) -> dict[str, Any]:
     """Load the supporting artifacts for a single episode.
 
@@ -348,5 +365,146 @@ def recall(
         episodes=episodes,
         segments=segments,
         artifacts=artifacts,
+        narrative=narrative,
+    )
+
+
+def recall_project_status(
+    store: LonghandStore,
+    project_name_or_id: str,
+    max_commits: int = 10,
+    max_episodes: int = 5,
+    max_segments: int = 5,
+) -> ProjectStatus | None:
+    """Git-aware project status recall.
+
+    Resolves a project name, queries git operations across all its sessions,
+    links commits to episodes, and builds a "here's where you left off" narrative.
+    Works without git — degrades gracefully to sessions/episodes/segments only.
+    """
+    from longhand.recall.narrative import build_project_status_narrative
+
+    # 1. Resolve project — try direct ID first, then fuzzy match
+    project = None
+    try:
+        direct = store.sqlite.get_project(project_name_or_id)
+        if direct:
+            project = direct
+    except Exception:
+        pass
+
+    if not project:
+        matches = match_projects(store, project_name_or_id, top_k=1)
+        if not matches or matches[0].score < 0.5:
+            return None
+        match = matches[0]
+        # Load full project row from SQLite
+        try:
+            project = store.sqlite.get_project(match.project_id)
+        except Exception:
+            pass
+        if not project:
+            # Use match data directly
+            project = {
+                "project_id": match.project_id,
+                "display_name": match.display_name,
+                "canonical_path": match.canonical_path,
+                "category": match.category,
+            }
+
+    project_id = project["project_id"]
+
+    # 2. Get recent git operations for this project
+    try:
+        last_commits = store.sqlite.get_project_git_operations(
+            project_id=project_id, limit=max_commits,
+        )
+    except Exception:
+        last_commits = []
+
+    # Extract active branch from most recent git operation
+    active_branch = None
+    if last_commits:
+        active_branch = last_commits[0].get("branch")
+
+    # 3. Get recent sessions
+    try:
+        recent_sessions = store.sqlite.list_sessions(
+            project_id=project_id, limit=5,
+        )
+    except Exception:
+        recent_sessions = []
+
+    # Get last outcome from most recent session
+    last_outcome = None
+    if recent_sessions:
+        try:
+            last_outcome = store.sqlite.get_outcome(recent_sessions[0]["session_id"])
+        except Exception:
+            pass
+
+    # 4. Get recent episodes — split resolved vs unresolved
+    try:
+        all_episodes = store.sqlite.query_episodes(
+            project_ids=[project_id], limit=max_episodes * 2,
+        )
+    except Exception:
+        all_episodes = []
+
+    recent_episodes = all_episodes[:max_episodes]
+    unresolved_episodes = [
+        ep for ep in all_episodes if ep.get("status") != "resolved"
+    ][:max_episodes]
+
+    # 5. Get recent conversation segments
+    try:
+        recent_segments = store.sqlite.query_segments(
+            project_ids=[project_id], limit=max_segments,
+        )
+    except Exception:
+        recent_segments = []
+
+    # 6. Link commits to episodes via fix_commit_hash
+    commit_hashes = {c.get("commit_hash") for c in last_commits if c.get("commit_hash")}
+    episode_by_hash: dict[str, dict[str, Any]] = {}
+    for ep in all_episodes:
+        fch = ep.get("fix_commit_hash")
+        if fch and fch in commit_hashes:
+            episode_by_hash[fch] = ep
+
+    for commit in last_commits:
+        ch = commit.get("commit_hash")
+        if ch and ch in episode_by_hash:
+            commit["linked_episode"] = {
+                "episode_id": episode_by_hash[ch].get("episode_id"),
+                "fix_summary": episode_by_hash[ch].get("fix_summary", ""),
+                "problem_description": episode_by_hash[ch].get("problem_description", ""),
+            }
+
+    # 7. Build narrative
+    narrative = build_project_status_narrative(
+        display_name=project.get("display_name", "unknown"),
+        canonical_path=project.get("canonical_path", ""),
+        last_commits=last_commits,
+        active_branch=active_branch,
+        recent_sessions=recent_sessions,
+        recent_episodes=recent_episodes,
+        unresolved_episodes=unresolved_episodes,
+        recent_segments=recent_segments,
+        last_outcome=last_outcome,
+    )
+
+    return ProjectStatus(
+        project_id=project_id,
+        display_name=project.get("display_name", "unknown"),
+        canonical_path=project.get("canonical_path", ""),
+        category=project.get("category"),
+        last_commits=last_commits,
+        active_branch=active_branch,
+        recent_sessions=recent_sessions,
+        recent_episodes=recent_episodes,
+        unresolved_episodes=unresolved_episodes,
+        recent_segments=recent_segments,
+        last_outcome=last_outcome,
         narrative=narrative,
     )

@@ -225,3 +225,93 @@ def _build_fallback_narrative(
         )
 
     return "\n".join(lines)
+
+
+def build_project_status_narrative(
+    display_name: str,
+    canonical_path: str,
+    last_commits: list[dict[str, Any]],
+    active_branch: str | None,
+    recent_sessions: list[dict[str, Any]],
+    recent_episodes: list[dict[str, Any]],
+    unresolved_episodes: list[dict[str, Any]],
+    recent_segments: list[dict[str, Any]],
+    last_outcome: dict[str, Any] | None,
+) -> str:
+    """Build a 'here's where you left off' narrative for a project.
+
+    Degrades gracefully — sections are omitted when data is missing.
+    Works for projects with zero git history.
+    """
+    lines: list[str] = []
+
+    # Header
+    branch_str = f" · branch: `{active_branch}`" if active_branch else ""
+    lines.append(f"## {display_name}")
+    lines.append(f"`{canonical_path}`{branch_str}\n")
+
+    # Last session
+    if recent_sessions:
+        last_session = recent_sessions[0]
+        when = _humanize_timestamp(last_session.get("started_at"))
+        event_count = last_session.get("event_count", 0)
+        outcome_str = ""
+        if last_outcome:
+            outcome_str = f"Outcome: **{last_outcome.get('outcome', 'unknown')}** · "
+            summary = last_outcome.get("summary", "")
+            if summary:
+                # Extract just the meaningful part after "outcome: "
+                if ": " in summary:
+                    summary = summary.split(": ", 1)[1]
+                outcome_str += f"{summary[:150]}\n"
+        lines.append("### Last session")
+        lines.append(f"{outcome_str}{when} · {event_count} events\n")
+
+    # Recent commits
+    if last_commits:
+        lines.append(f"### Recent commits ({len(last_commits)})")
+        for commit in last_commits[:10]:
+            hash_short = (commit.get("commit_hash") or "")[:8]
+            message = (commit.get("commit_message") or "no message")[:80]
+            when = _humanize_timestamp(commit.get("timestamp"))
+            op_type = commit.get("operation_type", "commit")
+
+            line = f"- `{hash_short}` {message} ({when})"
+
+            # Show linked episode if exists
+            linked = commit.get("linked_episode")
+            if linked:
+                fix = (linked.get("fix_summary") or "")[:80]
+                if fix:
+                    line += f"\n  linked: {fix}"
+
+            lines.append(line)
+        lines.append("")
+
+    # Known issues (unresolved episodes)
+    if unresolved_episodes:
+        lines.append(f"### Known issues ({len(unresolved_episodes)})")
+        for ep in unresolved_episodes[:5]:
+            problem = (ep.get("problem_description") or "unknown issue")[:120]
+            when = _humanize_timestamp(ep.get("ended_at"))
+            lines.append(f"- {problem} ({when})")
+        lines.append("")
+    else:
+        lines.append("### Known issues")
+        lines.append("None tracked.\n")
+
+    # Recent work (conversation segments)
+    if recent_segments:
+        lines.append(f"### Recent work ({len(recent_segments)})")
+        for seg in recent_segments[:5]:
+            topic = (seg.get("topic") or "")[:80]
+            seg_type = seg.get("segment_type", "discussion")
+            when = _humanize_timestamp(seg.get("ended_at"))
+            lines.append(f"- [{seg_type}] {topic} ({when})")
+        lines.append("")
+
+    # No data at all
+    if not last_commits and not recent_sessions and not recent_episodes:
+        lines.append("_No session history found for this project._")
+
+    return "\n".join(lines)

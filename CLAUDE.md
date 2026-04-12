@@ -14,6 +14,8 @@ When a user asks about past work:
 
 5. **"What did we commit?"** → Use `find_commits` (cross-session) or `get_session_commits` (single session).
 
+6. **"Where did we leave off on X?"** → Use `recall_project_status` with the project name. Returns recent commits, unresolved issues, last session outcome, and conversation context in one call. Git-aware when git data exists, degrades gracefully without it.
+
 ## Anti-Patterns (AVOID)
 
 - **Never paginate `get_session_timeline` in a loop** looking for something. Use `search_in_context` or `search` with `session_id` filter instead.
@@ -31,7 +33,11 @@ When a user asks about past work:
 1. `recall(query)` → get projects, episodes, narrative
 2. (Optional) `search_in_context` to read the raw conversation around an episode
 
-### Pattern C: Investigate a file's history (2 calls)
+### Pattern C: Pick up a project where you left off (1 call)
+1. `recall_project_status(project)` → get recent commits, unresolved issues, last outcome, conversation context
+2. (Optional) `search_in_context` to drill into a specific session from the results
+
+### Pattern D: Investigate a file's history (2 calls)
 1. `get_file_history(file_path)` → see all edits chronologically
 2. `replay_file(session_id, file_path)` → reconstruct exact file state at a point in time
 

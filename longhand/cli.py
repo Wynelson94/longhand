@@ -1384,6 +1384,32 @@ def recap(
 
 
 # -----------------------------------------------------------------------------
+# STATUS — project status with git context
+# -----------------------------------------------------------------------------
+
+
+@app.command("status")
+def status_cmd(
+    project: str = typer.Argument(..., help="Project name (fuzzy match)"),
+    commits: int = typer.Option(10, "--commits", "-c", help="Max recent commits to show"),
+    episodes: int = typer.Option(5, "--episodes", "-e", help="Max recent episodes"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """Show where a project left off — recent commits, issues, and context."""
+    from longhand.recall.recall_pipeline import recall_project_status
+
+    store = _get_store(data_dir)
+    result = recall_project_status(
+        store, project, max_commits=commits, max_episodes=episodes,
+    )
+    if not result:
+        console.print(f"[red]No project matching: {project}[/red]")
+        raise typer.Exit(1)
+
+    console.print(Markdown(result.narrative))
+
+
+# -----------------------------------------------------------------------------
 # CONTINUE — pick up where you left off in a session
 # -----------------------------------------------------------------------------
 

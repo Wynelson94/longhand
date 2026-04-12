@@ -801,6 +801,33 @@ class SQLiteStore:
             rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
 
+    def get_project_git_operations(
+        self,
+        project_id: str,
+        operation_type: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Get git operations across all sessions for a project.
+
+        Joins git_operations with sessions on session_id where
+        sessions.project_id matches. Most recent first.
+        """
+        with self.connect() as conn:
+            conditions = ["s.project_id = ?"]
+            params: list[Any] = [project_id]
+            if operation_type:
+                conditions.append("g.operation_type = ?")
+                params.append(operation_type)
+            sql = (
+                "SELECT g.* FROM git_operations g "
+                "INNER JOIN sessions s ON g.session_id = s.session_id "
+                "WHERE " + " AND ".join(conditions) +
+                " ORDER BY g.timestamp DESC LIMIT ?"
+            )
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+
     # ─── Conversation segments ────────────────────────────────────────────
 
     def insert_segments(self, segments: list[dict[str, Any]]) -> int:

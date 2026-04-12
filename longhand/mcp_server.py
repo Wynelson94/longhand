@@ -259,6 +259,30 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="recall_project_status",
+            description=(
+                "Get the current status of a project — where you left off, recent "
+                "commits, unresolved issues, and latest conversation context. Takes "
+                "a project name (fuzzy match) and returns a structured summary with "
+                "git history, linked episodes, and conversation segments. "
+                "Use this when someone says 'pick up where we left off on X', "
+                "'what's the status of X', or 'where did we end on X'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Project name, alias, or ID (fuzzy match)",
+                    },
+                    "max_commits": {"default": 10, "description": "Max recent commits to show"},
+                    "max_episodes": {"default": 5, "description": "Max recent episodes"},
+                    "max_chars": {"default": 16000, "description": "Max output characters"},
+                },
+                "required": ["project"],
+            },
+        ),
+        Tool(
             name="match_project",
             description=(
                 "Fuzzy project matching. Given a partial project name, category, or "
@@ -700,6 +724,65 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             "segments": result.segments,
             "artifacts": result.artifacts,
             "narrative": result.narrative,
+        }
+        max_chars = _max_chars(arguments.get("max_chars"), 16000)
+        output = json.dumps(payload, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+    if name == "recall_project_status":
+        from longhand.recall.recall_pipeline import recall_project_status
+        status = recall_project_status(
+            store=store,
+            project_name_or_id=arguments["project"],
+            max_commits=_limit(arguments.get("max_commits"), 10),
+            max_episodes=_limit(arguments.get("max_episodes"), 5),
+        )
+        if not status:
+            return [TextContent(type="text", text="No project matched.")]
+        payload = {
+            "project_id": status.project_id,
+            "display_name": status.display_name,
+            "canonical_path": status.canonical_path,
+            "category": status.category,
+            "active_branch": status.active_branch,
+            "last_commits": status.last_commits[:10],
+            "recent_sessions": [
+                {
+                    "session_id": s.get("session_id"),
+                    "started_at": s.get("started_at"),
+                    "ended_at": s.get("ended_at"),
+                    "event_count": s.get("event_count"),
+                }
+                for s in status.recent_sessions[:5]
+            ],
+            "recent_episodes": [
+                {
+                    "episode_id": e.get("episode_id"),
+                    "problem_description": (e.get("problem_description") or "")[:120],
+                    "fix_summary": (e.get("fix_summary") or "")[:120],
+                    "status": e.get("status"),
+                    "ended_at": e.get("ended_at"),
+                }
+                for e in status.recent_episodes[:5]
+            ],
+            "unresolved_episodes": [
+                {
+                    "episode_id": e.get("episode_id"),
+                    "problem_description": (e.get("problem_description") or "")[:120],
+                    "ended_at": e.get("ended_at"),
+                }
+                for e in status.unresolved_episodes[:5]
+            ],
+            "recent_segments": [
+                {
+                    "segment_type": s.get("segment_type"),
+                    "topic": (s.get("topic") or "")[:100],
+                    "ended_at": s.get("ended_at"),
+                }
+                for s in status.recent_segments[:5]
+            ],
+            "last_outcome": status.last_outcome,
+            "narrative": status.narrative,
         }
         max_chars = _max_chars(arguments.get("max_chars"), 16000)
         output = json.dumps(payload, indent=2, default=str)
