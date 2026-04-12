@@ -78,6 +78,97 @@ def _format_timestamp(iso: str) -> str:
 
 
 # -----------------------------------------------------------------------------
+# SETUP — one-command install wrapper
+# -----------------------------------------------------------------------------
+
+
+@app.command()
+def setup(
+    skip_ingest: bool = typer.Option(False, "--skip-ingest", help="Skip backfilling existing sessions"),
+    skip_prompt_hook: bool = typer.Option(False, "--skip-prompt-hook", help="Skip auto-context injection hook"),
+    skip_mcp: bool = typer.Option(False, "--skip-mcp", help="Skip MCP server install"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+):
+    """One-command setup: ingest existing sessions, install hooks, configure MCP.
+
+    This wraps the five commands you would otherwise run individually:
+      - longhand ingest          (backfill existing Claude Code history)
+      - longhand analyze --all   (run analysis on every session)
+      - longhand hook install    (auto-ingest future sessions)
+      - longhand prompt-hook install  (auto-inject past context — optional)
+      - longhand mcp install     (expose tools to Claude Code)
+      - longhand doctor          (verify everything)
+
+    Takes ~2 minutes on a laptop with a year of sessions. Safe to re-run.
+    """
+    console.print("[bold cyan]→ Longhand setup[/bold cyan]\n")
+
+    store = _get_store(data_dir)
+
+    # 1. Ingest existing history
+    if not skip_ingest:
+        console.print("[bold]1/5[/bold] Ingesting existing Claude Code sessions...")
+        try:
+            target = Path.home() / ".claude" / "projects"
+            if target.exists():
+                sessions = discover_sessions(target)
+                ingested = 0
+                for idx, session_path in enumerate(sessions):
+                    try:
+                        _ingest_single(str(session_path), data_dir)
+                        ingested += 1
+                    except Exception:
+                        pass
+                    if idx > 0 and idx % 20 == 0:
+                        console.print(f"   {idx}/{len(sessions)}...")
+                console.print(f"[green]   ✓[/green] Ingested {ingested} session(s)")
+            else:
+                console.print(f"[yellow]   ⚠ No Claude Code history found at {target}[/yellow]")
+        except Exception as e:
+            console.print(f"[red]   ✗ Ingest failed: {e}[/red]")
+    else:
+        console.print("[dim]1/5[/dim] Skipping ingest")
+
+    # 2. Hook install (auto-ingest future sessions)
+    console.print("\n[bold]2/5[/bold] Installing SessionEnd hook (auto-ingest future sessions)...")
+    try:
+        _hook_install()
+        console.print("[green]   ✓[/green] Hook installed")
+    except Exception as e:
+        console.print(f"[red]   ✗ Hook install failed: {e}[/red]")
+
+    # 3. Prompt hook (optional)
+    if not skip_prompt_hook:
+        console.print("\n[bold]3/5[/bold] Installing UserPromptSubmit hook (auto-context injection)...")
+        try:
+            _prompt_hook_install()
+            console.print("[green]   ✓[/green] Prompt hook installed")
+        except Exception as e:
+            console.print(f"[red]   ✗ Prompt hook install failed: {e}[/red]")
+    else:
+        console.print("\n[dim]3/5[/dim] Skipping prompt hook")
+
+    # 4. MCP install
+    if not skip_mcp:
+        console.print("\n[bold]4/5[/bold] Installing MCP server for Claude Code...")
+        try:
+            _mcp_install()
+            console.print("[green]   ✓[/green] MCP server registered")
+        except Exception as e:
+            console.print(f"[red]   ✗ MCP install failed: {e}[/red]")
+    else:
+        console.print("\n[dim]4/5[/dim] Skipping MCP install")
+
+    # 5. Doctor — verify everything
+    console.print("\n[bold]5/5[/bold] Verifying installation...")
+    _doctor()
+
+    console.print("\n[bold green]→ Setup complete.[/bold green]")
+    console.print("Try: [cyan]longhand recall \"what was I working on\"[/cyan]")
+    console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
+
+
+# -----------------------------------------------------------------------------
 # INGEST
 # -----------------------------------------------------------------------------
 

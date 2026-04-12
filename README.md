@@ -1,8 +1,21 @@
 # Longhand
 
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)
+![Local](https://img.shields.io/badge/100%25-local-informational)
+
 **Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
 
-> *Status: v0.3.2 — stable, daily-driver tested, security-audited (zero critical findings), stress-tested by a fresh Claude against all 15 MCP tools. Built by someone with no CS background, validated against 102 real Claude Code sessions / 51,623 events / 665 git operations / 346 problem→fix episodes across 37 inferred projects. 71 unit tests passing.*
+> **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can find any fix, decision, or conversation you've had in ~126ms — without a single API call.**
+
+```bash
+pip install -e .
+longhand setup        # ingest history + install hooks + configure MCP
+longhand recall "that stripe webhook bug from last week"
+```
+
+> *Status: v0.5.1 — stable, daily-driver tested, security-audited (zero critical findings). Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 86 unit tests passing.*
 
 ---
 
@@ -86,8 +99,10 @@ Longhand reads those files. Then it gives you:
 - **Fuzzy recall** — natural-language questions about past work ("that race condition fix from last week")
 - **Project inference** — automatic detection of which projects you've worked on, with categories and aliases
 - **Episode extraction** — automatic detection of problem→fix sequences in your sessions
+- **Conversation segments** — topic-level clustering (stories, design discussions, debugging, planning) so recall finds the *why*, not just the *what*
+- **Git-aware project recall** — ask "where did we leave off on X" and get recent commits, unresolved issues, last session outcome in one call
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
-- **MCP server** — 15 tools that let Claude query Longhand directly during live conversations
+- **MCP server** — 16 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
 - **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message (configurable threshold and size cap)
 - **Configurable** — `longhand config` to tune injection relevance, token budget, and behavior without editing code
@@ -98,21 +113,24 @@ Longhand reads those files. Then it gives you:
 
 ```bash
 pip install -e .
+longhand setup
 ```
 
-Then make it current:
+That's it. `longhand setup` backfills your existing Claude Code history, installs the hooks that keep it updated automatically, registers Longhand as an MCP server for Claude Code, and verifies everything works. About two minutes the first time, zero maintenance after that.
+
+<details>
+<summary>Or run the individual commands yourself</summary>
 
 ```bash
 longhand ingest                # ingest all your existing Claude Code history
-longhand analyze --all         # run analysis (projects, outcomes, episodes)
+longhand analyze --all         # run analysis (projects, outcomes, episodes, segments)
 longhand hook install          # auto-ingest every future session
 longhand prompt-hook install   # (optional) auto-inject past context into new prompts
-longhand mcp install           # let Claude Desktop call Longhand as MCP tools
+longhand mcp install           # let Claude Code call Longhand as MCP tools
 longhand config                # view/tune hook behavior (relevance threshold, injection size)
 longhand doctor                # verify everything is wired up
 ```
-
-Those five commands take about two minutes the first time and zero maintenance after that.
+</details>
 
 ---
 
@@ -127,7 +145,8 @@ longhand projects
 # Daily-use commands
 longhand recap                              # what have I been up to
 longhand recap --days 30 --project bsoi     # filtered recap
-longhand continue <session-id>              # pick up where I left off
+longhand continue <session-id>              # pick up where I left off (session-scoped)
+longhand status <project-name>              # where did we leave off on a project (git-aware)
 longhand patterns                           # what bugs do I keep fixing
 longhand history src/app/route.ts           # every edit ever to a file
 
@@ -208,7 +227,7 @@ That's one local command. No API call. The fix came from a session file Claude C
 
 ## MCP Integration (Claude Desktop)
 
-Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has fifteen tools:
+Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has sixteen tools:
 
 **Core (searchable archive):**
 - `search` — semantic search with session, project, tool, file, and event_type filters (all combinable)
@@ -220,6 +239,8 @@ Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After 
 
 **Proactive memory:**
 - `recall` — fuzzy natural-language recall (use this first)
+- `recall_project_status` — "where did we leave off on X?" — git-aware project summary with commits, issues, last outcome
+- `search_in_context` — find something in a session and get the surrounding conversation
 - `match_project` — find projects by partial name / category / description
 - `find_episodes` — structured search for problem→fix pairs
 - `get_episode` — full detail for one episode including diff + file state
@@ -270,7 +291,7 @@ longhand/
 ├── analysis/              — per-session (project, outcomes, episodes, embeddings)
 ├── recall/                — per-query (time parsing, project match, narrative)
 ├── cli.py                 — Typer CLI with Rich output
-├── mcp_server.py          — Model Context Protocol server (15 tools)
+├── mcp_server.py          — Model Context Protocol server (16 tools)
 └── setup_commands.py      — hook install, mcp install, config, doctor
 ```
 
@@ -305,20 +326,21 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 ## Stats
 
 Tested end-to-end on a real Claude Code history:
-- 102 unique sessions
-- 51,623 events
-- 18,621 tool calls
-- 3,086 file edits
+- 107 unique sessions
+- 53,668 events
+- 19,252 tool calls
+- 3,200 file edits
 - 224 thinking blocks
 - 37 projects inferred automatically
-- 346 problem→fix episodes extracted (64 resolved)
+- 376 problem→fix episodes extracted (76 resolved)
+- 299 conversation segments (design, story, debugging, discussion, planning)
 - 665 git operations extracted (22 commits linked)
-- 47,818 vectors indexed
+- 49,637 vectors indexed
 - Vector search: ~126ms
 - SQL queries: <30ms
 - Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
 
-71 unit tests passing. All 15 MCP tools stress-tested by a fresh Claude with zero context. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
+86 unit tests passing. All 16 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
 
 ---
 
