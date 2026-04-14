@@ -1772,10 +1772,33 @@ def mcp_server_cmd():
 
 @app.command("ingest-session")
 def ingest_session_cmd(
-    transcript: str = typer.Option(..., "--transcript", "-t", help="Path to a single session JSONL"),
+    transcript: Optional[str] = typer.Option(None, "--transcript", "-t", help="Path to a single session JSONL"),
     data_dir: Optional[str] = typer.Option(None, "--data-dir"),
 ):
-    """Ingest a single session file (called by the SessionEnd hook)."""
+    """Ingest a single session file.
+
+    Dual-mode: accepts `--transcript <path>` for direct CLI use, OR reads
+    `{"transcript_path": "..."}` JSON from stdin when invoked by Claude Code's
+    SessionEnd hook (modern Claude Code passes hook data via stdin, not env vars).
+    """
+    if not transcript:
+        import json as _json
+        import sys as _sys
+
+        try:
+            raw = _sys.stdin.read(262144)  # bounded, ≤256KB
+            if raw.strip():
+                data = _json.loads(raw)
+                if isinstance(data, dict):
+                    transcript = data.get("transcript_path") or data.get("transcript") or None
+        except Exception:
+            pass
+
+        if not transcript:
+            # Hook invoked with no transcript info — exit silently so we never
+            # crash the Claude Code hook chain.
+            return
+
     _ingest_single(transcript, data_dir)
 
 

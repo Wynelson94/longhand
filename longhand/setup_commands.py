@@ -89,16 +89,66 @@ def _entry_contains_command(entry: dict, needle: str) -> bool:
     return False
 
 
+def _hook_command_is_stale(entry: dict) -> bool:
+    """Detect the v≤0.5.1 SessionEnd hook command that relied on the
+    `$CLAUDE_TRANSCRIPT_PATH` env var. Modern Claude Code passes hook data via
+    stdin JSON, so that command silently fails on every session end.
+    """
+    inner = entry.get("hooks")
+    if isinstance(inner, list):
+        for h in inner:
+            cmd = (h.get("command") if isinstance(h, dict) else "") or ""
+            if "longhand ingest-session" in cmd and "$CLAUDE_TRANSCRIPT_PATH" in cmd:
+                return True
+    cmd = entry.get("command") or ""
+    if "longhand ingest-session" in cmd and "$CLAUDE_TRANSCRIPT_PATH" in cmd:
+        return True
+    return False
+
+
 def hook_install() -> None:
-    """Install the SessionEnd hook into ~/.claude/settings.json."""
+    """Install (or auto-upgrade) the SessionEnd hook in ~/.claude/settings.json."""
     settings = _load_json(CLAUDE_SETTINGS_PATH)
     backup = _backup(CLAUDE_SETTINGS_PATH)
 
     longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
-    command = f"{longhand_bin} ingest-session --transcript \"$CLAUDE_TRANSCRIPT_PATH\""
+    # Bare command — `ingest-session` reads `transcript_path` from stdin JSON
+    # as of v0.5.2 (Claude Code changed from env var to stdin JSON payload).
+    command = f"{longhand_bin} ingest-session"
 
     hooks = settings.setdefault("hooks", {})
     session_end = hooks.setdefault("SessionEnd", [])
+
+    # Auto-upgrade stale pre-0.5.2 hooks that still reference
+    # $CLAUDE_TRANSCRIPT_PATH (which modern Claude Code never sets).
+    upgraded = 0
+    for entry in session_end:
+        if _hook_command_is_stale(entry):
+            inner = entry.get("hooks")
+            if isinstance(inner, list):
+                for h in inner:
+                    if isinstance(h, dict) and "$CLAUDE_TRANSCRIPT_PATH" in (h.get("command") or ""):
+                        h["command"] = command
+                        upgraded += 1
+            elif "$CLAUDE_TRANSCRIPT_PATH" in (entry.get("command") or ""):
+                entry["command"] = command
+                upgraded += 1
+
+    if upgraded:
+        _save_json(CLAUDE_SETTINGS_PATH, settings)
+        console.print(
+            Panel.fit(
+                f"[green]✓[/green] Upgraded {upgraded} stale SessionEnd hook(s)\n"
+                f"[dim]Config:[/dim] {CLAUDE_SETTINGS_PATH}\n"
+                f"[dim]Backup:[/dim] {backup or 'n/a'}\n\n"
+                f"Your hook was written for an older Claude Code API "
+                f"(env var [bold]$CLAUDE_TRANSCRIPT_PATH[/bold]) and had been\n"
+                f"silently failing on every session end. Now reads stdin JSON.",
+                title="Hook upgraded",
+                border_style="green",
+            )
+        )
+        return
 
     if any(_entry_contains_command(h, "longhand ingest-session") for h in session_end):
         console.print("[yellow]Longhand SessionEnd hook already installed.[/yellow]")
@@ -425,19 +475,28 @@ def doctor() -> None:
 
     # 2. SessionEnd hook installed?
     hook_installed = False
+    hook_stale = False
     prompt_hook_installed = False
     if CLAUDE_SETTINGS_PATH.exists():
         settings = _load_json(CLAUDE_SETTINGS_PATH)
         for h in settings.get("hooks", {}).get("SessionEnd", []):
             if _entry_contains_command(h, "longhand ingest-session"):
                 hook_installed = True
+                if _hook_command_is_stale(h):
+                    hook_stale = True
                 break
         for h in settings.get("hooks", {}).get("UserPromptSubmit", []):
             if _entry_contains_command(h, "__prompt-hook-run"):
                 prompt_hook_installed = True
                 break
 
-    if hook_installed:
+    if hook_stale:
+        table.add_row(
+            "SessionEnd hook",
+            "[red]✗[/red] stale — uses pre-0.5.2 $CLAUDE_TRANSCRIPT_PATH "
+            "(silently failing). Run [bold]longhand hook install[/bold] to upgrade.",
+        )
+    elif hook_installed:
         table.add_row("SessionEnd hook", "[green]✓[/green] installed (auto-ingest)")
     else:
         table.add_row(
