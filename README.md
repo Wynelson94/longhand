@@ -10,7 +10,7 @@
 > **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can find any fix, decision, or conversation you've had in ~126ms — without a single API call.**
 
 ```bash
-pip install -e .
+pip install longhand
 longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
@@ -377,7 +377,7 @@ Tested end-to-end on a real Claude Code history:
 - SQL queries: <30ms
 - Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
 
-90 unit tests passing. All 16 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. No external dependencies beyond chromadb, typer, rich, pydantic. Optional MCP support via `pip install "longhand[mcp]"`.
+90 unit tests passing. All 16 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 

@@ -162,8 +162,8 @@ A few things that might look suspicious but aren't:
 - **`__prompt-hook-run`** is the internal hook handler. It's prefixed with `__` and marked `hidden=True` in Typer so it doesn't show in `--help`. It only reads bounded stdin and only invokes the local recall pipeline. It never spawns subprocesses, never opens network sockets, and never reads files outside what the recall pipeline already accesses.
 - **`__pycache__/` and `*.pyc`** are normal Python bytecode caches, not malicious files.
 - **The `chromadb` dependency pulls in `onnxruntime`** for the local embedding model. ONNX runs in a sandboxed inference graph — it doesn't execute Python. The model itself (`all-MiniLM-L6-v2`) is open and well-known.
-- **The `mcp` dependency is optional** (only required for the MCP server). The core CLI works without it.
-- **`pip install -e .` is editable mode** — it's not a privilege escalation, it just installs the entry point so `longhand` works on your PATH.
+- **The `mcp` dependency is required** because the MCP server ships in the main package. It's a well-known Python client/server library published by Anthropic; see the [mcp package on PyPI](https://pypi.org/project/mcp/).
+- **`pip install longhand`** installs the CLI and entry point via PyPI. The editable variant (`pip install -e .`) is only used for development — it's not a privilege escalation, it just installs the entry point so `longhand` works on your PATH.
 
 If you're a security researcher and want to chat about the design, I'm happy to. The whole point of this tool is that the raw record never lies — and that includes the security model.
 
