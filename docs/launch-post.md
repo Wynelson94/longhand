@@ -1,6 +1,6 @@
 # Why I built Longhand: the model doesn't need to carry the memory — the disk does
 
-*Published as a GitHub Discussion: https://github.com/Wynelson94/longhand/discussions*
+*Published as a GitHub Discussion: https://github.com/Wynelson94/longhand/discussions/3*
 *Source of truth: this file in the repo. Edits go through git.*
 
 ---
