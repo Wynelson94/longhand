@@ -15,7 +15,7 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-> *Status: v0.5.2 — stable, daily-driver tested, security-audited (zero critical findings). Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 90 unit tests passing.*
+> *Status: v0.5.3 — stable, daily-driver tested, security-audited (zero critical findings), now on PyPI. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 90 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -44,6 +44,28 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLite is from 2000. ChromaDB is two years old. Both run on a laptop. Longhand bypasses the crisis by ignoring it — your past sessions are already on disk, written by Claude Code itself, in JSONL files that contain every single event verbatim. Longhand reads those files, indexes them locally, and gives you semantic recall over your entire history without ever sending a token through someone else's API.
 
 **Local. Complete. Yours.**
+
+---
+
+## Longhand vs claude-mem
+
+[`thedotmack/claude-mem`](https://github.com/thedotmack/claude-mem) is the most popular Claude Code memory tool on GitHub (55k+ stars). It's a good tool. It is also solving the memory problem in the opposite direction from Longhand, and the difference is worth understanding before you pick one.
+
+|                            | claude-mem                                   | Longhand                                     |
+|----------------------------|----------------------------------------------|----------------------------------------------|
+| **What's stored**          | AI-generated summaries / "observations"      | Verbatim events from the raw JSONL           |
+| **Who decides what's kept**| An LLM, at write time                        | Nobody — everything is kept                  |
+| **Compression**            | Semantic (lossy, by design)                  | None (lossless)                              |
+| **API calls per session**  | One or more (calls Claude to summarize)      | Zero                                         |
+| **Thinking blocks**        | Typically folded into summaries              | First-class, stored verbatim                 |
+| **Deterministic replay**   | No — summaries can't reconstruct file state  | Yes — every diff kept and replayable         |
+| **Model portability**      | Tied to the summarizer's output              | Same data works across any model, forever   |
+| **Runtime**                | TypeScript, Bun, HTTP worker on :37777       | Python, no server                            |
+| **License**                | AGPL-3.0                                     | MIT                                          |
+
+The philosophical split: **claude-mem asks an AI what was important and keeps that. Longhand keeps the actual bytes and lets you decide later.** If you trust a model's judgment about its own past, claude-mem's approach is cheaper at query time (pre-summarized) and easier on storage. If you've ever been burned by a summary that dropped the thing that turned out to matter, Longhand is the tool that never throws anything away.
+
+Both can coexist on the same machine — they operate on the same JSONL files without interfering.
 
 ---
 
@@ -116,11 +138,22 @@ Longhand reads those files. Then it gives you:
 ## Install
 
 ```bash
-pip install -e .
+pip install longhand
 longhand setup
 ```
 
 That's it. `longhand setup` backfills your existing Claude Code history, installs the hooks that keep it updated automatically, registers Longhand as an MCP server for Claude Code, and verifies everything works. About two minutes the first time, zero maintenance after that.
+
+To upgrade later: `pip install -U longhand`.
+
+### Developer install (from source)
+
+```bash
+git clone https://github.com/Wynelson94/longhand.git
+cd longhand
+pip install -e .
+longhand setup
+```
 
 <details>
 <summary>Or run the individual commands yourself</summary>
