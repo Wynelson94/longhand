@@ -185,6 +185,18 @@ def ingest(
     """Ingest Claude Code session JSONL files into the Longhand store."""
     store = _get_store(data_dir)
 
+    # Claim the ingest lock so on-the-fly fallback callers can see that
+    # a full ingest is in progress (and skip spawning another one). If
+    # another live ingest holds the lock, exit cleanly — we're a spawned
+    # duplicate from a fallback-path race, not a user invocation.
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock,
+        release_ingest_lock,
+    )
+    if not claim_ingest_lock(store):
+        console.print("[yellow]Another ingest is already running — skipping.[/yellow]")
+        return
+
     if path:
         target = Path(path).expanduser()
         if target.is_file():
@@ -193,6 +205,7 @@ def ingest(
             files = discover_sessions(target)
         else:
             console.print(f"[red]Path not found: {path}[/red]")
+            release_ingest_lock(store)
             raise typer.Exit(1)
     else:
         files = discover_sessions()
@@ -200,6 +213,7 @@ def ingest(
     if not files:
         console.print("[yellow]No session files found.[/yellow]")
         console.print("Default location: ~/.claude/projects")
+        release_ingest_lock(store)
         return
 
     if limit > 0:
@@ -212,39 +226,42 @@ def ingest(
     events_total = 0
     errors = 0
 
-    for file in files:
-        try:
-            file_size = file.stat().st_size
-            if not force and store.sqlite.already_ingested(str(file), file_size):
-                skipped += 1
-                continue
+    try:
+        for file in files:
+            try:
+                file_size = file.stat().st_size
+                if not force and store.sqlite.already_ingested(str(file), file_size):
+                    skipped += 1
+                    continue
 
-            parser = JSONLParser(file)
-            events = list(parser.parse_events())
-            if not events:
-                skipped += 1
-                continue
+                parser = JSONLParser(file)
+                events = list(parser.parse_events())
+                if not events:
+                    skipped += 1
+                    continue
 
-            session = parser.build_session(events)
-            result = store.ingest_session(session, events)
-            events_total += result["events_stored"]
-            ingested += 1
+                session = parser.build_session(events)
+                result = store.ingest_session(session, events)
+                events_total += result["events_stored"]
+                ingested += 1
 
-            console.print(
-                f"  [green]✓[/green] {session.session_id[:8]} "
-                f"[dim]{len(events)} events[/dim] "
-                f"[dim]{session.project_path or '—'}[/dim]"
-            )
-        except Exception as e:
-            errors += 1
-            console.print(f"  [red]✗[/red] {file.name}: {e}")
+                console.print(
+                    f"  [green]✓[/green] {session.session_id[:8]} "
+                    f"[dim]{len(events)} events[/dim] "
+                    f"[dim]{session.project_path or '—'}[/dim]"
+                )
+            except Exception as e:
+                errors += 1
+                console.print(f"  [red]✗[/red] {file.name}: {e}")
 
-    console.print()
-    console.print(
-        f"[bold]Ingested {ingested}[/bold] sessions, "
-        f"[bold]{events_total}[/bold] events "
-        f"([dim]{skipped} skipped, {errors} errors[/dim])"
-    )
+        console.print()
+        console.print(
+            f"[bold]Ingested {ingested}[/bold] sessions, "
+            f"[bold]{events_total}[/bold] events "
+            f"([dim]{skipped} skipped, {errors} errors[/dim])"
+        )
+    finally:
+        release_ingest_lock(store)
 
 
 # -----------------------------------------------------------------------------

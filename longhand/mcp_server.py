@@ -7,8 +7,7 @@ can search, retrieve, and replay session data as tool calls.
 Run with:
     python -m longhand.mcp_server
 
-Install the `mcp` package to use it:
-    pip install mcp
+The `mcp` dependency ships with Longhand; no extra install needed.
 """
 
 from __future__ import annotations
@@ -23,8 +22,9 @@ try:
     from mcp.types import Tool, TextContent
 except ImportError:
     print(
-        "The `mcp` package is required for the MCP server. Install with:\n"
-        "    pip install 'longhand[mcp]'",
+        "The `mcp` package is required for the MCP server. "
+        "It ships with Longhand — reinstall with:\n"
+        "    pip install --upgrade longhand",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -200,6 +200,29 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "default": False,
                         "description": "Return only event_type, timestamp, tool_name, file_path — no content. Great for scanning long sessions.",
+                    },
+                    "max_chars": {"default": 16000, "description": "Max total output characters"},
+                },
+                "required": ["session_id"],
+            },
+        ),
+        Tool(
+            name="get_latest_events",
+            description=(
+                "Get the N most recent events in a session, in reverse chronological order "
+                "(sequence DESC). Use this when you need 'what was the latest X' — e.g., "
+                "the last user message, the last tool call, the last assistant response. "
+                "Semantic search is the wrong tool for recency; this one is. Supports "
+                "session id prefix match."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "limit": {"default": 10, "description": "Max events to return (default 10)"},
+                    "event_type": {
+                        "type": "string",
+                        "description": "Optional: filter to a single event type (user_message, assistant_text, tool_call, etc.)",
                     },
                     "max_chars": {"default": 16000, "description": "Max total output characters"},
                 },
@@ -643,6 +666,35 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             meta["tail"] = tail
         payload = {"meta": meta, "events": formatted}
 
+        output = json.dumps(payload, indent=2, default=str)
+        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+    if name == "get_latest_events":
+        full_id = _resolve_session_prefix(store, arguments["session_id"])
+        if not full_id:
+            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+
+        limit = _limit(arguments.get("limit"), 10)
+        max_chars = _max_chars(arguments.get("max_chars"), 16000)
+        event_type = arguments.get("event_type")
+
+        events = store.sqlite.get_latest_events(
+            session_id=full_id,
+            limit=limit,
+            event_type=event_type,
+        )
+
+        formatted = [_format_event(e) for e in events]
+        payload = {
+            "meta": {
+                "session_id": full_id,
+                "returned": len(formatted),
+                "limit": limit,
+                "event_type": event_type,
+                "order": "sequence DESC",
+            },
+            "events": formatted,
+        }
         output = json.dumps(payload, indent=2, default=str)
         return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 

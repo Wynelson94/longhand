@@ -402,6 +402,29 @@ class SQLiteStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_latest_events(
+        self,
+        session_id: str,
+        limit: int = 10,
+        event_type: EventType | str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the N most recent events in a session, ordered by sequence DESC.
+
+        Distinct from semantic `search` (which ranks by similarity) and
+        `get_session_timeline` (which returns events in ascending order).
+        Use this for "what was the latest X" questions.
+        """
+        query = "SELECT * FROM events WHERE session_id = ?"
+        params: list[Any] = [session_id]
+        if event_type:
+            query += " AND event_type = ?"
+            params.append(event_type.value if isinstance(event_type, EventType) else event_type)
+        query += " ORDER BY sequence DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+
     def get_stats(self) -> dict[str, int]:
         with self.connect() as conn:
             stats = {

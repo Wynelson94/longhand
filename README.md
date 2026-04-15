@@ -15,7 +15,7 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-> *Status: v0.5.3 — stable, daily-driver tested, security-audited (zero critical findings), now on PyPI. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 90 unit tests passing.*
+> *Status: v0.5.4 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 103 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 

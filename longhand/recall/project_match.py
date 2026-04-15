@@ -67,8 +67,15 @@ def match_projects(
     query: str,
     top_k: int = 5,
     now: datetime | None = None,
+    _allow_fallback: bool = True,
 ) -> list[ProjectMatch]:
-    """Return top-k projects matching the query."""
+    """Return top-k projects matching the query.
+
+    If the first pass returns no results and `_allow_fallback` is True,
+    we run a cheap on-the-fly project-inference pass over un-indexed
+    session files (see `project_fallback`) and re-run the match. The
+    recursive call passes `_allow_fallback=False` to prevent loops.
+    """
     if now is None:
         now = datetime.now(timezone.utc)
 
@@ -78,8 +85,8 @@ def match_projects(
 
     # Load all projects — usually small enough (dozens to low hundreds)
     all_projects = store.sqlite.list_projects(limit=1000)
-    if not all_projects:
-        return []
+    if not all_projects and _allow_fallback:
+        return _fallback_match(store, query, top_k, now)
 
     scored: dict[str, ProjectMatch] = {}
 
@@ -161,4 +168,43 @@ def match_projects(
 
     # Sort and return top-k
     results = sorted(scored.values(), key=lambda m: m.score, reverse=True)
+    if not results and _allow_fallback:
+        return _fallback_match(store, query, top_k, now)
     return results[:top_k]
+
+
+def _fallback_match(
+    store: LonghandStore,
+    query: str,
+    top_k: int,
+    now: datetime,
+) -> list[ProjectMatch]:
+    """Run on-the-fly project inference, then retry the match once.
+
+    Fires a detached background `longhand ingest` so semantic /
+    episode / segment data catches up for subsequent queries. Any matches
+    found via this path get a 'on-the-fly inference' reason tag so the
+    caller can surface the caveat.
+    """
+    # Import lazily to avoid a circular import at module load.
+    from longhand.recall.project_fallback import (
+        infer_missing_projects,
+        trigger_background_ingest,
+    )
+
+    inferred = infer_missing_projects(store)
+
+    # Regardless of whether anything was inferred, kick off a full
+    # background ingest so any future query sees richer data. No-op if
+    # another ingest is already running.
+    trigger_background_ingest(store)
+
+    if not inferred:
+        return []
+
+    results = match_projects(store, query, top_k=top_k, now=now, _allow_fallback=False)
+    for match in results:
+        match.reasons.append(
+            "on-the-fly inference (semantic index catching up in background)"
+        )
+    return results
