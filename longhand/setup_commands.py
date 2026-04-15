@@ -470,7 +470,7 @@ def doctor() -> None:
     else:
         table.add_row(
             "longhand CLI",
-            "[yellow]⚠[/yellow] not on PATH (run [bold]pip install -e .[/bold])",
+            "[yellow]⚠[/yellow] not on PATH (run [bold]pip install longhand[/bold])",
         )
 
     # 2. SessionEnd hook installed?
