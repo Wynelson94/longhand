@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "longhand": {
+      "command": "longhand",
+      "args": ["mcp-server"]
+    }
+  }
+}
