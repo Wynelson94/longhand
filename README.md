@@ -15,6 +15,8 @@
 
 > **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can find any fix, decision, or conversation you've had in ~126ms — without a single API call.**
 
+> **Does it use a lot of tokens? No — every tool is capped by design.** A full `recall` across 100+ sessions returns ~4K tokens. Reading one raw session JSONL costs 10–50× more. See [Token budget](#token-budget).
+
 ```bash
 pip install longhand
 longhand setup        # ingest history + install hooks + configure MCP
@@ -390,6 +392,33 @@ Tested end-to-end on a real Claude Code history:
 - Vector search: ~126ms
 - SQL queries: <30ms
 - Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
+
+---
+
+## Token budget
+
+The single most common question: *does Longhand consume a lot of tokens when Claude uses it?*
+
+**No.** Every MCP tool has a hard output cap enforced in `longhand/mcp_server.py`. The response truncates and appends a pagination hint before Claude ever sees it, so the token cost per tool call is bounded — not by your history size, but by the cap itself.
+
+| Tool | Default output cap | Rough token equivalent |
+|---|---:|---:|
+| `search` | 12,000 chars | ~3,000 tokens |
+| `recall`, `get_session_timeline`, `get_latest_events`, `get_session_commits`, `find_commits` | 12,000–16,000 chars | ~3,000–4,000 tokens |
+| `search_in_context` | 20,000 chars | ~5,000 tokens |
+| Absolute ceiling (`MAX_OUTPUT_CHARS`) | 200,000 chars | ~50,000 tokens |
+
+**Why this matters — the comparison:**
+
+- **Reading one raw session JSONL directly:** 50K–200K tokens per session (Claude Code sessions are typically 1–5MB each).
+- **Bigger-context-window approaches:** every prompt pays the full history, every time.
+- **Summarizer-based memory tools:** cheap per-query but they already threw away the thinking blocks.
+
+Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 sessions and recalling across 1,000 sessions both come back in the same token envelope. And **Longhand itself makes zero API calls** — the only tokens consumed are the MCP payload Claude reads back. No model sits between you and your data.
+
+**Tuning:** every tool accepts a `max_chars` parameter that can be lowered per-call. `summary_only: true` on timeline tools drops the `content` field and shrinks payloads ~10×.
+
+---
 
 140 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
