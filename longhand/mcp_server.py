@@ -169,11 +169,19 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="list_sessions",
-            description="List recent Claude Code sessions that Longhand has indexed.",
+            description=(
+                "List recent Claude Code sessions that Longhand has indexed. "
+                "Returns session ID, project path, start/end timestamps, event count, "
+                "and outcome (shipped/fixed/stuck/exploratory) for each session. "
+                "Use this to orient before drilling into a specific session — e.g., "
+                "'which sessions touched this project last week?' Filter by project "
+                "path substring to narrow results. NOT for searching content — "
+                "use search or recall for that."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project": {"type": "string", "description": "Filter by project path substring"},
+                    "project": {"type": "string", "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')"},
                     "limit": {"default": 20, "description": "Max results (default 20)"},
                 },
             },
@@ -232,34 +240,53 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="replay_file",
             description=(
-                "Reconstruct the state of a file at a point in a past Claude Code session. "
-                "Applies every edit verbatim from the session JSONL — no summarization."
+                "Reconstruct the exact state of a file at any point in a past session. "
+                "Applies every Write/Edit event verbatim from the session JSONL in order — "
+                "no summarization, no approximation. Returns the full file content as it "
+                "existed at that moment. Use this when you need to see 'what did this file "
+                "look like after that refactor?' or 'what was the state before it broke?' "
+                "Pass at_event_id to stop replay at a specific event; omit it to get the "
+                "final state at session end. Requires session_id and file_path."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string"},
-                    "file_path": {"type": "string"},
-                    "at_event_id": {"type": "string", "description": "Optional: reconstruct up to this event"},
+                    "session_id": {"type": "string", "description": "Session ID (prefix match supported)"},
+                    "file_path": {"type": "string", "description": "Exact file path to reconstruct"},
+                    "at_event_id": {"type": "string", "description": "Optional: stop replay at this event ID to get mid-session state"},
                 },
                 "required": ["session_id", "file_path"],
             },
         ),
         Tool(
             name="get_file_history",
-            description="Get every edit ever made to a file across all sessions, chronologically.",
+            description=(
+                "Get every edit ever made to a file across all sessions, in chronological "
+                "order. Returns session ID, timestamp, event type (Write/Edit), old and new "
+                "content for each change. Use this to answer 'how has this file evolved?' or "
+                "'who changed this and when?' across your entire history. Optionally scope "
+                "to a single session. For reconstructing exact file state at a point in time, "
+                "use replay_file instead."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string"},
-                    "session_id": {"type": "string", "description": "Optional: limit to a single session"},
+                    "file_path": {"type": "string", "description": "Exact file path to look up"},
+                    "session_id": {"type": "string", "description": "Optional: limit to a single session (prefix match)"},
                 },
                 "required": ["file_path"],
             },
         ),
         Tool(
             name="get_stats",
-            description="Get overall Longhand storage statistics.",
+            description=(
+                "Get overall Longhand storage statistics: total sessions, events, "
+                "tool calls, file edits, thinking blocks, vectors indexed, projects, "
+                "episodes (resolved/unresolved), and data directory path. "
+                "Use this to verify Longhand is healthy, check how much history is "
+                "indexed, or answer 'how many sessions do I have?' Returns a flat "
+                "key-value object — no parameters needed."
+            ),
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
@@ -394,14 +421,18 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="list_projects",
             description=(
-                "Browse inferred projects by keyword, category, or recency. "
-                "Returns compact summaries by default. Set verbose=true for full detail."
+                "Browse all projects Longhand has inferred from your session history. "
+                "Returns project ID, display name, canonical path, category (cli tool / "
+                "web app / library / etc.), and session count. Filter by keyword (matches "
+                "name, path, aliases) or category. Use this to find a project_id before "
+                "calling get_project_timeline or recall_project_status. Set verbose=true "
+                "to include full metadata (aliases, languages, keywords arrays)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string"},
-                    "category": {"type": "string"},
+                    "keyword": {"type": "string", "description": "Filter: matches project name, path, or aliases"},
+                    "category": {"type": "string", "description": "Filter: e.g. 'cli tool', 'web app', 'library'"},
                     "limit": {"default": 20, "description": "Max results (default 20)"},
                     "verbose": {
                         "type": "boolean",
@@ -414,16 +445,20 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_project_timeline",
             description=(
-                "Session-level timeline for a project. Returns recent sessions with their "
-                "outcomes (shipped / fixed / stuck / exploratory) for a bird's-eye view of "
-                "what's been happening in a project lately."
+                "Session-level timeline for a project — bird's-eye view of what's been "
+                "happening. Returns each session's start/end time, event count, outcome "
+                "(shipped / fixed / stuck / exploratory), and a summary line. Use this "
+                "after list_projects to understand velocity and recent activity on a "
+                "specific project. Filter by date range with since/until (ISO format). "
+                "For content-level search within a project, use search with project_name "
+                "instead."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "since": {"type": "string"},
-                    "until": {"type": "string"},
+                    "project_id": {"type": "string", "description": "Project ID from list_projects or match_project"},
+                    "since": {"type": "string", "description": "ISO date — only sessions after this date"},
+                    "until": {"type": "string", "description": "ISO date — only sessions before this date"},
                     "limit": {"default": 50, "description": "Max results (default 50)"},
                 },
                 "required": ["project_id"],
