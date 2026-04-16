@@ -12,7 +12,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -21,7 +20,6 @@ from rich.table import Table
 
 from longhand.parser import JSONLParser
 from longhand.storage import LonghandStore
-
 
 console = Console()
 
@@ -284,7 +282,6 @@ def run_prompt_hook() -> None:
             return
 
         prompt = data.get("prompt") or ""
-        cwd = data.get("cwd")
 
         if not isinstance(prompt, str) or len(prompt.strip()) < 12:
             print("{}")
@@ -302,8 +299,9 @@ def run_prompt_hook() -> None:
             prompt = prompt[:_HOOK_PROMPT_MAX_LEN]
 
         # Capture context output
-        from longhand.cli import context as context_cmd
         import contextlib
+
+        from longhand.cli import context as context_cmd
 
         captured = _io.StringIO()
         with contextlib.redirect_stdout(captured):
@@ -426,7 +424,7 @@ def mcp_uninstall() -> None:
 
 # ─── Ingest single session (for hook) ──────────────────────────────────────
 
-def ingest_single_session(transcript: str, data_dir: Optional[str] = None) -> None:
+def ingest_single_session(transcript: str, data_dir: str | None = None) -> None:
     """Ingest a single Claude Code JSONL file with full analysis.
 
     Called by the SessionEnd hook. Non-blocking, fast (~1-2s).
@@ -452,7 +450,7 @@ def ingest_single_session(transcript: str, data_dir: Optional[str] = None) -> No
         )
     except Exception as e:
         console.print(f"[red]✗[/red] Failed to ingest {path.name}: {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 # ─── Doctor ────────────────────────────────────────────────────────────────

@@ -27,7 +27,6 @@ def classify_session(session: Session, events: list[Event]) -> dict[str, Any]:
     edit_count = 0
     read_count = 0
     bash_success = 0
-    bash_failure = 0
 
     first_error_event_id: str | None = None
     last_error_idx: int | None = None

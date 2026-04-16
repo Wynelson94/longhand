@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 
-
 # Match plausible file paths in text:
 #  - absolute paths starting with /
 #  - relative paths with slashes and common extensions

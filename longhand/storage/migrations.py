@@ -10,7 +10,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-
 MIGRATIONS: dict[int, str] = {
     1: """
     -- v1: proactive memory schema additions

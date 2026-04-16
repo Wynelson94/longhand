@@ -22,7 +22,6 @@ from longhand.storage.sqlite_store import SQLiteStore
 from longhand.storage.vector_store import VectorStore
 from longhand.types import Event, Session
 
-
 DEFAULT_DATA_DIR = Path.home() / ".longhand"
 
 

@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from longhand.extractors.errors import detect_error
 from longhand.extractors.git import extract_git_signal
 from longhand.types import Event, EventType, FileOperation, Session
-
 
 # Hard limits — keep the parser bounded so a malicious or corrupted JSONL
 # can't crash or OOM the ingest pipeline.
@@ -153,7 +153,7 @@ class JSONLParser:
         sequence = 0
         seen_ids: dict[str, int] = {}
         with self.file_path.open("r", encoding="utf-8", errors="replace") as f:
-            for line_num, line in enumerate(f, start=1):
+            for _line_num, line in enumerate(f, start=1):
                 # Skip lines that exceed the hard line-length limit
                 if len(line) > MAX_LINE_LENGTH:
                     continue

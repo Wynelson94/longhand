@@ -17,7 +17,6 @@ from chromadb.config import Settings
 
 from longhand.types import Event, EventType
 
-
 # Limit embedded text length to keep Chroma performant.
 # The full content is always retrievable from SQLite by event_id.
 MAX_EMBED_CHARS = 2000

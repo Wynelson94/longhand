@@ -15,10 +15,8 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 from longhand.storage.store import LonghandStore
-
 
 # Category terms that can appear in queries
 _CATEGORY_TERMS = {

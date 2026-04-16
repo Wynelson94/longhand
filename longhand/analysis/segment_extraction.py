@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
 from typing import Any
 
-from longhand.types import Event, EventType
-
+from longhand.types import Event
 
 # Segment type classification keywords
 _DESIGN_KEYWORDS = frozenset({

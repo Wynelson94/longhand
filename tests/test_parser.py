@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from longhand.parser import JSONLParser
 from longhand.types import EventType, FileOperation
 

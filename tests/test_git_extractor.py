@@ -1,6 +1,6 @@
 """Tests for the git operation extractor."""
 
-from longhand.extractors.git import GitSignal, detect_git_command, extract_git_signal
+from longhand.extractors.git import detect_git_command, extract_git_signal
 
 
 class TestDetectGitCommand:

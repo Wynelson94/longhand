@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-
 # Stopwords we never want as topics
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "if", "then", "else", "when",
@@ -25,14 +24,13 @@ _STOPWORDS = {
     "been", "being", "have", "has", "had", "do", "does", "did", "doing",
     "would", "could", "might", "must", "shall", "may",
     "i", "me", "my", "you", "your", "we", "our", "us", "it", "its",
-    "claude", "user", "assistant", "please", "thanks", "thank", "yes", "no",
-    "okay", "ok", "sure", "alright", "right", "wrong", "good", "bad",
+    "claude", "user", "assistant", "please", "thanks", "thank", "yes", "okay", "ok", "sure", "alright", "right", "wrong", "good", "bad",
     "like", "want", "need", "think", "know", "see", "get", "got", "make",
     "made", "go", "going", "went", "come", "came", "take", "took", "give",
     "gave", "say", "said", "tell", "told", "ask", "asked", "try", "tried",
     "work", "works", "working", "worked", "use", "using", "used",
     "one", "two", "three", "first", "second", "third", "new", "old",
-    "let", "lets", "much", "many", "some", "any", "also", "well",
+    "let", "lets", "much", "many", "also", "well",
     "still", "even", "really", "actually", "probably", "definitely",
     "something", "nothing", "everything", "anything",
     "file", "files", "line", "lines", "code", "error", "errors",

@@ -7,7 +7,6 @@ Deterministic template. No LLM.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from longhand.types import Event, Session

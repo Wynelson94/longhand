@@ -274,7 +274,6 @@ def build_project_status_narrative(
             hash_short = (commit.get("commit_hash") or "")[:8]
             message = (commit.get("commit_message") or "no message")[:80]
             when = _humanize_timestamp(commit.get("timestamp"))
-            op_type = commit.get("operation_type", "commit")
 
             line = f"- `{hash_short}` {message} ({when})"
 

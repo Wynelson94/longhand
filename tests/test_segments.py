@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import Any
-
-import pytest
+from datetime import datetime, timedelta, timezone
 
 from longhand.analysis.segment_extraction import extract_segments
-from longhand.types import Event, EventType
+from longhand.types import Event
 
 
 def _make_event(

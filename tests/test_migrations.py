@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from longhand.storage.migrations import apply_migrations, MIGRATIONS
+from longhand.storage.migrations import MIGRATIONS, apply_migrations
 from longhand.storage.sqlite_store import SQLiteStore
 
 

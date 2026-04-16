@@ -28,7 +28,6 @@ from longhand.analysis.project_inference import infer_project
 from longhand.parser import JSONLParser, discover_sessions
 from longhand.storage.store import LonghandStore
 
-
 # Cap to prevent pathological first-run cost. Users with more un-indexed
 # sessions than this should run `longhand ingest` manually.
 MAX_FALLBACK_FILES = 100

@@ -18,7 +18,6 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-
 Severity = Literal["warning", "error", "fatal"]
 Category = Literal["bash", "python", "node", "test", "compile", "http", "generic"]
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from longhand.extractors.errors import detect_error
 from longhand.extractors.file_refs import extract_file_references
-from longhand.extractors.topics import extract_keywords, extract_extensions
-
+from longhand.extractors.topics import extract_extensions, extract_keywords
 
 # ─── Error detection ───────────────────────────────────────────────────────
 

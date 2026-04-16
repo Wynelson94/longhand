@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from longhand.storage.migrations import apply_migrations
-from longhand.types import Event, EventType, FileOperation, Session
-
+from longhand.types import Event, EventType, Session
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

@@ -65,4 +65,11 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    "SIM102",  # nested if → and: often less readable with long conditions
+    "SIM103",  # needless-bool: prefer explicit `if ... return True` in guard fns
+    "SIM105",  # try/except/pass: kept for grep-ability + consistent style
+    "SIM108",  # if/else → ternary: not always more readable
+    "SIM113",  # enumerate: counter with += 1 is fine when index isn't consumed
+]

@@ -17,7 +17,6 @@ from typing import Any
 from longhand.extractors.file_refs import extract_file_references
 from longhand.types import Event
 
-
 # Events we consider "edits" (candidate fixes)
 _FIX_OPERATIONS = {"edit", "write", "multi_edit", "notebook_edit"}
 
@@ -33,7 +32,7 @@ def _get_type(e: Event) -> str:
 
 
 def _episode_id(session_id: str, start_idx: int) -> str:
-    return "ep_" + hashlib.sha256(f"{session_id}:{start_idx}".encode("utf-8")).hexdigest()[:16]
+    return "ep_" + hashlib.sha256(f"{session_id}:{start_idx}".encode()).hexdigest()[:16]
 
 
 def extract_episodes(
@@ -115,10 +114,7 @@ def extract_episodes(
                     # Prefer fixes to files named in the error
                     if problem_files and cand.file_path and any(
                         Path(ref).name == Path(cand.file_path).name for ref in problem_files
-                    ):
-                        fix_event = cand
-                    # Otherwise, accept any edit after a diagnosis
-                    elif diagnosis_event is not None:
+                    ) or diagnosis_event is not None:
                         fix_event = cand
 
             # Verification: a clean tool_result after a fix

@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from longhand.extractors.topics import extract_extensions, extract_keywords
 from longhand.types import Event, Session
-
 
 # Map file extensions → language names
 _EXT_TO_LANGUAGE = {
