@@ -50,6 +50,12 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 ---
 
+## Python version note
+
+Python 3.10 – 3.13 are fully supported. **On Python 3.14**, longhand pins `chromadb<1.0` automatically because chromadb's newer Rust bindings segfault on 3.14 (see [#4](https://github.com/Wynelson94/longhand/issues/4)). Once chromadb ships a 3.14-compatible 1.x wheel, the constraint will relax.
+
+---
+
 ## Longhand vs claude-mem
 
 [`thedotmack/claude-mem`](https://github.com/thedotmack/claude-mem) is the most popular Claude Code memory tool on GitHub (55k+ stars). It's a good tool. It is also solving the memory problem in the opposite direction from Longhand, and the difference is worth understanding before you pick one.
