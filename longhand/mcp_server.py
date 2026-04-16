@@ -19,7 +19,7 @@ from typing import Any
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import Tool, TextContent
+    from mcp.types import TextContent, Tool
 except ImportError:
     print(
         "The `mcp` package is required for the MCP server. "
@@ -35,7 +35,6 @@ from longhand.recall.recall_pipeline import recall_project_status
 from longhand.replay import ReplayEngine
 from longhand.storage import LonghandStore
 from longhand.storage.sqlite_store import _escape_like
-
 
 server: Server = Server("longhand")
 
@@ -475,413 +474,353 @@ def _resolve_session_prefix(store: LonghandStore, prefix: str) -> str | None:
     return None
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    store = LonghandStore()
+# ─── Tool handlers ──────────────────────────────────────────────────────────
+#
+# Each tool is a module-level async function taking (store, arguments) and
+# returning a list[TextContent]. This makes them individually unit-testable
+# without going through the MCP dispatch layer.
 
-    if name == "search":
-        limit = _limit(arguments.get("limit"), 10)
-        max_chars = _max_chars(arguments.get("max_chars"), 12000)
 
-        # Resolve session_id prefix if provided
-        search_session_id = None
-        if arguments.get("session_id"):
-            search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    limit = _limit(arguments.get("limit"), 10)
+    max_chars = _max_chars(arguments.get("max_chars"), 12000)
 
-        # Resolve project_name → set of session_ids for post-filtering
-        project_session_ids: set[str] | None = None
-        project_id = arguments.get("project_id")
-        project_name = arguments.get("project_name")
-        if project_id or project_name:
-            if project_name and not project_id:
-                projects = store.sqlite.list_projects(keyword=project_name, limit=5)
-                if projects:
-                    project_id = projects[0]["project_id"]
-            if project_id:
-                proj_sessions = store.sqlite.list_sessions(project_id=project_id, limit=1000)
-                project_session_ids = {s["session_id"] for s in proj_sessions}
+    # Resolve session_id prefix if provided
+    search_session_id = None
+    if arguments.get("session_id"):
+        search_session_id = _resolve_session_prefix(store, arguments["session_id"])
 
-                # Fallback: if no sessions linked via project_id, find sessions
-                # that edited files in the project's directory
-                if not project_session_ids:
-                    proj = store.sqlite.get_project(project_id)
-                    if proj and proj.get("canonical_path"):
-                        canon = proj["canonical_path"]
-                        with store.sqlite.connect() as conn:
-                            rows = conn.execute(
-                                "SELECT DISTINCT session_id FROM events "
-                                "WHERE file_path LIKE ? ESCAPE '\\'",
-                                (f"%{_escape_like(canon)}%",),
-                            ).fetchall()
-                            project_session_ids = {r["session_id"] for r in rows}
+    # Resolve project_name → set of session_ids for post-filtering
+    project_session_ids: set[str] | None = None
+    project_id = arguments.get("project_id")
+    project_name = arguments.get("project_name")
+    if project_id or project_name:
+        if project_name and not project_id:
+            projects = store.sqlite.list_projects(keyword=project_name, limit=5)
+            if projects:
+                project_id = projects[0]["project_id"]
+        if project_id:
+            proj_sessions = store.sqlite.list_sessions(project_id=project_id, limit=1000)
+            project_session_ids = {s["session_id"] for s in proj_sessions}
 
-        # When post-filters are active, request extra results so we have enough after filtering
-        has_post_filter = project_session_ids is not None or arguments.get("file_path_contains")
-        fetch_multiplier = 5 if has_post_filter else 1
+            # Fallback: if no sessions linked via project_id, find sessions
+            # that edited files in the project's directory
+            if not project_session_ids:
+                proj = store.sqlite.get_project(project_id)
+                if proj and proj.get("canonical_path"):
+                    canon = proj["canonical_path"]
+                    with store.sqlite.connect() as conn:
+                        rows = conn.execute(
+                            "SELECT DISTINCT session_id FROM events "
+                            "WHERE file_path LIKE ? ESCAPE '\\'",
+                            (f"%{_escape_like(canon)}%",),
+                        ).fetchall()
+                        project_session_ids = {r["session_id"] for r in rows}
 
-        hits = store.vectors.search(
-            query=arguments["query"],
-            n_results=limit * fetch_multiplier,
-            event_type=arguments.get("event_type"),
-            session_id=search_session_id,
-            tool_name=arguments.get("tool_name"),
-            file_path_contains=arguments.get("file_path_contains"),
-        )
+    # When post-filters are active, request extra results so we have enough after filtering
+    has_post_filter = project_session_ids is not None or arguments.get("file_path_contains")
+    fetch_multiplier = 5 if has_post_filter else 1
 
-        # Post-filter by project if needed
-        if project_session_ids is not None:
-            hits = [
-                h for h in hits
-                if (h.get("metadata") or {}).get("session_id") in project_session_ids
-            ]
+    hits = store.vectors.search(
+        query=arguments["query"],
+        n_results=limit * fetch_multiplier,
+        event_type=arguments.get("event_type"),
+        session_id=search_session_id,
+        tool_name=arguments.get("tool_name"),
+        file_path_contains=arguments.get("file_path_contains"),
+    )
 
-        hits = hits[:limit]
-        output = json.dumps(hits, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    # Post-filter by project if needed
+    if project_session_ids is not None:
+        hits = [
+            h for h in hits
+            if (h.get("metadata") or {}).get("session_id") in project_session_ids
+        ]
 
-    if name == "search_in_context":
-        full_id = _resolve_session_prefix(store, arguments["session_id"])
-        if not full_id:
-            return [TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")]
+    hits = hits[:limit]
+    output = json.dumps(hits, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-        context_n = _int(arguments.get("context_events"), 5)
-        limit = _limit(arguments.get("limit"), 3)
-        max_chars = _max_chars(arguments.get("max_chars"), 20000)
 
-        # Semantic search scoped to this session
-        hits = store.vectors.search(
-            query=arguments["query"],
-            n_results=limit * 3,  # fetch extra for dedup
-            session_id=full_id,
-            event_type=arguments.get("event_type"),
-        )
+async def _tool_search_in_context(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    if not full_id:
+        return [TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")]
 
-        if not hits:
-            return [TextContent(type="text", text="No matches found in this session.")]
+    context_n = _int(arguments.get("context_events"), 5)
+    limit = _limit(arguments.get("limit"), 3)
+    max_chars = _max_chars(arguments.get("max_chars"), 20000)
 
-        # Build context windows from sequence numbers
-        windows: list[dict[str, Any]] = []
-        for hit in hits:
-            seq = (hit.get("metadata") or {}).get("sequence")
-            if seq is None:
-                continue
-            seq = int(seq)
-            windows.append({
-                "match_event_id": hit["event_id"],
-                "match_distance": hit.get("distance", 1.0),
-                "seq_start": max(0, seq - context_n),
-                "seq_end": seq + context_n,
+    # Semantic search scoped to this session
+    hits = store.vectors.search(
+        query=arguments["query"],
+        n_results=limit * 3,  # fetch extra for dedup
+        session_id=full_id,
+        event_type=arguments.get("event_type"),
+    )
+
+    if not hits:
+        return [TextContent(type="text", text="No matches found in this session.")]
+
+    # Build context windows from sequence numbers
+    windows: list[dict[str, Any]] = []
+    for hit in hits:
+        seq = (hit.get("metadata") or {}).get("sequence")
+        if seq is None:
+            continue
+        seq = int(seq)
+        windows.append({
+            "match_event_id": hit["event_id"],
+            "match_distance": hit.get("distance", 1.0),
+            "seq_start": max(0, seq - context_n),
+            "seq_end": seq + context_n,
+        })
+
+    if not windows:
+        return [TextContent(type="text", text="Matches found but no sequence metadata available.")]
+
+    # Merge overlapping windows
+    windows.sort(key=lambda w: w["seq_start"])
+    merged: list[dict[str, Any]] = []
+    for w in windows:
+        if merged and w["seq_start"] <= merged[-1]["seq_end"] + 1:
+            merged[-1]["seq_end"] = max(merged[-1]["seq_end"], w["seq_end"])
+            merged[-1]["match_event_ids"].append(w["match_event_id"])
+        else:
+            merged.append({
+                "seq_start": w["seq_start"],
+                "seq_end": w["seq_end"],
+                "match_event_ids": [w["match_event_id"]],
             })
 
-        if not windows:
-            return [TextContent(type="text", text="Matches found but no sequence metadata available.")]
+    # Deduplicate: keep only the first `limit` unique matches
+    all_match_ids: list[str] = []
+    for mw in merged:
+        for mid in mw["match_event_ids"]:
+            if mid not in all_match_ids:
+                all_match_ids.append(mid)
+    all_match_ids = all_match_ids[:limit]
+    match_id_set = set(all_match_ids)
 
-        # Merge overlapping windows
-        windows.sort(key=lambda w: w["seq_start"])
-        merged: list[dict[str, Any]] = []
-        for w in windows:
-            if merged and w["seq_start"] <= merged[-1]["seq_end"] + 1:
-                merged[-1]["seq_end"] = max(merged[-1]["seq_end"], w["seq_end"])
-                merged[-1]["match_event_ids"].append(w["match_event_id"])
-            else:
-                merged.append({
-                    "seq_start": w["seq_start"],
-                    "seq_end": w["seq_end"],
-                    "match_event_ids": [w["match_event_id"]],
-                })
+    # Re-filter merged windows to only those containing kept matches
+    final_windows: list[dict[str, Any]] = []
+    for mw in merged:
+        kept = [m for m in mw["match_event_ids"] if m in match_id_set]
+        if kept:
+            mw["match_event_ids"] = kept
+            final_windows.append(mw)
 
-        # Deduplicate: keep only the first `limit` unique matches
-        all_match_ids: list[str] = []
-        for mw in merged:
-            for mid in mw["match_event_ids"]:
-                if mid not in all_match_ids:
-                    all_match_ids.append(mid)
-        all_match_ids = all_match_ids[:limit]
-        match_id_set = set(all_match_ids)
-
-        # Re-filter merged windows to only those containing kept matches
-        final_windows: list[dict[str, Any]] = []
-        for mw in merged:
-            kept = [m for m in mw["match_event_ids"] if m in match_id_set]
-            if kept:
-                mw["match_event_ids"] = kept
-                final_windows.append(mw)
-
-        # Fetch events for each window
-        results = []
-        for mw in final_windows:
-            events = store.sqlite.get_events_by_sequence_range(
-                full_id, mw["seq_start"], mw["seq_end"]
-            )
-            formatted = []
-            for e in events:
-                fe = _format_event(e)
-                fe["is_match"] = e["event_id"] in match_id_set
-                formatted.append(fe)
-            results.append({
-                "sequence_range": [mw["seq_start"], mw["seq_end"]],
-                "events": formatted,
-            })
-
-        payload = {
-            "session_id": full_id,
-            "query": arguments["query"],
-            "total_matches": len(hits),
-            "showing": len(all_match_ids),
-            "context_windows": results,
-        }
-        output = json.dumps(payload, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
-
-    if name == "list_sessions":
-        rows = store.sqlite.list_sessions(
-            project_path=arguments.get("project"),
-            limit=_limit(arguments.get("limit"), 20),
+    # Fetch events for each window
+    results = []
+    for mw in final_windows:
+        events = store.sqlite.get_events_by_sequence_range(
+            full_id, mw["seq_start"], mw["seq_end"]
         )
-        output = json.dumps(rows, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, 16000))]
-
-    if name == "get_session_timeline":
-        full_id = _resolve_session_prefix(store, arguments["session_id"])
-        if not full_id:
-            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
-
-        tail = _limit(arguments.get("tail"), 0)
-        offset = _int(arguments.get("offset"), 0)
-        limit = _limit(arguments.get("limit"), 100)
-        max_chars = _max_chars(arguments.get("max_chars"), 16000)
-        include_thinking = _bool(arguments.get("include_thinking"), True)
-        summary_only = _bool(arguments.get("summary_only"), False)
-
-        if tail:
-            # For tail: fetch all events (up to a reasonable cap) then slice the end
-            all_events = store.sqlite.get_events(
-                session_id=full_id,
-                event_type=arguments.get("event_type"),
-                limit=5000,
-            )
-            if not include_thinking:
-                all_events = [e for e in all_events if e["event_type"] != "assistant_thinking"]
-            # Filter out epoch-timestamp unknown events by default
-            all_events = [e for e in all_events if not e["event_type"].startswith("unk")]
-            events = all_events[-tail:]
-        else:
-            events = store.sqlite.get_events(
-                session_id=full_id,
-                event_type=arguments.get("event_type"),
-                limit=limit,
-                offset=offset,
-            )
-            if not include_thinking:
-                events = [e for e in events if e["event_type"] != "assistant_thinking"]
-            # Filter out epoch-timestamp unknown events by default
-            events = [e for e in events if not e["event_type"].startswith("unk")]
-
-        if summary_only:
-            formatted = [
-                {
-                    "event_id": e["event_id"],
-                    "event_type": e["event_type"],
-                    "timestamp": e["timestamp"],
-                    "tool_name": e.get("tool_name"),
-                    "file_path": e.get("file_path"),
-                }
-                for e in events
-            ]
-        else:
-            formatted = [_format_event(e) for e in events]
-
-        # Add pagination metadata
-        meta: dict[str, Any] = {
-            "session_id": full_id,
-            "returned": len(formatted),
-            "offset": offset,
-        }
-        if tail:
-            meta["tail"] = tail
-        payload = {"meta": meta, "events": formatted}
-
-        output = json.dumps(payload, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
-
-    if name == "get_latest_events":
-        full_id = _resolve_session_prefix(store, arguments["session_id"])
-        if not full_id:
-            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
-
-        limit = _limit(arguments.get("limit"), 10)
-        max_chars = _max_chars(arguments.get("max_chars"), 16000)
-        event_type = arguments.get("event_type")
-
-        events = store.sqlite.get_latest_events(
-            session_id=full_id,
-            limit=limit,
-            event_type=event_type,
-        )
-
-        formatted = [_format_event(e) for e in events]
-        payload = {
-            "meta": {
-                "session_id": full_id,
-                "returned": len(formatted),
-                "limit": limit,
-                "event_type": event_type,
-                "order": "sequence DESC",
-            },
+        formatted = []
+        for e in events:
+            fe = _format_event(e)
+            fe["is_match"] = e["event_id"] in match_id_set
+            formatted.append(fe)
+        results.append({
+            "sequence_range": [mw["seq_start"], mw["seq_end"]],
             "events": formatted,
-        }
-        output = json.dumps(payload, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+        })
 
-    if name == "replay_file":
-        full_id = _resolve_session_prefix(store, arguments["session_id"])
-        if not full_id:
-            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+    payload = {
+        "session_id": full_id,
+        "query": arguments["query"],
+        "total_matches": len(hits),
+        "showing": len(all_match_ids),
+        "context_windows": results,
+    }
+    output = json.dumps(payload, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-        engine = ReplayEngine(store.sqlite)
-        state = engine.file_state_at(
-            file_path=arguments["file_path"],
+
+async def _tool_list_sessions(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    rows = store.sqlite.list_sessions(
+        project_path=arguments.get("project"),
+        limit=_limit(arguments.get("limit"), 20),
+    )
+    output = json.dumps(rows, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, 16000))]
+
+
+async def _tool_get_session_timeline(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    if not full_id:
+        return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+
+    tail = _limit(arguments.get("tail"), 0)
+    offset = _int(arguments.get("offset"), 0)
+    limit = _limit(arguments.get("limit"), 100)
+    max_chars = _max_chars(arguments.get("max_chars"), 16000)
+    include_thinking = _bool(arguments.get("include_thinking"), True)
+    summary_only = _bool(arguments.get("summary_only"), False)
+
+    if tail:
+        # For tail: fetch all events (up to a reasonable cap) then slice the end
+        all_events = store.sqlite.get_events(
             session_id=full_id,
-            at_event_id=arguments.get("at_event_id"),
+            event_type=arguments.get("event_type"),
+            limit=5000,
         )
-        if not state:
-            return [TextContent(type="text", text=f"No edits found for {arguments['file_path']}")]
+        if not include_thinking:
+            all_events = [e for e in all_events if e["event_type"] != "assistant_thinking"]
+        # Filter out epoch-timestamp unknown events by default
+        all_events = [e for e in all_events if not e["event_type"].startswith("unk")]
+        events = all_events[-tail:]
+    else:
+        events = store.sqlite.get_events(
+            session_id=full_id,
+            event_type=arguments.get("event_type"),
+            limit=limit,
+            offset=offset,
+        )
+        if not include_thinking:
+            events = [e for e in events if e["event_type"] != "assistant_thinking"]
+        # Filter out epoch-timestamp unknown events by default
+        events = [e for e in events if not e["event_type"].startswith("unk")]
 
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "file_path": state.file_path,
-                "session_id": state.session_id,
-                "at_event_id": state.at_event_id,
-                "at_timestamp": state.at_timestamp.isoformat(),
-                "source": state.source,
-                "edits_applied": state.edits_applied,
-                "content": state.content,
-            }, indent=2, default=str),
-        )]
-
-    if name == "get_file_history":
-        engine = ReplayEngine(store.sqlite)
-        full_session = None
-        if arguments.get("session_id"):
-            full_session = _resolve_session_prefix(store, arguments["session_id"])
-        edits = engine.file_history(arguments["file_path"], session_id=full_session)
+    if summary_only:
         formatted = [
             {
                 "event_id": e["event_id"],
-                "session_id": e["session_id"],
+                "event_type": e["event_type"],
                 "timestamp": e["timestamp"],
                 "tool_name": e.get("tool_name"),
-                "old_content": (e.get("old_content") or "")[:800],
-                "new_content": (e.get("new_content") or "")[:800],
+                "file_path": e.get("file_path"),
             }
-            for e in edits
+            for e in events
         ]
-        return [TextContent(type="text", text=json.dumps(formatted, indent=2, default=str))]
+    else:
+        formatted = [_format_event(e) for e in events]
 
-    if name == "get_stats":
-        stats = store.stats()
-        return [TextContent(type="text", text=json.dumps(stats, indent=2, default=str))]
+    # Add pagination metadata
+    meta: dict[str, Any] = {
+        "session_id": full_id,
+        "returned": len(formatted),
+        "offset": offset,
+    }
+    if tail:
+        meta["tail"] = tail
+    payload = {"meta": meta, "events": formatted}
 
-    # ─── Proactive memory tools (v0.2) ─────────────────────────────────────
+    output = json.dumps(payload, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-    if name == "recall":
-        result = recall_pipeline(
-            store=store,
-            query=arguments["query"],
-            max_episodes=_limit(arguments.get("max_episodes"), 5),
-        )
-        payload = {
-            "query": result.query,
-            "project_matches": [
-                {
-                    "project_id": m.project_id,
-                    "display_name": m.display_name,
-                    "category": m.category,
-                    "canonical_path": m.canonical_path,
-                    "score": m.score,
-                    "reasons": m.reasons,
-                }
-                for m in result.project_matches
-            ],
-            "time_window": {
-                "since": result.time_window[0].isoformat() if result.time_window[0] else None,
-                "until": result.time_window[1].isoformat() if result.time_window[1] else None,
-            },
-            "episodes": result.episodes,
-            "segments": result.segments,
-            "artifacts": result.artifacts,
-            "narrative": result.narrative,
+
+async def _tool_get_latest_events(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    if not full_id:
+        return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+
+    limit = _limit(arguments.get("limit"), 10)
+    max_chars = _max_chars(arguments.get("max_chars"), 16000)
+    event_type = arguments.get("event_type")
+
+    events = store.sqlite.get_latest_events(
+        session_id=full_id,
+        limit=limit,
+        event_type=event_type,
+    )
+
+    formatted = [_format_event(e) for e in events]
+    payload = {
+        "meta": {
+            "session_id": full_id,
+            "returned": len(formatted),
+            "limit": limit,
+            "event_type": event_type,
+            "order": "sequence DESC",
+        },
+        "events": formatted,
+    }
+    output = json.dumps(payload, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+
+async def _tool_replay_file(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    if not full_id:
+        return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+
+    engine = ReplayEngine(store.sqlite)
+    state = engine.file_state_at(
+        file_path=arguments["file_path"],
+        session_id=full_id,
+        at_event_id=arguments.get("at_event_id"),
+    )
+    if not state:
+        return [TextContent(type="text", text=f"No edits found for {arguments['file_path']}")]
+
+    return [TextContent(
+        type="text",
+        text=json.dumps({
+            "file_path": state.file_path,
+            "session_id": state.session_id,
+            "at_event_id": state.at_event_id,
+            "at_timestamp": state.at_timestamp.isoformat(),
+            "source": state.source,
+            "edits_applied": state.edits_applied,
+            "content": state.content,
+        }, indent=2, default=str),
+    )]
+
+
+async def _tool_get_file_history(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    engine = ReplayEngine(store.sqlite)
+    full_session = None
+    if arguments.get("session_id"):
+        full_session = _resolve_session_prefix(store, arguments["session_id"])
+    edits = engine.file_history(arguments["file_path"], session_id=full_session)
+    formatted = [
+        {
+            "event_id": e["event_id"],
+            "session_id": e["session_id"],
+            "timestamp": e["timestamp"],
+            "tool_name": e.get("tool_name"),
+            "old_content": (e.get("old_content") or "")[:800],
+            "new_content": (e.get("new_content") or "")[:800],
         }
-        max_chars = _max_chars(arguments.get("max_chars"), 16000)
-        output = json.dumps(payload, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+        for e in edits
+    ]
+    return [TextContent(type="text", text=json.dumps(formatted, indent=2, default=str))]
 
-    if name == "recall_project_status":
-        status = recall_project_status(
-            store=store,
-            project_name_or_id=arguments["project"],
-            max_commits=_limit(arguments.get("max_commits"), 10),
-            max_episodes=_limit(arguments.get("max_episodes"), 5),
-        )
-        if not status:
-            return [TextContent(type="text", text="No project matched.")]
-        payload = {
-            "project_id": status.project_id,
-            "display_name": status.display_name,
-            "canonical_path": status.canonical_path,
-            "category": status.category,
-            "active_branch": status.active_branch,
-            "last_commits": status.last_commits[:10],
-            "recent_sessions": [
-                {
-                    "session_id": s.get("session_id"),
-                    "started_at": s.get("started_at"),
-                    "ended_at": s.get("ended_at"),
-                    "event_count": s.get("event_count"),
-                }
-                for s in status.recent_sessions[:5]
-            ],
-            "recent_episodes": [
-                {
-                    "episode_id": e.get("episode_id"),
-                    "problem_description": (e.get("problem_description") or "")[:120],
-                    "fix_summary": (e.get("fix_summary") or "")[:120],
-                    "status": e.get("status"),
-                    "ended_at": e.get("ended_at"),
-                }
-                for e in status.recent_episodes[:5]
-            ],
-            "unresolved_episodes": [
-                {
-                    "episode_id": e.get("episode_id"),
-                    "problem_description": (e.get("problem_description") or "")[:120],
-                    "ended_at": e.get("ended_at"),
-                }
-                for e in status.unresolved_episodes[:5]
-            ],
-            "recent_segments": [
-                {
-                    "segment_type": s.get("segment_type"),
-                    "topic": (s.get("topic") or "")[:100],
-                    "ended_at": s.get("ended_at"),
-                }
-                for s in status.recent_segments[:5]
-            ],
-            "last_outcome": status.last_outcome,
-            "narrative": status.narrative,
-        }
-        max_chars = _max_chars(arguments.get("max_chars"), 16000)
-        output = json.dumps(payload, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-    if name == "match_project":
-        matches = match_projects(
-            store=store,
-            query=arguments["query"],
-            top_k=_limit(arguments.get("top_k"), 5),
-        )
-        payload = [
+async def _tool_get_stats(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    stats = store.stats()
+    return [TextContent(type="text", text=json.dumps(stats, indent=2, default=str))]
+
+
+# ─── Proactive memory tools (v0.2) ─────────────────────────────────────
+
+
+async def _tool_recall(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    result = recall_pipeline(
+        store=store,
+        query=arguments["query"],
+        max_episodes=_limit(arguments.get("max_episodes"), 5),
+    )
+    payload = {
+        "query": result.query,
+        "project_matches": [
             {
                 "project_id": m.project_id,
                 "display_name": m.display_name,
@@ -890,124 +829,264 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 "score": m.score,
                 "reasons": m.reasons,
             }
-            for m in matches
-        ]
-        return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+            for m in result.project_matches
+        ],
+        "time_window": {
+            "since": result.time_window[0].isoformat() if result.time_window[0] else None,
+            "until": result.time_window[1].isoformat() if result.time_window[1] else None,
+        },
+        "episodes": result.episodes,
+        "segments": result.segments,
+        "artifacts": result.artifacts,
+        "narrative": result.narrative,
+    }
+    max_chars = _max_chars(arguments.get("max_chars"), 16000)
+    output = json.dumps(payload, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-    if name == "find_episodes":
-        episodes = store.sqlite.query_episodes(
-            project_ids=arguments.get("project_ids"),
-            since=arguments.get("since"),
-            until=arguments.get("until"),
-            keyword=arguments.get("keyword"),
-            limit=_limit(arguments.get("limit"), 20),
+
+async def _tool_recall_project_status(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    status = recall_project_status(
+        store=store,
+        project_name_or_id=arguments["project"],
+        max_commits=_limit(arguments.get("max_commits"), 10),
+        max_episodes=_limit(arguments.get("max_episodes"), 5),
+    )
+    if not status:
+        return [TextContent(type="text", text="No project matched.")]
+    payload = {
+        "project_id": status.project_id,
+        "display_name": status.display_name,
+        "canonical_path": status.canonical_path,
+        "category": status.category,
+        "active_branch": status.active_branch,
+        "last_commits": status.last_commits[:10],
+        "recent_sessions": [
+            {
+                "session_id": s.get("session_id"),
+                "started_at": s.get("started_at"),
+                "ended_at": s.get("ended_at"),
+                "event_count": s.get("event_count"),
+            }
+            for s in status.recent_sessions[:5]
+        ],
+        "recent_episodes": [
+            {
+                "episode_id": e.get("episode_id"),
+                "problem_description": (e.get("problem_description") or "")[:120],
+                "fix_summary": (e.get("fix_summary") or "")[:120],
+                "status": e.get("status"),
+                "ended_at": e.get("ended_at"),
+            }
+            for e in status.recent_episodes[:5]
+        ],
+        "unresolved_episodes": [
+            {
+                "episode_id": e.get("episode_id"),
+                "problem_description": (e.get("problem_description") or "")[:120],
+                "ended_at": e.get("ended_at"),
+            }
+            for e in status.unresolved_episodes[:5]
+        ],
+        "recent_segments": [
+            {
+                "segment_type": s.get("segment_type"),
+                "topic": (s.get("topic") or "")[:100],
+                "ended_at": s.get("ended_at"),
+            }
+            for s in status.recent_segments[:5]
+        ],
+        "last_outcome": status.last_outcome,
+        "narrative": status.narrative,
+    }
+    max_chars = _max_chars(arguments.get("max_chars"), 16000)
+    output = json.dumps(payload, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+
+async def _tool_match_project(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    matches = match_projects(
+        store=store,
+        query=arguments["query"],
+        top_k=_limit(arguments.get("top_k"), 5),
+    )
+    payload = [
+        {
+            "project_id": m.project_id,
+            "display_name": m.display_name,
+            "category": m.category,
+            "canonical_path": m.canonical_path,
+            "score": m.score,
+            "reasons": m.reasons,
+        }
+        for m in matches
+    ]
+    return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+
+
+async def _tool_find_episodes(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    episodes = store.sqlite.query_episodes(
+        project_ids=arguments.get("project_ids"),
+        since=arguments.get("since"),
+        until=arguments.get("until"),
+        keyword=arguments.get("keyword"),
+        limit=_limit(arguments.get("limit"), 20),
+    )
+    if _bool(arguments.get("has_fix"), True):
+        episodes = [e for e in episodes if e.get("fix_event_id")]
+    return [TextContent(type="text", text=json.dumps(episodes, indent=2, default=str))]
+
+
+async def _tool_get_episode(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    ep = store.sqlite.get_episode(arguments["episode_id"])
+    if not ep:
+        return [TextContent(type="text", text=f"No episode: {arguments['episode_id']}")]
+
+    # Load related events and artifacts
+    payload: dict[str, Any] = {"episode": ep}
+    for field, key in [
+        ("problem_event_id", "problem_event"),
+        ("diagnosis_event_id", "diagnosis_event"),
+        ("fix_event_id", "fix_event"),
+        ("verification_event_id", "verification_event"),
+    ]:
+        eid = ep.get(field)
+        if eid:
+            evt = store.sqlite.get_event(eid)
+            if evt:
+                payload[key] = _format_event(evt)
+
+    # Reconstructed file state after fix
+    fix_id = ep.get("fix_event_id")
+    if fix_id:
+        fix_event = store.sqlite.get_event(fix_id)
+        if fix_event and fix_event.get("file_path"):
+            engine = ReplayEngine(store.sqlite)
+            try:
+                state = engine.file_state_at(
+                    file_path=fix_event["file_path"],
+                    session_id=ep["session_id"],
+                    at_event_id=fix_id,
+                )
+                if state:
+                    payload["file_state_after"] = {
+                        "file_path": state.file_path,
+                        "content": state.content,
+                        "edits_applied": state.edits_applied,
+                    }
+            except Exception:
+                pass
+
+    return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+
+
+async def _tool_get_session_commits(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    if not full_id:
+        return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
+    ops = store.sqlite.get_git_operations(
+        session_id=full_id,
+        operation_type=arguments.get("operation_type"),
+        limit=_limit(arguments.get("limit"), 100),
+    )
+    max_chars = _max_chars(arguments.get("max_chars"), 12000)
+    output = json.dumps(ops, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+
+async def _tool_find_commits(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    search_session_id = None
+    if arguments.get("session_id"):
+        search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+    ops = store.sqlite.search_git_operations(
+        query=arguments["query"],
+        session_id=search_session_id,
+        operation_type=arguments.get("operation_type"),
+        limit=_limit(arguments.get("limit"), 20),
+    )
+    max_chars = _max_chars(arguments.get("max_chars"), 12000)
+    output = json.dumps(ops, indent=2, default=str)
+    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+
+
+async def _tool_list_projects(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    rows = store.sqlite.list_projects(
+        keyword=arguments.get("keyword"),
+        category=arguments.get("category"),
+        limit=_limit(arguments.get("limit"), 20),
+    )
+    if _bool(arguments.get("verbose"), False):
+        output = json.dumps(rows, indent=2, default=str)
+    else:
+        output = json.dumps(
+            [_format_project_compact(r) for r in rows], indent=2, default=str
         )
-        if _bool(arguments.get("has_fix"), True):
-            episodes = [e for e in episodes if e.get("fix_event_id")]
-        return [TextContent(type="text", text=json.dumps(episodes, indent=2, default=str))]
+    return [TextContent(type="text", text=_truncate_output(output, 16000))]
 
-    if name == "get_episode":
-        ep = store.sqlite.get_episode(arguments["episode_id"])
-        if not ep:
-            return [TextContent(type="text", text=f"No episode: {arguments['episode_id']}")]
 
-        # Load related events and artifacts
-        payload: dict[str, Any] = {"episode": ep}
-        for field, key in [
-            ("problem_event_id", "problem_event"),
-            ("diagnosis_event_id", "diagnosis_event"),
-            ("fix_event_id", "fix_event"),
-            ("verification_event_id", "verification_event"),
-        ]:
-            eid = ep.get(field)
-            if eid:
-                evt = store.sqlite.get_event(eid)
-                if evt:
-                    payload[key] = _format_event(evt)
+async def _tool_get_project_timeline(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    rows = store.sqlite.list_sessions(
+        project_id=arguments["project_id"],
+        since=arguments.get("since"),
+        until=arguments.get("until"),
+        limit=_limit(arguments.get("limit"), 50),
+    )
+    # Enrich with outcome
+    enriched = []
+    for r in rows:
+        outcome = store.sqlite.get_outcome(r["session_id"])
+        enriched.append({
+            **r,
+            "outcome": outcome["outcome"] if outcome else None,
+            "outcome_summary": outcome["summary"] if outcome else None,
+        })
+    return [TextContent(type="text", text=json.dumps(enriched, indent=2, default=str))]
 
-        # Reconstructed file state after fix
-        fix_id = ep.get("fix_event_id")
-        if fix_id:
-            fix_event = store.sqlite.get_event(fix_id)
-            if fix_event and fix_event.get("file_path"):
-                engine = ReplayEngine(store.sqlite)
-                try:
-                    state = engine.file_state_at(
-                        file_path=fix_event["file_path"],
-                        session_id=ep["session_id"],
-                        at_event_id=fix_id,
-                    )
-                    if state:
-                        payload["file_state_after"] = {
-                            "file_path": state.file_path,
-                            "content": state.content,
-                            "edits_applied": state.edits_applied,
-                        }
-                except Exception:
-                    pass
 
-        return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+_DISPATCH: dict[str, Any] = {
+    "search": _tool_search,
+    "search_in_context": _tool_search_in_context,
+    "list_sessions": _tool_list_sessions,
+    "get_session_timeline": _tool_get_session_timeline,
+    "get_latest_events": _tool_get_latest_events,
+    "replay_file": _tool_replay_file,
+    "get_file_history": _tool_get_file_history,
+    "get_stats": _tool_get_stats,
+    "recall": _tool_recall,
+    "recall_project_status": _tool_recall_project_status,
+    "match_project": _tool_match_project,
+    "find_episodes": _tool_find_episodes,
+    "get_episode": _tool_get_episode,
+    "get_session_commits": _tool_get_session_commits,
+    "find_commits": _tool_find_commits,
+    "list_projects": _tool_list_projects,
+    "get_project_timeline": _tool_get_project_timeline,
+}
 
-    if name == "get_session_commits":
-        full_id = _resolve_session_prefix(store, arguments["session_id"])
-        if not full_id:
-            return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
-        ops = store.sqlite.get_git_operations(
-            session_id=full_id,
-            operation_type=arguments.get("operation_type"),
-            limit=_limit(arguments.get("limit"), 100),
-        )
-        max_chars = _max_chars(arguments.get("max_chars"), 12000)
-        output = json.dumps(ops, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
 
-    if name == "find_commits":
-        search_session_id = None
-        if arguments.get("session_id"):
-            search_session_id = _resolve_session_prefix(store, arguments["session_id"])
-        ops = store.sqlite.search_git_operations(
-            query=arguments["query"],
-            session_id=search_session_id,
-            operation_type=arguments.get("operation_type"),
-            limit=_limit(arguments.get("limit"), 20),
-        )
-        max_chars = _max_chars(arguments.get("max_chars"), 12000)
-        output = json.dumps(ops, indent=2, default=str)
-        return [TextContent(type="text", text=_truncate_output(output, max_chars))]
-
-    if name == "list_projects":
-        rows = store.sqlite.list_projects(
-            keyword=arguments.get("keyword"),
-            category=arguments.get("category"),
-            limit=_limit(arguments.get("limit"), 20),
-        )
-        if _bool(arguments.get("verbose"), False):
-            output = json.dumps(rows, indent=2, default=str)
-        else:
-            output = json.dumps(
-                [_format_project_compact(r) for r in rows], indent=2, default=str
-            )
-        return [TextContent(type="text", text=_truncate_output(output, 16000))]
-
-    if name == "get_project_timeline":
-        rows = store.sqlite.list_sessions(
-            project_id=arguments["project_id"],
-            since=arguments.get("since"),
-            until=arguments.get("until"),
-            limit=_limit(arguments.get("limit"), 50),
-        )
-        # Enrich with outcome
-        enriched = []
-        for r in rows:
-            outcome = store.sqlite.get_outcome(r["session_id"])
-            enriched.append({
-                **r,
-                "outcome": outcome["outcome"] if outcome else None,
-                "outcome_summary": outcome["summary"] if outcome else None,
-            })
-        return [TextContent(type="text", text=json.dumps(enriched, indent=2, default=str))]
-
-    return [TextContent(type="text", text=f"Unknown tool: {name}")]
+@server.call_tool()
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    handler = _DISPATCH.get(name)
+    if handler is None:
+        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+    store = LonghandStore()
+    return await handler(store, arguments)
 
 
 async def main():
