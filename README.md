@@ -50,6 +50,8 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Local. Complete. Yours.**
 
+> **Storage footprint:** ~1GB for a heavy power user (120+ sessions, 60k events, months of daily Opus usage across 14 repos). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
+
 ---
 
 ## Python version note
