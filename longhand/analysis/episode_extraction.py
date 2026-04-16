@@ -33,7 +33,7 @@ def _get_type(e: Event) -> str:
 
 
 def _episode_id(session_id: str, start_idx: int) -> str:
-    return "ep_" + hashlib.sha1(f"{session_id}:{start_idx}".encode("utf-8")).hexdigest()[:16]
+    return "ep_" + hashlib.sha256(f"{session_id}:{start_idx}".encode("utf-8")).hexdigest()[:16]
 
 
 def extract_episodes(

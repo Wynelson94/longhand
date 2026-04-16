@@ -177,7 +177,7 @@ def extract_segments(
         all_text = " ".join(user_texts)
         keywords = sorted(_extract_simple_keywords(all_text))[:20]
 
-        seg_id = "seg_" + hashlib.sha1(
+        seg_id = "seg_" + hashlib.sha256(
             f"{session_id}:{seg_events[0].sequence}".encode()
         ).hexdigest()[:16]
 

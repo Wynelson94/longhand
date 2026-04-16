@@ -184,7 +184,7 @@ class LonghandStore:
                 command = paired_input.get("command", "")
             signal = extract_git_signal(command, e.tool_output or "")
 
-            op_id = "gitop_" + hashlib.sha1(
+            op_id = "gitop_" + hashlib.sha256(
                 f"{session_id}:{e.event_id}".encode()
             ).hexdigest()[:16]
             ops.append({
