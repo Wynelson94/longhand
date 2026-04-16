@@ -596,10 +596,46 @@ def recall(
     max_episodes: int = typer.Option(5, "--max", "-n"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
     show_raw: bool = typer.Option(False, "--raw", help="Also print raw episode data"),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the full RecallResult as JSON (same shape the MCP tool returns).",
+    ),
 ):
     """Proactive memory: answer a fuzzy question about past Claude Code work."""
     store = _get_store(data_dir)
     result = recall_pipeline(store, query, max_episodes=max_episodes)
+
+    # JSON mode: emit the same payload shape the MCP tool does, so users
+    # can inspect exactly what an agent sees.
+    if as_json:
+        import json as _json
+
+        payload: dict = {
+            "query": result.query,
+            "project_matches": [
+                {
+                    "project_id": m.project_id,
+                    "display_name": m.display_name,
+                    "category": m.category,
+                    "canonical_path": m.canonical_path,
+                    "score": m.score,
+                    "reasons": m.reasons,
+                }
+                for m in result.project_matches
+            ],
+            "time_window": {
+                "since": result.time_window[0].isoformat() if result.time_window[0] else None,
+                "until": result.time_window[1].isoformat() if result.time_window[1] else None,
+            },
+            "episodes": result.episodes,
+            "segments": result.segments,
+            "narrative": result.narrative,
+        }
+        if result.artifacts:
+            payload["artifacts"] = result.artifacts
+        print(_json.dumps(payload, indent=2, default=str))
+        return
 
     # Show project matches
     if result.project_matches:

@@ -157,3 +157,32 @@ def test_cli_prompt_hook_install(runner: CliRunner, isolated_home: Path):
 
     settings = json.loads((isolated_home / ".claude" / "settings.json").read_text())
     assert "UserPromptSubmit" in settings.get("hooks", {})
+
+
+# ─── recall --json flag (R4) ────────────────────────────────────────────────
+
+
+def test_cli_recall_json_flag_emits_valid_json(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`longhand recall "..." --json` must print a JSON object with the expected
+    top-level shape — same keys the MCP tool exposes — so users can inspect
+    what an agent sees.
+    """
+    # Use an isolated, empty data_dir so we don't touch ~/.longhand
+    data_dir = tmp_path / "longhand"
+
+    result = runner.invoke(
+        app,
+        ["recall", "nothing in this empty store", "--json", "--data-dir", str(data_dir)],
+    )
+    assert result.exit_code == 0, f"recall --json failed: {result.stdout}"
+
+    payload = json.loads(result.stdout)
+    assert "query" in payload
+    assert "project_matches" in payload
+    assert "episodes" in payload
+    assert "segments" in payload
+    assert "narrative" in payload
+    # Artifacts key should be absent on an empty store (matches MCP behavior)
+    assert "artifacts" not in payload
