@@ -290,12 +290,35 @@ def recall(
 
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 
-    # 7.5. Episode quality gate — detect when episode results are garbage
-    # Threshold 15.0 requires either 2+ keyword hits or 1 keyword + strong semantic boost.
-    # A single short-word match (e.g., "body" matching a JS variable) scores ~11 and should NOT
-    # be enough to override the segment/fallback path.
-    best_episode_score = _rank_score(episodes[0]) if episodes else 0.0
-    episodes_are_relevant = best_episode_score >= 15.0
+    # 7.5. Episode quality gate — reject clearly-irrelevant results.
+    #
+    # The old gate (score >= 15.0) was calibrated for keyword-hit scoring
+    # (each hit = 10 points). For semantic-only hits (no keyword overlap)
+    # even a strong match (distance 0.5 = 10 points of semantic_boost)
+    # couldn't clear it, and episodes got silently dropped.
+    #
+    # New logic: if episodes came from semantic search (have _distance),
+    # gate on distance directly — trust the vector collection's own
+    # relevance ranking. Otherwise fall back to the old score gate for
+    # keyword-path results.
+    episodes_are_relevant = False
+    if episodes:
+        top = episodes[0]
+        top_distance = top.get("_distance")
+        if top_distance is not None:
+            # Semantic-path gate — tuned empirically against ChromaDB's
+            # default MiniLM-L6 embeddings, which cluster loosely (1.5+
+            # for unrelated pairs, 0.7-1.2 for semantically related
+            # pairs with little literal overlap). 1.5 is "at least
+            # weakly related"; above that is near-random.
+            #
+            # Matches how segments are surfaced — they have no gate and
+            # appear even at similar distances; there's no reason to
+            # hold episodes to a stricter bar than segments.
+            episodes_are_relevant = top_distance < 1.5
+        else:
+            # Keyword-only path (no semantic hit) — retain old 15.0 gate
+            episodes_are_relevant = _rank_score(top) >= 15.0
 
     # 7.6. Parallel segment search — always run, results prioritized by quality gate
     segments: list[dict[str, Any]] = []

@@ -138,8 +138,14 @@ class LonghandStore:
         )
         episodes_stored = self.sqlite.insert_episodes(episodes)
 
-        # 3a. Episode embeddings — problem + diagnosis + fix text, semantic-searchable
+        # 3a. Episode embeddings — only episodes with an identified fix.
+        # Fixless episodes (e.g., "command not found" that never led to a
+        # file edit) stay in SQLite for forensic access via find_episodes,
+        # patterns, recap, and export — but they clutter the vector space
+        # with thin snippets of raw error text, so we skip embedding them.
         for ep in episodes:
+            if not ep.get("fix_event_id"):
+                continue
             text = _build_episode_text(ep)
             if not text:
                 continue
@@ -151,7 +157,7 @@ class LonghandStore:
                     "project_id": project["project_id"] or "",
                     "ended_at": ep["ended_at"],
                     "status": ep.get("status", "unresolved"),
-                    "has_fix": bool(ep.get("fix_event_id")),
+                    "has_fix": True,
                 },
             )
 
@@ -262,6 +268,11 @@ class LonghandStore:
 
         embedded = 0
         for ep in episodes:
+            # Skip fixless episodes — they stay in SQLite but aren't
+            # embedded. Keeps vector recall focused on episodes where
+            # there's an actual fix to retrieve.
+            if not ep.get("fix_event_id"):
+                continue
             text = _build_episode_text(ep)
             if not text:
                 continue
@@ -273,7 +284,7 @@ class LonghandStore:
                     "project_id": ep.get("project_id") or "",
                     "ended_at": ep.get("ended_at") or "",
                     "status": ep.get("status", "unresolved"),
-                    "has_fix": bool(ep.get("fix_event_id")),
+                    "has_fix": True,
                 },
             )
             embedded += 1

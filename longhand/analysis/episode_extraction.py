@@ -20,6 +20,21 @@ from longhand.types import Event
 # Events we consider "edits" (candidate fixes)
 _FIX_OPERATIONS = {"edit", "write", "multi_edit", "notebook_edit"}
 
+# How many events to look back from a problem event for the anchoring user
+# message. Long Claude runs can emit hundreds of tool calls between user
+# turns, so the lookback needs to be generous. Capped to avoid scanning
+# the whole session for episodes triggered deep in multi-hour sessions.
+_USER_LOOKBACK_EVENTS = 100
+
+# How many chars of rich summary text to preserve before truncation.
+_PROBLEM_DESCRIPTION_MAX = 600
+_DIAGNOSIS_SUMMARY_MAX = 800
+_FIX_SUMMARY_MAX = 600
+
+# Minimum substantive length for assistant_text snippets to include in
+# summary concatenation (filters out one-word acknowledgements).
+_MIN_TEXT_SNIPPET = 40
+
 
 def _get_op(e: Event) -> str | None:
     if e.file_operation is None:
@@ -64,25 +79,42 @@ def extract_episodes(
         problem_event = e
         problem_files = extract_file_references(e.content or "")
 
-        # Walk backward for the most recent user_message (the request)
+        # Walk backward for the most recent user_message (the request). The
+        # lookback is deliberately generous (_USER_LOOKBACK_EVENTS = 100)
+        # because long Claude runs can emit dozens of tool calls between
+        # user turns — an error mid-run should still anchor to the original
+        # ask, not just the raw error text.
         preceding_user = None
-        for j in range(i - 1, max(i - 10, -1), -1):
+        lookback_start = max(i - _USER_LOOKBACK_EVENTS, -1)
+        for j in range(i - 1, lookback_start, -1):
             if _get_type(events[j]) == "user_message" and (events[j].content or "").strip():
                 preceding_user = events[j]
                 break
 
-        problem_description = (preceding_user.content[:500] if preceding_user else (e.error_snippet or e.content[:500] if e.content else ""))
+        # Compose problem_description from BOTH user ask and error signal.
+        # Mixing them gives the embedding both "intent vocabulary" (what
+        # the user was trying to do) and "surface vocabulary" (what broke).
+        problem_description = _compose_problem_description(
+            preceding_user,
+            problem_event,
+            max_chars=_PROBLEM_DESCRIPTION_MAX,
+        )
 
-        # Forward scan
+        # Forward scan — collect structural events (diagnosis, fix,
+        # verification) AND accumulate substantive text/thinking events
+        # spanning the problem→fix window for the rich diagnosis summary.
         diagnosis_event = None
         fix_event = None
         verification_event = None
+        diagnosis_texts: list[str] = []  # thinking + assistant_text between problem and fix
+        fix_intent_text: str | None = None  # assistant_text immediately preceding fix
         touched_files: set[str] = set(problem_files)
         tags: set[str] = set()
         if e.error_category:
             tags.add(e.error_category)
 
         j = i + 1
+        last_substantive_text: Event | None = None  # running pointer for fix intent
         while j < len(events):
             cand = events[j]
             ctype = _get_type(cand)
@@ -95,7 +127,19 @@ def extract_episodes(
                 if not fix_event or (new_files and new_files.isdisjoint(touched_files)):
                     break
 
-            # Diagnosis: thinking block that mentions the error or referenced files
+            # Accumulate diagnosis material — any thinking or substantive
+            # assistant_text between problem and fix. Collected BEFORE the
+            # diagnosis_event capture so we include all reasoning, not just
+            # the first keyword-matching thinking block.
+            if fix_event is None and ctype in ("assistant_thinking", "assistant_text"):
+                text = (cand.content or "").strip()
+                if text and len(text) >= _MIN_TEXT_SNIPPET:
+                    diagnosis_texts.append(text)
+                    if ctype == "assistant_text":
+                        last_substantive_text = cand
+
+            # Diagnosis: first thinking block that mentions the error or
+            # referenced files — kept for the structural fk link
             if ctype == "assistant_thinking" and diagnosis_event is None:
                 content = (cand.content or "").lower()
                 if e.error_snippet:
@@ -106,16 +150,59 @@ def extract_episodes(
                     if any(Path(f).name.lower() in content for f in problem_files):
                         diagnosis_event = cand
 
-            # Fix: tool_call that edits a file referenced in the error
+            # Fix: tool_call that edits a file plausibly related to the bug.
+            # Fix-capture predicate — three independent signals, any suffices:
+            #   1. file-in-error: the error text literally named this file
+            #   2. diagnosis-link: a keyword-matching thinking block fired
+            #   3. file-in-reasoning: Claude's accumulated diagnosis_texts
+            #      reference this file's basename (Claude thought about it
+            #      in paraphrase, then edited it — real-world common case
+            #      that signal #1 and #2 miss because they require exact
+            #      vocabulary overlap with the error text).
             if ctype == "tool_call" and _get_op(cand) in _FIX_OPERATIONS:
                 if cand.file_path:
                     touched_files.add(cand.file_path)
                 if fix_event is None:
-                    # Prefer fixes to files named in the error
-                    if problem_files and cand.file_path and any(
-                        Path(ref).name == Path(cand.file_path).name for ref in problem_files
-                    ) or diagnosis_event is not None:
+                    # Match either "middleware.py" (exact) or "middleware"
+                    # (stem) — Claude usually refers to files by stem in
+                    # prose (e.g. "the auth middleware") but may use the
+                    # full basename when quoting paths.
+                    fname_full = (
+                        Path(cand.file_path).name.lower()
+                        if cand.file_path else ""
+                    )
+                    fname_stem = (
+                        Path(cand.file_path).stem.lower()
+                        if cand.file_path else ""
+                    )
+                    error_file_match = bool(
+                        problem_files and cand.file_path and any(
+                            Path(ref).name == Path(cand.file_path).name
+                            for ref in problem_files
+                        )
+                    )
+                    reasoning_file_match = bool(
+                        (fname_full or fname_stem) and diagnosis_texts and any(
+                            (fname_full and fname_full in text.lower())
+                            or (fname_stem and len(fname_stem) >= 4
+                                and fname_stem in text.lower())
+                            for text in diagnosis_texts
+                        )
+                    )
+                    if (
+                        error_file_match
+                        or diagnosis_event is not None
+                        or reasoning_file_match
+                    ):
                         fix_event = cand
+                        # Capture "intent" — the most recent substantive
+                        # assistant_text before this fix. This is usually
+                        # Claude saying "let me change X by doing Y"
+                        # which is exactly the semantic signal we want.
+                        if last_substantive_text is not None:
+                            intent_text = (last_substantive_text.content or "").strip()
+                            if intent_text:
+                                fix_intent_text = intent_text
 
             # Verification: a clean tool_result after a fix
             if ctype == "tool_result" and not cand.error_detected and fix_event is not None:
@@ -138,17 +225,24 @@ def extract_episodes(
 
         status = "resolved" if verification_event else ("partial" if fix_event else "unresolved")
 
-        # Fix summary (deterministic)
-        fix_summary = ""
-        if fix_event:
-            old_s = (fix_event.old_content or "")[:80]
-            new_s = (fix_event.new_content or "")[:80]
-            fname = Path(fix_event.file_path or "").name if fix_event.file_path else "?"
-            fix_summary = f"{fix_event.tool_name or 'Edit'} on {fname}: '{old_s}' → '{new_s}'"
+        # ── Rich summaries (all verbatim concatenation — no LLM) ──────────
 
-        diagnosis_summary = ""
-        if diagnosis_event and diagnosis_event.content:
-            diagnosis_summary = diagnosis_event.content[:400]
+        # Diagnosis summary: all thinking + substantive text between the
+        # problem and the fix (or, if no fix, everything in the forward
+        # scan range). Captures Claude's mental model of the bug.
+        diagnosis_summary = _compose_diagnosis_summary(
+            diagnosis_texts, max_chars=_DIAGNOSIS_SUMMARY_MAX
+        )
+
+        # Fix summary: preceding intent text (if any) + the mechanical diff
+        # + verification signal (if any). Gives an intent→action→outcome
+        # arc that a semantic embedding can latch onto.
+        fix_summary = _compose_fix_summary(
+            fix_event,
+            fix_intent_text,
+            verification_event,
+            max_chars=_FIX_SUMMARY_MAX,
+        )
 
         ep_id = _episode_id(session_id, i)
 
@@ -217,3 +311,124 @@ def _extract_keywords(text: str) -> list[str]:
             seen.add(t)
             out.append(t)
     return out
+
+
+# ─── Summary composition helpers ────────────────────────────────────────────
+#
+# All verbatim concatenation of existing event content. No LLM calls,
+# no novel summarization — the principle is "avoid AI summary memory and
+# remain forensic." Every character emitted came from a real event in
+# the session.
+
+
+def _compose_problem_description(
+    preceding_user: Event | None,
+    problem_event: Event,
+    max_chars: int,
+) -> str:
+    """Combine the user's ask (if found) with the error signal into a single
+    semantically rich description.
+
+    Format: "Ask: <user request truncated>. Error: <error content truncated>"
+
+    Either piece can be missing — degrade to the other. Labels are kept
+    explicit so the embedding carries structural cues.
+    """
+    parts: list[str] = []
+
+    if preceding_user and preceding_user.content:
+        ask = preceding_user.content.strip()
+        if ask:
+            # Give the user ask ~60% of the budget
+            ask_budget = int(max_chars * 0.6)
+            parts.append(f"Ask: {ask[:ask_budget]}")
+
+    # Always include an error signal — prefer the dedicated error_snippet
+    # field over the raw content (shorter, more focused).
+    error_text = (problem_event.error_snippet or problem_event.content or "").strip()
+    if error_text:
+        remaining = max_chars - sum(len(p) + 2 for p in parts)
+        if remaining > 40:  # only include if there's meaningful space
+            parts.append(f"Error: {error_text[:remaining]}")
+
+    return ". ".join(parts) if parts else ""
+
+
+def _compose_diagnosis_summary(
+    diagnosis_texts: list[str],
+    max_chars: int,
+) -> str:
+    """Concatenate thinking + assistant_text captured between problem and fix.
+
+    Order preserved (earliest first). Separator `" | "` delimits segments
+    so the embedding still has structure. Truncated to max_chars with
+    priority on earliest reasoning (often contains the core hypothesis).
+    """
+    if not diagnosis_texts:
+        return ""
+
+    out_parts: list[str] = []
+    used = 0
+    for text in diagnosis_texts:
+        if used >= max_chars:
+            break
+        remaining = max_chars - used
+        snippet = text[:remaining].strip()
+        if snippet:
+            out_parts.append(snippet)
+            used += len(snippet) + 3  # +3 for " | " separator
+
+    return " | ".join(out_parts)
+
+
+def _compose_fix_summary(
+    fix_event: Event | None,
+    intent_text: str | None,
+    verification_event: Event | None,
+    max_chars: int,
+) -> str:
+    """Compose the fix summary: intent + mechanical diff + verification.
+
+    - Intent: the most recent substantive assistant_text before the fix
+      (what Claude said it was about to do — high-value semantic signal).
+    - Diff: existing "ToolName on file.py: 'old' → 'new'" format.
+    - Verification: if a clean tool_result followed the fix, a short
+      signal that the fix actually worked.
+
+    Returns "" when fix_event is None — such episodes are kept in SQLite
+    for forensic access but filtered out of the vector embedding path.
+    """
+    if fix_event is None:
+        return ""
+
+    parts: list[str] = []
+    budget = max_chars
+
+    # Intent — prefix with label so the embedding treats it structurally
+    if intent_text:
+        intent_budget = min(len(intent_text), budget // 2)
+        parts.append(f"Intent: {intent_text[:intent_budget]}")
+        budget -= intent_budget + 10
+
+    # Mechanical diff — existing format, grounded in real content
+    old_s = (fix_event.old_content or "")[:120]
+    new_s = (fix_event.new_content or "")[:120]
+    fname = Path(fix_event.file_path or "").name if fix_event.file_path else "?"
+    tool = fix_event.tool_name or "Edit"
+    if old_s or new_s:
+        parts.append(f"{tool} on {fname}: '{old_s}' → '{new_s}'")
+    else:
+        # Write operations have only new_content; edits to brand-new
+        # files have no old_content. Still useful to note the file.
+        parts.append(f"{tool} on {fname}")
+    budget -= len(parts[-1]) + 10
+
+    # Verification — short signal the fix held
+    if verification_event and budget > 40:
+        vcontent = (verification_event.content or "").strip()
+        if vcontent:
+            parts.append(f"Verified: {vcontent[:min(120, budget)]}")
+        else:
+            parts.append("Verified: clean tool result")
+
+    return ". ".join(parts)

@@ -1856,6 +1856,97 @@ def doctor():
     _doctor()
 
 
+@app.command("reanalyze")
+def reanalyze(
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+    limit: int = typer.Option(
+        0, "--limit", help="Max number of sessions to reanalyze (0 = all)"
+    ),
+):
+    """Re-run analysis on every ingested session.
+
+    Needed once after upgrading to a Longhand version that changed episode
+    extraction, segment extraction, or any analysis output. Re-parses each
+    session's transcript, re-extracts episodes + segments + outcome, and
+    upserts the refreshed rows into SQLite. Then re-embeds everything.
+
+    Sessions whose transcript file has been deleted from disk (Claude Code
+    rotates JSONL after a few weeks) are skipped with a warning. Their
+    original episodes stay intact — this is idempotent.
+    """
+    store = _get_store(data_dir)
+
+    # Pull session IDs + transcript paths. Use a generous cap to cover
+    # heavy users; 5000 sessions is well above any realistic history.
+    sessions = store.sqlite.list_sessions(limit=5000)
+    if limit > 0:
+        sessions = sessions[:limit]
+
+    if not sessions:
+        console.print("[yellow]No sessions to reanalyze.[/yellow]")
+        return
+
+    console.print(f"[cyan]Reanalyzing {len(sessions)} session(s)...[/cyan]")
+
+    reanalyzed = 0
+    missing_transcript = 0
+    errors = 0
+
+    for idx, row in enumerate(sessions, start=1):
+        transcript = row.get("transcript_path")
+        if not transcript or not Path(transcript).exists():
+            missing_transcript += 1
+            continue
+
+        try:
+            parser = JSONLParser(Path(transcript))
+            events = list(parser.parse_events())
+            if not events:
+                continue
+            session = parser.build_session(events)
+            store.analyze_session(session, events)
+            reanalyzed += 1
+        except Exception as e:
+            errors += 1
+            console.print(f"  [red]✗[/red] {row['session_id'][:8]}: {e}")
+
+        if idx % 10 == 0:
+            console.print(
+                f"   [dim]{idx}/{len(sessions)}[/dim] "
+                f"(done={reanalyzed}, skipped={missing_transcript}, errors={errors})"
+            )
+
+    # After analysis, episodes are upserted with fresh summaries. The
+    # embedding collection wasn't cleared though — stale embeddings linger
+    # under their old episode_ids if extraction algorithm changes shift
+    # episode boundaries. Easiest safe path: clear the collection and
+    # rebuild from the now-current SQLite rows.
+    console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
+    try:
+        store.vectors.client.delete_collection(name="episodes")
+        store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
+            name="episodes"
+        )
+    except Exception:
+        pass
+
+    def _progress(done: int, total: int) -> None:
+        console.print(f"   {done}/{total}...", end="\r")
+
+    embedded = store.backfill_episode_embeddings(progress=_progress)
+
+    console.print(
+        f"\n[green]✓[/green] Reanalyzed {reanalyzed} session(s), "
+        f"embedded {embedded} episode(s)."
+    )
+    if missing_transcript:
+        console.print(
+            f"[dim]   {missing_transcript} session(s) skipped (transcript rotated/deleted).[/dim]"
+        )
+    if errors:
+        console.print(f"[red]   {errors} session(s) errored — see messages above.[/red]")
+
+
 @app.command("backfill-episodes")
 def backfill_episodes(
     data_dir: str | None = typer.Option(None, "--data-dir"),
