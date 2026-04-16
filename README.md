@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-170%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 
 **Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
@@ -23,7 +23,7 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-> *Status: v0.5.9 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 163 unit tests passing.*
+> *Status: v0.5.10 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 170 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -420,7 +420,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-163 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+170 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 
