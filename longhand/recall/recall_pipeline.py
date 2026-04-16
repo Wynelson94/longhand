@@ -115,6 +115,15 @@ def recall(
     if now is None:
         now = datetime.now(timezone.utc)
 
+    # 0. Transparent first-run backfill — if we're on a fresh upgrade and the
+    # episodes vector collection is empty while the SQLite episode table is
+    # populated, embed everything now so semantic episode search works.
+    # Idempotent and a no-op after the first call.
+    try:
+        store.ensure_episode_embeddings()
+    except Exception:
+        pass
+
     # 1. Time parsing
     since, until, cleaned_query = parse_time_phrase(query, now)
 
@@ -164,46 +173,36 @@ def recall(
         key=len,
         reverse=True,
     )
-    primary_keyword = query_words[0] if query_words else None
-
-    # 3. First attempt: strict filters with keyword hint
+    # 3. First attempt: semantic search with project + time filters.
+    # find_episodes embeds the query against the episodes collection; keyword
+    # stays None here so we don't over-filter on literal substrings.
     episodes = find_episodes(
         store=store,
+        query=cleaned_query,
         project_ids=project_ids,
         since=since_iso,
         until=until_iso,
-        keyword=primary_keyword,
         has_fix=True,
         limit=max_episodes * 4,
     )
 
-    # 4. Relax: drop keyword
+    # 4. Relax: drop project filter (the query may not be project-scoped)
     if not episodes:
         episodes = find_episodes(
             store=store,
-            project_ids=project_ids,
-            since=since_iso,
-            until=until_iso,
-            has_fix=True,
-            limit=max_episodes * 4,
-        )
-
-    # 5. Relax: drop project filter, keep keyword
-    if not episodes and primary_keyword:
-        episodes = find_episodes(
-            store=store,
+            query=cleaned_query,
             project_ids=None,
             since=since_iso,
             until=until_iso,
-            keyword=primary_keyword,
             has_fix=True,
             limit=max_episodes * 4,
         )
 
-    # 6. Relax: drop project, has_fix
+    # 5. Relax: drop has_fix — accept unresolved problems too
     if not episodes:
         episodes = find_episodes(
             store=store,
+            query=cleaned_query,
             project_ids=None,
             since=since_iso,
             until=until_iso,
@@ -232,7 +231,9 @@ def recall(
     def _rank_score(ep: dict[str, Any]) -> float:
         confidence = ep.get("confidence") or 0.5
 
-        # Keyword hit count — substring match on problem/diagnosis/fix text
+        # Keyword hit count — substring match on problem/diagnosis/fix text.
+        # Kept because literal matches are a strong relevance signal when the
+        # semantic model already agrees.
         keyword_hits = 0
         if query_words:
             searchable = " ".join([
@@ -244,12 +245,25 @@ def recall(
                 if word.lower() in searchable:
                     keyword_hits += 1
 
-        # Semantic boost — check if any linked event is in the top semantic hits
-        semantic_boost = 0.0
+        # Direct semantic boost from the episodes collection — `_distance`
+        # is attached by find_episodes when the episode came from vector
+        # search. Closer distance = stronger signal. A distance of 0.25 or
+        # lower contributes 15+ points, enough to clear the quality gate
+        # without any keyword hits.
+        ep_distance = ep.get("_distance")
+        episode_semantic_boost = 0.0
+        if ep_distance is not None:
+            episode_semantic_boost = max(0.0, (1.0 - ep_distance) * 20)
+
+        # Event-level semantic boost — older path, checks if any linked event
+        # appears in the top events-collection hits. Kept as a secondary
+        # signal for episodes whose linked events resonate more than their
+        # summaries do.
+        event_semantic_boost = 0.0
         for eid_field in ("problem_event_id", "diagnosis_event_id", "fix_event_id"):
             eid = ep.get(eid_field)
             if eid and eid in semantic_event_scores:
-                semantic_boost = max(semantic_boost, semantic_event_scores[eid])
+                event_semantic_boost = max(event_semantic_boost, semantic_event_scores[eid])
 
         # Recency boost — more recent episodes rank higher for fuzzy time queries
         recency_boost = 0.0
@@ -264,9 +278,15 @@ def recall(
             except Exception:
                 pass
 
-        # Final: keyword hits dominate (10x), then semantic boost (5x),
-        # then confidence + recency
-        return keyword_hits * 10 + semantic_boost * 5 + confidence + recency_boost * 0.5
+        # Final: episode-level semantic dominates, then keyword hits,
+        # then event-level semantic, then confidence + recency
+        return (
+            episode_semantic_boost
+            + keyword_hits * 10
+            + event_semantic_boost * 5
+            + confidence
+            + recency_boost * 0.5
+        )
 
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 

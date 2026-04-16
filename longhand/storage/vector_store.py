@@ -57,6 +57,11 @@ class VectorStore:
             metadata={"description": "One embedding per conversation segment for topic-level recall"},
         )
 
+        self.episodes_collection = self.client.get_or_create_collection(
+            name="episodes",
+            metadata={"description": "One embedding per problem→fix episode for intent-framed recall"},
+        )
+
     def add_events(self, events: list[Event]) -> int:
         """Add a batch of events to the vector index.
 
@@ -358,9 +363,83 @@ class VectorStore:
         except Exception:
             return 0
 
+    # ─── Episodes collection ─────────────────────────────────────────────
+
+    def add_episode_embedding(
+        self,
+        episode_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert one embedding per problem→fix episode."""
+        if not text or not text.strip():
+            return
+        self.episodes_collection.upsert(
+            ids=[episode_id],
+            documents=[text[:MAX_EMBED_CHARS]],
+            metadatas=[metadata],
+        )
+
+    def search_episodes(
+        self,
+        query: str,
+        n_results: int = 10,
+        project_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        has_fix: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic search over problem→fix episode text."""
+        where_clauses: list[dict[str, Any]] = []
+        if project_id:
+            where_clauses.append({"project_id": project_id})
+        if has_fix is not None:
+            where_clauses.append({"has_fix": has_fix})
+        if since:
+            where_clauses.append({"ended_at": {"$gte": since}})
+        if until:
+            where_clauses.append({"ended_at": {"$lte": until}})
+
+        where: dict[str, Any] | None = None
+        if len(where_clauses) == 1:
+            where = where_clauses[0]
+        elif len(where_clauses) > 1:
+            where = {"$and": where_clauses}
+
+        try:
+            results = self.episodes_collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=where,
+            )
+        except Exception:
+            return []
+
+        ids = results.get("ids", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        hits: list[dict[str, Any]] = []
+        for i, eid in enumerate(ids):
+            hits.append({
+                "episode_id": eid,
+                "document": documents[i] if i < len(documents) else "",
+                "metadata": metadatas[i] if i < len(metadatas) else {},
+                "distance": distances[i] if i < len(distances) else 1.0,
+            })
+        return hits
+
+    def episode_count(self) -> int:
+        """Return the number of episode embeddings."""
+        try:
+            return self.episodes_collection.count()
+        except Exception:
+            return 0
+
     def reset(self) -> None:
         """Delete and recreate all collections."""
-        for name in ("events", "sessions", "projects", "segments"):
+        for name in ("events", "sessions", "projects", "segments", "episodes"):
             try:
                 self.client.delete_collection(name=name)
             except Exception:
@@ -369,3 +448,4 @@ class VectorStore:
         self.sessions_collection = self.client.get_or_create_collection(name="sessions")
         self.projects_collection = self.client.get_or_create_collection(name="projects")
         self.segments_collection = self.client.get_or_create_collection(name="segments")
+        self.episodes_collection = self.client.get_or_create_collection(name="episodes")

@@ -1820,5 +1820,46 @@ def doctor():
     _doctor()
 
 
+@app.command("backfill-episodes")
+def backfill_episodes(
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Embed every existing problem→fix episode into the vector store.
+
+    Needed once after upgrading to a version that added the episodes
+    ChromaDB collection. Idempotent — safe to re-run. The recall pipeline
+    also triggers this automatically on first use, so most users never
+    need to call it directly.
+    """
+    store = _get_store(data_dir)
+
+    sql_count = store.sqlite.count_episodes()
+    vector_count = store.vectors.episode_count()
+
+    if sql_count == 0:
+        console.print("[yellow]No episodes to embed (store is empty).[/yellow]")
+        return
+
+    if vector_count >= sql_count:
+        console.print(
+            f"[green]✓[/green] All {sql_count} episodes already embedded."
+        )
+        return
+
+    console.print(
+        f"[cyan]Embedding {sql_count} episode(s)...[/cyan] "
+        f"[dim]({vector_count} already done)[/dim]"
+    )
+
+    def _progress(done: int, total: int) -> None:
+        console.print(f"   {done}/{total}...", end="\r")
+
+    embedded = store.backfill_episode_embeddings(progress=_progress)
+    console.print(
+        f"[green]✓[/green] Embedded {embedded} episode(s). "
+        f"Vector collection now has {store.vectors.episode_count()} entries."
+    )
+
+
 if __name__ == "__main__":
     app()

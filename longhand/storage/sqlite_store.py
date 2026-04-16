@@ -655,6 +655,15 @@ class SQLiteStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def count_episodes(self) -> int:
+        """Fast count of rows in the episodes table."""
+        try:
+            with self.connect() as conn:
+                row = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
+                return int(row[0]) if row else 0
+        except Exception:
+            return 0
+
     def query_episodes(
         self,
         project_ids: list[str] | None = None,

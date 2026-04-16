@@ -7,6 +7,7 @@ SQLite is the source of truth. ChromaDB is the search index.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 from longhand.analysis.episode_extraction import extract_episodes
@@ -23,6 +24,26 @@ from longhand.storage.vector_store import VectorStore
 from longhand.types import Event, Session
 
 DEFAULT_DATA_DIR = Path.home() / ".longhand"
+
+
+def _build_episode_text(episode: dict) -> str:
+    """Compose the embeddable text for a problem→fix episode.
+
+    Joins the episode's three narrative fields (problem / diagnosis / fix)
+    with labeled sentinels so the embedding carries structural cues and
+    degrades gracefully when one of the fields is empty.
+    """
+    parts: list[str] = []
+    problem = (episode.get("problem_description") or "").strip()
+    diagnosis = (episode.get("diagnosis_summary") or "").strip()
+    fix = (episode.get("fix_summary") or "").strip()
+    if problem:
+        parts.append(f"Problem: {problem}")
+    if diagnosis:
+        parts.append(f"Diagnosis: {diagnosis}")
+    if fix:
+        parts.append(f"Fix: {fix}")
+    return "\n".join(parts)
 
 
 class LonghandStore:
@@ -117,6 +138,23 @@ class LonghandStore:
         )
         episodes_stored = self.sqlite.insert_episodes(episodes)
 
+        # 3a. Episode embeddings — problem + diagnosis + fix text, semantic-searchable
+        for ep in episodes:
+            text = _build_episode_text(ep)
+            if not text:
+                continue
+            self.vectors.add_episode_embedding(
+                episode_id=ep["episode_id"],
+                text=text,
+                metadata={
+                    "session_id": session.session_id,
+                    "project_id": project["project_id"] or "",
+                    "ended_at": ep["ended_at"],
+                    "status": ep.get("status", "unresolved"),
+                    "has_fix": bool(ep.get("fix_event_id")),
+                },
+            )
+
         # 3b. Conversation segment extraction
         segments = extract_segments(
             session_id=session.session_id,
@@ -205,3 +243,59 @@ class LonghandStore:
         sql_stats = self.sqlite.get_stats()
         sql_stats["vectors_indexed"] = self.vectors.count()
         return sql_stats
+
+    def backfill_episode_embeddings(self, progress: Callable[[int, int], None] | None = None) -> int:
+        """Embed every episode row from SQLite into the vector store.
+
+        Idempotent — upserts by episode_id. Needed once after upgrading from
+        a pre-episodes-collection Longhand version; auto-called from the
+        recall pipeline when the collection is empty but the SQLite table
+        is populated.
+
+        `progress` is an optional callback receiving (done, total) after
+        each batch, for CLI progress bars.
+        """
+        episodes = self.sqlite.query_episodes(limit=100_000)
+        total = len(episodes)
+        if total == 0:
+            return 0
+
+        embedded = 0
+        for ep in episodes:
+            text = _build_episode_text(ep)
+            if not text:
+                continue
+            self.vectors.add_episode_embedding(
+                episode_id=ep["episode_id"],
+                text=text,
+                metadata={
+                    "session_id": ep.get("session_id") or "",
+                    "project_id": ep.get("project_id") or "",
+                    "ended_at": ep.get("ended_at") or "",
+                    "status": ep.get("status", "unresolved"),
+                    "has_fix": bool(ep.get("fix_event_id")),
+                },
+            )
+            embedded += 1
+            if progress and embedded % 25 == 0:
+                progress(embedded, total)
+
+        if progress:
+            progress(embedded, total)
+        return embedded
+
+    def ensure_episode_embeddings(self) -> int:
+        """If the episodes vector collection is empty but SQLite has episodes,
+        transparently backfill. Returns the number of episodes embedded
+        (0 if no backfill was needed). Safe to call on every recall.
+        """
+        try:
+            vector_count = self.vectors.episode_count()
+        except Exception:
+            return 0
+        if vector_count > 0:
+            return 0
+        sql_count = self.sqlite.count_episodes()
+        if sql_count == 0:
+            return 0
+        return self.backfill_episode_embeddings()
