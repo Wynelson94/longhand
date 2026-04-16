@@ -18,33 +18,50 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from longhand.cli.helpers import (
+    _format_timestamp,
+    _get_store,
+    _resolve_prefix,
+    console,
+)
+from longhand.parser import JSONLParser, discover_sessions
 from longhand.recall import recall as recall_pipeline
+from longhand.replay import ReplayEngine
 from longhand.setup_commands import (
     doctor as _doctor,
+)
+from longhand.setup_commands import (
     hook_install as _hook_install,
+)
+from longhand.setup_commands import (
     hook_uninstall as _hook_uninstall,
+)
+from longhand.setup_commands import (
     ingest_single_session as _ingest_single,
+)
+from longhand.setup_commands import (
     mcp_install as _mcp_install,
+)
+from longhand.setup_commands import (
     mcp_uninstall as _mcp_uninstall,
+)
+from longhand.setup_commands import (
     prompt_hook_install as _prompt_hook_install,
+)
+from longhand.setup_commands import (
     prompt_hook_uninstall as _prompt_hook_uninstall,
+)
+from longhand.setup_commands import (
     run_prompt_hook as _run_prompt_hook,
 )
-
-from longhand.parser import JSONLParser, discover_sessions
-from longhand.replay import ReplayEngine
-from longhand.storage import LonghandStore
-
 
 app = typer.Typer(
     name="longhand",
@@ -52,29 +69,6 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
-
-console = Console()
-
-
-def _get_store(data_dir: Optional[str] = None) -> LonghandStore:
-    return LonghandStore(data_dir=data_dir)
-
-
-def _resolve_prefix(store: LonghandStore, prefix: str) -> str | None:
-    """Resolve a session ID prefix to a full session ID."""
-    rows = store.sqlite.list_sessions(limit=1000)
-    for row in rows:
-        if row["session_id"].startswith(prefix):
-            return row["session_id"]
-    return None
-
-
-def _format_timestamp(iso: str) -> str:
-    try:
-        dt = datetime.fromisoformat(iso)
-        return dt.strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return iso[:16]
 
 
 # -----------------------------------------------------------------------------
@@ -87,7 +81,7 @@ def setup(
     skip_ingest: bool = typer.Option(False, "--skip-ingest", help="Skip backfilling existing sessions"),
     skip_prompt_hook: bool = typer.Option(False, "--skip-prompt-hook", help="Skip auto-context injection hook"),
     skip_mcp: bool = typer.Option(False, "--skip-mcp", help="Skip MCP server install"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """One-command setup: ingest existing sessions, install hooks, configure MCP.
 
@@ -103,7 +97,7 @@ def setup(
     """
     console.print("[bold cyan]→ Longhand setup[/bold cyan]\n")
 
-    store = _get_store(data_dir)
+    _get_store(data_dir)
 
     # 1. Ingest existing history
     if not skip_ingest:
@@ -174,11 +168,11 @@ def setup(
 
 @app.command()
 def ingest(
-    path: Optional[str] = typer.Argument(
+    path: str | None = typer.Argument(
         None,
         help="Path to a .jsonl file or directory. Defaults to ~/.claude/projects",
     ),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="Longhand data directory"),
+    data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     force: bool = typer.Option(False, "--force", help="Re-ingest already-indexed files"),
     limit: int = typer.Option(0, "--limit", help="Max number of sessions to ingest (0 = all)"),
 ):
@@ -270,9 +264,9 @@ def ingest(
 
 @app.command()
 def sessions(
-    project: Optional[str] = typer.Option(None, "--project", help="Filter by project path substring"),
+    project: str | None = typer.Option(None, "--project", help="Filter by project path substring"),
     limit: int = typer.Option(20, "--limit", help="Max sessions to show"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """List ingested sessions."""
     store = _get_store(data_dir)
@@ -311,13 +305,13 @@ def sessions(
 def search(
     query: str = typer.Argument(..., help="Semantic query text"),
     limit: int = typer.Option(10, "--limit", "-n"),
-    event_type: Optional[str] = typer.Option(
+    event_type: str | None = typer.Option(
         None, "--type", help="Filter: user_message, assistant_text, assistant_thinking, tool_call, tool_result"
     ),
-    session: Optional[str] = typer.Option(None, "--session", help="Filter by session id (prefix match)"),
-    tool: Optional[str] = typer.Option(None, "--tool", help="Filter by tool name (Edit, Bash, Read, etc.)"),
-    file: Optional[str] = typer.Option(None, "--file", help="Filter by file path substring"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    session: str | None = typer.Option(None, "--session", help="Filter by session id (prefix match)"),
+    tool: str | None = typer.Option(None, "--tool", help="Filter by tool name (Edit, Bash, Read, etc.)"),
+    file: str | None = typer.Option(None, "--file", help="Filter by file path substring"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Semantic search across all stored events."""
     store = _get_store(data_dir)
@@ -378,7 +372,7 @@ def timeline(
     session_id: str = typer.Argument(..., help="Session ID (prefix match supported)"),
     limit: int = typer.Option(100, "--limit", "-n"),
     show_thinking: bool = typer.Option(True, "--thinking/--no-thinking"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show a chronological timeline of a session."""
     store = _get_store(data_dir)
@@ -459,8 +453,8 @@ def _event_marker(event_type: str) -> str:
 def replay(
     session_id: str = typer.Argument(..., help="Session ID (prefix match)"),
     file_path: str = typer.Argument(..., help="File path to reconstruct"),
-    at_event: Optional[str] = typer.Option(None, "--at-event", help="Reconstruct state at this event id"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    at_event: str | None = typer.Option(None, "--at-event", help="Reconstruct state at this event id"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Reconstruct the state of a file at a point in a session."""
     store = _get_store(data_dir)
@@ -537,7 +531,7 @@ def _guess_language(file_path: str) -> str:
 @app.command()
 def diff(
     event_id: str = typer.Argument(..., help="Event ID of an edit"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show the before/after content of a single edit event."""
     store = _get_store(data_dir)
@@ -565,7 +559,7 @@ def diff(
 
 @app.command()
 def stats(
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show overall storage statistics."""
     store = _get_store(data_dir)
@@ -600,7 +594,7 @@ def stats(
 def recall(
     query: str = typer.Argument(..., help="Fuzzy natural-language question about past work"),
     max_episodes: int = typer.Option(5, "--max", "-n"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
     show_raw: bool = typer.Option(False, "--raw", help="Also print raw episode data"),
 ):
     """Proactive memory: answer a fuzzy question about past Claude Code work."""
@@ -640,8 +634,8 @@ def recall(
 @app.command()
 def analyze(
     all_sessions: bool = typer.Option(False, "--all", help="Re-analyze every ingested session"),
-    session: Optional[str] = typer.Option(None, "--session", help="Re-analyze a single session (prefix match)"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    session: str | None = typer.Option(None, "--session", help="Re-analyze a single session (prefix match)"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Re-run analysis (projects, outcomes, episodes) on already-ingested sessions."""
     store = _get_store(data_dir)
@@ -698,10 +692,10 @@ def analyze(
 
 @app.command()
 def projects(
-    keyword: Optional[str] = typer.Option(None, "--keyword", "-k"),
-    category: Optional[str] = typer.Option(None, "--category", "-c"),
+    keyword: str | None = typer.Option(None, "--keyword", "-k"),
+    category: str | None = typer.Option(None, "--category", "-c"),
     limit: int = typer.Option(50, "--limit"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """List inferred projects."""
     store = _get_store(data_dir)
@@ -737,11 +731,11 @@ def projects(
 
 @app.command()
 def git_log(
-    session_id: Optional[str] = typer.Argument(None, help="Session ID (prefix match). Shows recent across all sessions if omitted."),
-    operation: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by operation type (commit, push, etc.)"),
-    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search commit messages"),
+    session_id: str | None = typer.Argument(None, help="Session ID (prefix match). Shows recent across all sessions if omitted."),
+    operation: str | None = typer.Option(None, "--type", "-t", help="Filter by operation type (commit, push, etc.)"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Search commit messages"),
     limit: int = typer.Option(50, "--limit"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show git operations from Claude Code sessions."""
     store = _get_store(data_dir)
@@ -799,8 +793,8 @@ def git_log(
 @app.command()
 def config(
     show: bool = typer.Option(True, "--show/--edit", help="Show current config (default) or open for editing"),
-    set_key: Optional[str] = typer.Option(None, "--set", help="Set a config key, e.g. --set hook.min_relevance=3.0"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    set_key: str | None = typer.Option(None, "--set", help="Set a config key, e.g. --set hook.min_relevance=3.0"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """View or edit Longhand hook configuration.
 
@@ -888,14 +882,14 @@ def context(
     min_relevance: float = typer.Option(
         2.0, "--threshold", help="Minimum rank score to inject context (filters noise)"
     ),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Restrict to a project name or id"
     ),
     silent_if_empty: bool = typer.Option(
         True, "--silent/--always",
         help="Print nothing when nothing relevant is found (vs. print 'no context')",
     ),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Output relevant past context for a query in a hook-injectable format.
 
@@ -905,6 +899,7 @@ def context(
     to inject — avoids polluting prompts with low-quality matches.
     """
     import sys
+
     from longhand.recall import recall as _recall
 
     store = _get_store(data_dir)
@@ -1030,11 +1025,10 @@ def export(
         ...,
         help="Episode ID (ep_*), session ID (prefix), or shortcut: latest, latest-fix",
     ),
-    output: Optional[str] = typer.Option(None, "--out", "-o", help="Write to file instead of stdout"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    output: str | None = typer.Option(None, "--out", "-o", help="Write to file instead of stdout"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Export an episode or session as standalone markdown."""
-    import json as _json
 
     store = _get_store(data_dir)
 
@@ -1194,7 +1188,6 @@ def _episode_to_markdown(store, ep: dict) -> str:
 
 def _session_to_markdown(store, session_id: str) -> str:
     """Render a session timeline as markdown."""
-    import json as _json
 
     lines: list[str] = []
     session = store.sqlite.get_session(session_id)
@@ -1279,7 +1272,7 @@ def _session_to_markdown(store, session_id: str) -> str:
 def patterns(
     limit: int = typer.Option(10, "--limit", "-n", help="Top N pattern groups to show"),
     min_count: int = typer.Option(2, "--min", help="Minimum episode count per pattern"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show recurring fix patterns across all episodes — bugs you keep fixing.
 
@@ -1287,7 +1280,7 @@ def patterns(
     """
     import json as _json
     import re as _re
-    from collections import Counter, defaultdict
+    from collections import defaultdict
 
     store = _get_store(data_dir)
 
@@ -1390,11 +1383,11 @@ def patterns(
 def recap(
     days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
     limit: int = typer.Option(10, "--limit", "-n"),
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project id or name"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project id or name"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show what you've been working on recently — sessions + outcomes + latest context."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta, timezone
 
     store = _get_store(data_dir)
 
@@ -1501,7 +1494,7 @@ def status_cmd(
     project: str = typer.Argument(..., help="Project name (fuzzy match)"),
     commits: int = typer.Option(10, "--commits", "-c", help="Max recent commits to show"),
     episodes: int = typer.Option(5, "--episodes", "-e", help="Max recent episodes"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show where a project left off — recent commits, issues, and context."""
     from longhand.recall.recall_pipeline import recall_project_status
@@ -1525,7 +1518,7 @@ def status_cmd(
 def continue_cmd(
     session_id: str = typer.Argument(..., help="Session ID prefix"),
     n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show the last N events of a session so you can pick up where you left off."""
     store = _get_store(data_dir)
@@ -1633,7 +1626,7 @@ def continue_cmd(
 def history(
     file_path: str = typer.Argument(..., help="File path (exact or substring match)"),
     limit: int = typer.Option(50, "--limit"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show every edit to a file across all sessions, chronologically."""
     store = _get_store(data_dir)
@@ -1774,6 +1767,7 @@ def mcp_uninstall_cmd():
 def mcp_serve_cmd():
     """Run the MCP server (stdio). Used by Claude Desktop."""
     import asyncio
+
     from longhand.mcp_server import main as mcp_main
     asyncio.run(mcp_main())
 
@@ -1783,14 +1777,15 @@ def mcp_serve_cmd():
 def mcp_server_cmd():
     """Run the MCP server (stdio). Used by Claude Desktop."""
     import asyncio
+
     from longhand.mcp_server import main as mcp_main
     asyncio.run(mcp_main())
 
 
 @app.command("ingest-session")
 def ingest_session_cmd(
-    transcript: Optional[str] = typer.Option(None, "--transcript", "-t", help="Path to a single session JSONL"),
-    data_dir: Optional[str] = typer.Option(None, "--data-dir"),
+    transcript: str | None = typer.Option(None, "--transcript", "-t", help="Path to a single session JSONL"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Ingest a single session file.
 
