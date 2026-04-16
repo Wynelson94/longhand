@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longhand"
-version = "0.5.7"
+version = "0.5.8"
 description = "Persistent local memory for Claude Code. Total recall from your session files — no API calls, no summaries, no AI deciding what matters."
 readme = "README.md"
 license = { text = "MIT" }
