@@ -3,7 +3,7 @@
 # Longhand
 
 [![Longhand MCP server](https://glama.ai/mcp/servers/Wynelson94/longhand/badges/score.svg)](https://glama.ai/mcp/servers/Wynelson94/longhand)
-[![PyPI downloads](https://img.shields.io/pypi/dm/longhand?label=PyPI%20downloads&color=blue)](https://pypi.org/project/longhand/)
+[![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)
