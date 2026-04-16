@@ -52,15 +52,30 @@ def _format_event(row: dict[str, Any], content_chars: int = 1500) -> dict[str, A
     }
 
 
-def _truncate_output(text: str, max_chars: int) -> str:
-    """Cap output size and append a pagination hint if truncated."""
+def _truncate_output(text: str, max_chars: int, hint: str | None = None) -> str:
+    """Cap output size and append a tool-specific pagination hint if truncated.
+
+    `hint` names the parameters the emitting tool actually accepts — callers
+    pass their own string so the suggestion matches the tool's surface.
+    """
     if max_chars <= 0 or len(text) <= max_chars:
         return text
+    hint_text = hint or "narrow your query"
     return text[:max_chars] + (
-        "\n\n[... truncated at "
-        + str(max_chars)
-        + " chars. Use offset/limit, tail, or narrower filters to paginate.]"
+        f"\n\n[... truncated at {max_chars} chars. {hint_text}]"
     )
+
+
+# Tool-specific pagination hints — each names the params that actually exist
+# on the tool's surface so the user/agent can follow the hint literally.
+_HINT_SEARCH = "Use a smaller `limit` or add filters (session_id, tool_name, file_path_contains)."
+_HINT_SEARCH_IN_CONTEXT = "Use a smaller `limit`, fewer `context_events`, or a narrower query."
+_HINT_LIST_SESSIONS = "Use a smaller `limit` or a `project` filter."
+_HINT_TIMELINE = "Use `offset`/`limit`, `tail` for the last N events, or `summary_only: true`."
+_HINT_LATEST = "Use a smaller `limit` or filter by `event_type`."
+_HINT_RECALL = "Use a smaller `max_episodes` or a more specific query."
+_HINT_GIT = "Use a smaller `limit` or filter by `operation_type`."
+_HINT_PROJECTS = "Use a smaller `limit`, a `keyword`, or a `category` filter."
 
 
 MAX_LIMIT = 1000
@@ -539,7 +554,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
 
     hits = hits[:limit]
     output = json.dumps(hits, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_SEARCH))]
 
 
 async def _tool_search_in_context(
@@ -581,11 +596,15 @@ async def _tool_search_in_context(
     if not windows:
         return [TextContent(type="text", text="Matches found but no sequence metadata available.")]
 
-    # Merge overlapping windows
+    # Merge strictly overlapping windows. We used to merge on adjacency
+    # (`<= seq_end + 1`) which collapsed unrelated matches separated by a
+    # single sequence step — the resulting blob spanned conversations that
+    # had nothing to do with each other. Strict overlap keeps each match's
+    # context coherent.
     windows.sort(key=lambda w: w["seq_start"])
     merged: list[dict[str, Any]] = []
     for w in windows:
-        if merged and w["seq_start"] <= merged[-1]["seq_end"] + 1:
+        if merged and w["seq_start"] <= merged[-1]["seq_end"]:
             merged[-1]["seq_end"] = max(merged[-1]["seq_end"], w["seq_end"])
             merged[-1]["match_event_ids"].append(w["match_event_id"])
         else:
@@ -636,7 +655,7 @@ async def _tool_search_in_context(
         "context_windows": results,
     }
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_SEARCH_IN_CONTEXT))]
 
 
 async def _tool_list_sessions(
@@ -647,7 +666,7 @@ async def _tool_list_sessions(
         limit=_limit(arguments.get("limit"), 20),
     )
     output = json.dumps(rows, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, 16000))]
+    return [TextContent(type="text", text=_truncate_output(output, 16000, _HINT_LIST_SESSIONS))]
 
 
 async def _tool_get_session_timeline(
@@ -713,7 +732,7 @@ async def _tool_get_session_timeline(
     payload = {"meta": meta, "events": formatted}
 
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_TIMELINE))]
 
 
 async def _tool_get_latest_events(
@@ -745,7 +764,7 @@ async def _tool_get_latest_events(
         "events": formatted,
     }
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_LATEST))]
 
 
 async def _tool_replay_file(
@@ -837,12 +856,16 @@ async def _tool_recall(
         },
         "episodes": result.episodes,
         "segments": result.segments,
-        "artifacts": result.artifacts,
         "narrative": result.narrative,
     }
+    # Only include `artifacts` when populated — keeps the payload tight
+    # and makes the key's presence meaningful (indicates a fix event +
+    # linked file state were reconstructed for the top episode).
+    if result.artifacts:
+        payload["artifacts"] = result.artifacts
     max_chars = _max_chars(arguments.get("max_chars"), 16000)
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_RECALL))]
 
 
 async def _tool_recall_project_status(
@@ -903,7 +926,7 @@ async def _tool_recall_project_status(
     }
     max_chars = _max_chars(arguments.get("max_chars"), 16000)
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_RECALL))]
 
 
 async def _tool_match_project(
@@ -1001,7 +1024,7 @@ async def _tool_get_session_commits(
     )
     max_chars = _max_chars(arguments.get("max_chars"), 12000)
     output = json.dumps(ops, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_GIT))]
 
 
 async def _tool_find_commits(
@@ -1018,7 +1041,7 @@ async def _tool_find_commits(
     )
     max_chars = _max_chars(arguments.get("max_chars"), 12000)
     output = json.dumps(ops, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars))]
+    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_GIT))]
 
 
 async def _tool_list_projects(
@@ -1035,7 +1058,7 @@ async def _tool_list_projects(
         output = json.dumps(
             [_format_project_compact(r) for r in rows], indent=2, default=str
         )
-    return [TextContent(type="text", text=_truncate_output(output, 16000))]
+    return [TextContent(type="text", text=_truncate_output(output, 16000, _HINT_PROJECTS))]
 
 
 async def _tool_get_project_timeline(

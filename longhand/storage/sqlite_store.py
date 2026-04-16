@@ -331,7 +331,13 @@ class SQLiteStore:
         has_error: bool | None = None,
         limit: int = 500,
         offset: int = 0,
+        dedup_suffixes: bool = True,
     ) -> list[dict[str, Any]]:
+        """Return events with optional filters. When `dedup_suffixes` is
+        True (default), collision-resolution duplicates produced by the
+        parser (event_id containing `#`) are hidden — users only see the
+        primary row per logical event.
+        """
         with self.connect() as conn:
             conditions: list[str] = []
             params: list[Any] = []
@@ -356,6 +362,8 @@ class SQLiteStore:
             if has_error is not None:
                 conditions.append("COALESCE(error_detected, 0) = ?")
                 params.append(1 if has_error else 0)
+            if dedup_suffixes:
+                conditions.append("event_id NOT LIKE '%#%'")
 
             query = "SELECT * FROM events"
             if conditions:
@@ -392,12 +400,24 @@ class SQLiteStore:
         session_id: str,
         seq_start: int,
         seq_end: int,
+        dedup_suffixes: bool = True,
     ) -> list[dict[str, Any]]:
-        """Get events within a sequence number range for a session."""
+        """Get events within a sequence number range for a session.
+
+        `dedup_suffixes=True` (default) hides parser collision duplicates
+        (event_id containing `#`) — otherwise a context window fetched
+        with `seq_start=0, seq_end=5` returns 12+ events instead of 6
+        when streaming-chunk collisions exist.
+        """
         with self.connect() as conn:
-            rows = conn.execute(
+            query = (
                 "SELECT * FROM events WHERE session_id = ? AND sequence BETWEEN ? AND ? "
-                "ORDER BY sequence ASC",
+            )
+            if dedup_suffixes:
+                query += "AND event_id NOT LIKE '%#%' "
+            query += "ORDER BY sequence ASC"
+            rows = conn.execute(
+                query,
                 (session_id, seq_start, seq_end),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -407,18 +427,24 @@ class SQLiteStore:
         session_id: str,
         limit: int = 10,
         event_type: EventType | str | None = None,
+        dedup_suffixes: bool = True,
     ) -> list[dict[str, Any]]:
         """Return the N most recent events in a session, ordered by sequence DESC.
 
         Distinct from semantic `search` (which ranks by similarity) and
         `get_session_timeline` (which returns events in ascending order).
         Use this for "what was the latest X" questions.
+
+        `dedup_suffixes=True` (default) hides parser collision duplicates
+        (event_id containing `#`).
         """
         query = "SELECT * FROM events WHERE session_id = ?"
         params: list[Any] = [session_id]
         if event_type:
             query += " AND event_type = ?"
             params.append(event_type.value if isinstance(event_type, EventType) else event_type)
+        if dedup_suffixes:
+            query += " AND event_id NOT LIKE '%#%'"
         query += " ORDER BY sequence DESC LIMIT ?"
         params.append(limit)
         with self.connect() as conn:
