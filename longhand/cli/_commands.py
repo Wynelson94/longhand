@@ -160,6 +160,10 @@ def setup(
     console.print("\n[bold green]→ Setup complete.[/bold green]")
     console.print("Try: [cyan]longhand recall \"what was I working on\"[/cyan]")
     console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
+    console.print(
+        "\n[dim]If Longhand earns its keep, a star helps others find it: "
+        "[/dim][cyan]https://github.com/Wynelson94/longhand[/cyan]"
+    )
 
 
 # -----------------------------------------------------------------------------

@@ -279,8 +279,18 @@ class JSONLParser:
                     **common,
                 ))
             else:
-                # Plain user text message
-                text = block.get("text", "") if block_type == "text" else json.dumps(block)
+                # Plain user text message. Non-text blocks (images, any future
+                # non-text type) are replaced with a semantic placeholder rather
+                # than serialized as JSON — previously the full block was
+                # json.dumps'd, which embedded base64 image payloads into the
+                # event content and leaked them into segment keywords.
+                if block_type == "text":
+                    text = block.get("text", "")
+                elif block_type == "image":
+                    media_type = (block.get("source") or {}).get("media_type", "image")
+                    text = f"[image: {media_type}]"
+                else:
+                    text = f"[{block_type}]" if block_type else ""
                 events.append(Event(
                     event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
                     event_type=EventType.USER_MESSAGE,

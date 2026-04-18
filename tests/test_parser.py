@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from longhand.parser import JSONLParser
 from longhand.types import EventType, FileOperation
 
@@ -108,3 +110,50 @@ def test_raw_is_preserved(sample_session_file):
         # Non-snapshot events should have a type field in the raw entry
         if e.event_type != EventType.FILE_SNAPSHOT.value:
             assert "type" in e.raw
+
+
+def test_user_image_block_is_replaced_with_placeholder(tmp_path):
+    """User messages with pasted images must not leak base64 into event content.
+
+    Prior to v0.5.11 the parser json.dumps'd any non-text user block, which
+    embedded the full base64 payload into the event content. That payload then
+    flowed into segment summaries and polluted keyword extraction with random
+    alphanumeric tokens from the binary data.
+    """
+    fake_base64 = "A" * 500  # stand-in for a real JPEG payload
+    entries = [
+        {
+            "type": "user",
+            "uuid": "user-with-image",
+            "sessionId": "img-session",
+            "timestamp": "2026-04-17T00:00:00Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "here's a screenshot"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": fake_base64,
+                        },
+                    },
+                ],
+            },
+        },
+    ]
+    jsonl_path = tmp_path / "image-session.jsonl"
+    jsonl_path.write_text("\n".join(json.dumps(e) for e in entries))
+
+    parser = JSONLParser(jsonl_path)
+    events = [e for e in parser.parse_events() if e.event_type == EventType.USER_MESSAGE.value]
+
+    # Expect two events: the text block and the image placeholder.
+    contents = [e.content for e in events]
+    assert "here's a screenshot" in contents
+    assert "[image: image/jpeg]" in contents
+    # The base64 payload must not appear anywhere.
+    joined = " ".join(contents)
+    assert fake_base64 not in joined
+    assert "base64" not in joined
