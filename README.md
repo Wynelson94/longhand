@@ -32,7 +32,7 @@ longhand reanalyze    # ~1 min per 100 sessions, idempotent, safe to re-run
 
 Without `reanalyze`, episodes stored before the upgrade keep their old thin summaries and semantic recall returns weaker matches on that history. New sessions are unaffected.
 
-> *Status: v0.5.10 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 170 unit tests passing.*
+> *Status: v0.5.11 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 170 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
