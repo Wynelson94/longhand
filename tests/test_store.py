@@ -99,12 +99,12 @@ def test_batched_embeddings_match_per_item(tmp_path):
     current (batched) code path, one via the legacy per-item path. The IDs
     materialized in each collection must match exactly.
     """
+    # Inline imports to keep this test self-contained; ruff I001 wants
+    # stdlib first, then local.
+    import json
+
     from longhand.storage import LonghandStore
     from longhand.storage.store import _build_episode_text
-
-    # Build a realistic-enough in-memory session by reusing multi_edit fixture
-    # inline — keeps the test self-contained.
-    import json
 
     session_path = tmp_path / "batch-test.jsonl"
     entries = [
