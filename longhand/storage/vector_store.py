@@ -306,6 +306,40 @@ class VectorStore:
             metadatas=[metadata],
         )
 
+    def add_segment_embeddings_batch(self, items: list[dict[str, Any]]) -> int:
+        """Upsert multiple segment embeddings in one ONNX batch.
+
+        Each item: ``{"segment_id": str, "text": str, "metadata": dict}``.
+        Items with empty or whitespace-only text are dropped. Chunked at 500
+        for Chroma stability. Returns the number of embeddings upserted.
+        """
+        if not items:
+            return 0
+
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for item in items:
+            text = item.get("text") or ""
+            if not text.strip():
+                continue
+            ids.append(item["segment_id"])
+            documents.append(text[:MAX_EMBED_CHARS])
+            metadatas.append(item["metadata"])
+
+        if not ids:
+            return 0
+
+        added = 0
+        for i in range(0, len(ids), 500):
+            self.segments_collection.upsert(
+                ids=ids[i : i + 500],
+                documents=documents[i : i + 500],
+                metadatas=metadatas[i : i + 500],
+            )
+            added += len(ids[i : i + 500])
+        return added
+
     def search_segments(
         self,
         query: str,
@@ -379,6 +413,40 @@ class VectorStore:
             documents=[text[:MAX_EMBED_CHARS]],
             metadatas=[metadata],
         )
+
+    def add_episode_embeddings_batch(self, items: list[dict[str, Any]]) -> int:
+        """Upsert multiple problem→fix episode embeddings in one ONNX batch.
+
+        Each item: ``{"episode_id": str, "text": str, "metadata": dict}``.
+        Items with empty or whitespace-only text are dropped. Chunked at 500
+        for Chroma stability. Returns the number of embeddings upserted.
+        """
+        if not items:
+            return 0
+
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for item in items:
+            text = item.get("text") or ""
+            if not text.strip():
+                continue
+            ids.append(item["episode_id"])
+            documents.append(text[:MAX_EMBED_CHARS])
+            metadatas.append(item["metadata"])
+
+        if not ids:
+            return 0
+
+        added = 0
+        for i in range(0, len(ids), 500):
+            self.episodes_collection.upsert(
+                ids=ids[i : i + 500],
+                documents=documents[i : i + 500],
+                metadatas=metadatas[i : i + 500],
+            )
+            added += len(ids[i : i + 500])
+        return added
 
     def search_episodes(
         self,

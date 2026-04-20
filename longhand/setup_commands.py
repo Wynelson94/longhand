@@ -424,10 +424,17 @@ def mcp_uninstall() -> None:
 
 # ─── Ingest single session (for hook) ──────────────────────────────────────
 
-def ingest_single_session(transcript: str, data_dir: str | None = None) -> None:
-    """Ingest a single Claude Code JSONL file with full analysis.
+def ingest_single_session(
+    transcript: str,
+    data_dir: str | None = None,
+    run_analysis: bool = True,
+) -> None:
+    """Ingest a single Claude Code JSONL file.
 
-    Called by the SessionEnd hook. Non-blocking, fast (~1-2s).
+    Called by the SessionEnd hook. Non-blocking, fast (~1-2s) when analysis
+    runs; even faster when skipped. Pass ``run_analysis=False`` to populate
+    SQLite only (no episodes, segments, or vectors). Power users can defer
+    the analysis pass via ``longhand reanalyze``.
     """
     path = Path(transcript).expanduser()
     if not path.exists():
@@ -442,7 +449,7 @@ def ingest_single_session(transcript: str, data_dir: str | None = None) -> None:
             console.print(f"[yellow]No events in {path.name}[/yellow]")
             return
         session = parser.build_session(events)
-        result = store.ingest_session(session, events, run_analysis=True)
+        result = store.ingest_session(session, events, run_analysis=run_analysis)
         console.print(
             f"[green]✓[/green] Ingested {session.session_id[:8]} — "
             f"{result['events_stored']} events, "

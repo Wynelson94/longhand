@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-170%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 
 **Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
@@ -32,7 +32,16 @@ longhand reanalyze    # ~1 min per 100 sessions, idempotent, safe to re-run
 
 Without `reanalyze`, episodes stored before the upgrade keep their old thin summaries and semantic recall returns weaker matches on that history. New sessions are unaffected.
 
-> *Status: v0.5.11 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 170 unit tests passing.*
+**Large history? (>1 GB of `~/.claude/projects`)** Expect the first-time backfill to take 10–30 minutes on an M-class Mac — most of that wall time is the embedding model running on all your cores (which is why you'll see triple-digit CPU%; that's ONNX doing its job, not a hang). To get a working store faster, use the fast-path:
+
+```bash
+longhand setup --skip-analysis   # SQLite only; works in ~1 min for multi-GB corpora
+longhand reanalyze               # fill in episodes + vectors whenever, safe to background
+```
+
+Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `reanalyze` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
+
+> *Status: v0.5.12 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 173 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -429,7 +438,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-170 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+173 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 

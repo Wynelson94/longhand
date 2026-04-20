@@ -81,6 +81,15 @@ def setup(
     skip_ingest: bool = typer.Option(False, "--skip-ingest", help="Skip backfilling existing sessions"),
     skip_prompt_hook: bool = typer.Option(False, "--skip-prompt-hook", help="Skip auto-context injection hook"),
     skip_mcp: bool = typer.Option(False, "--skip-mcp", help="Skip MCP server install"),
+    skip_analysis: bool = typer.Option(
+        False,
+        "--skip-analysis",
+        help=(
+            "Skip episodes, segments, and vector embeddings during the backfill "
+            "pass. Populates SQLite only — fast path for very large corpora. "
+            "Run `longhand reanalyze` later to fill in the vectors."
+        ),
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """One-command setup: ingest existing sessions, install hooks, configure MCP.
@@ -94,6 +103,10 @@ def setup(
       - longhand doctor          (verify everything)
 
     Takes ~2 minutes on a laptop with a year of sessions. Safe to re-run.
+
+    For huge histories (>1GB of ~/.claude/projects), pass ``--skip-analysis``
+    to get a working SQLite store in under a minute and defer embeddings to
+    a later ``longhand reanalyze`` run.
     """
     console.print("[bold cyan]→ Longhand setup[/bold cyan]\n")
 
@@ -101,7 +114,12 @@ def setup(
 
     # 1. Ingest existing history
     if not skip_ingest:
-        console.print("[bold]1/5[/bold] Ingesting existing Claude Code sessions...")
+        label = (
+            "Ingesting existing Claude Code sessions (SQLite only, --skip-analysis)..."
+            if skip_analysis
+            else "Ingesting existing Claude Code sessions..."
+        )
+        console.print(f"[bold]1/5[/bold] {label}")
         try:
             target = Path.home() / ".claude" / "projects"
             if target.exists():
@@ -109,13 +127,21 @@ def setup(
                 ingested = 0
                 for idx, session_path in enumerate(sessions):
                     try:
-                        _ingest_single(str(session_path), data_dir)
+                        _ingest_single(
+                            str(session_path),
+                            data_dir,
+                            run_analysis=not skip_analysis,
+                        )
                         ingested += 1
                     except Exception:
                         pass
                     if idx > 0 and idx % 20 == 0:
                         console.print(f"   {idx}/{len(sessions)}...")
                 console.print(f"[green]   ✓[/green] Ingested {ingested} session(s)")
+                if skip_analysis:
+                    console.print(
+                        "   [dim]Run `longhand reanalyze` to populate episodes/segments/vectors.[/dim]"
+                    )
             else:
                 console.print(f"[yellow]   ⚠ No Claude Code history found at {target}[/yellow]")
         except Exception as e:
@@ -179,8 +205,36 @@ def ingest(
     data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     force: bool = typer.Option(False, "--force", help="Re-ingest already-indexed files"),
     limit: int = typer.Option(0, "--limit", help="Max number of sessions to ingest (0 = all)"),
+    skip_analysis: bool = typer.Option(
+        False,
+        "--skip-analysis",
+        help=(
+            "Populate SQLite only — skip episodes, segments, and vector "
+            "embeddings. Fast path for huge corpora. Run `longhand reanalyze` "
+            "afterwards to fill in the vectors."
+        ),
+    ),
 ):
-    """Ingest Claude Code session JSONL files into the Longhand store."""
+    """Ingest Claude Code session JSONL files into the Longhand store.
+
+    By default every session is indexed and analyzed: SQLite rows plus
+    vector embeddings for events, sessions, projects, segments, and
+    problem→fix episodes. Semantic recall works immediately.
+
+    Pass ``--skip-analysis`` to populate SQLite only. Exact-text search,
+    file history, and timelines all still work; semantic ``recall`` needs
+    ``longhand reanalyze`` to run afterwards. Useful when the first-time
+    backfill of a multi-GB corpus would otherwise take a long time.
+    """
+    from rich.progress import (
+        BarColumn,
+        MofNCompleteColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
     store = _get_store(data_dir)
 
     # Claim the ingest lock so on-the-fly fallback callers can see that
@@ -217,7 +271,8 @@ def ingest(
     if limit > 0:
         files = files[:limit]
 
-    console.print(f"[cyan]Found {len(files)} session file(s)[/cyan]")
+    suffix = " (SQLite only, --skip-analysis)" if skip_analysis else ""
+    console.print(f"[cyan]Found {len(files)} session file(s){suffix}[/cyan]")
 
     ingested = 0
     skipped = 0
@@ -225,32 +280,44 @@ def ingest(
     errors = 0
 
     try:
-        for file in files:
-            try:
-                file_size = file.stat().st_size
-                if not force and store.sqlite.already_ingested(str(file), file_size):
-                    skipped += 1
-                    continue
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Ingesting", total=len(files))
+            for file in files:
+                progress.update(task, description=f"Ingesting [dim]{file.name[:40]}[/dim]")
+                try:
+                    file_size = file.stat().st_size
+                    if not force and store.sqlite.already_ingested(str(file), file_size):
+                        skipped += 1
+                        progress.advance(task)
+                        continue
 
-                parser = JSONLParser(file)
-                events = list(parser.parse_events())
-                if not events:
-                    skipped += 1
-                    continue
+                    parser = JSONLParser(file)
+                    events = list(parser.parse_events())
+                    if not events:
+                        skipped += 1
+                        progress.advance(task)
+                        continue
 
-                session = parser.build_session(events)
-                result = store.ingest_session(session, events)
-                events_total += result["events_stored"]
-                ingested += 1
-
-                console.print(
-                    f"  [green]✓[/green] {session.session_id[:8]} "
-                    f"[dim]{len(events)} events[/dim] "
-                    f"[dim]{session.project_path or '—'}[/dim]"
-                )
-            except Exception as e:
-                errors += 1
-                console.print(f"  [red]✗[/red] {file.name}: {e}")
+                    session = parser.build_session(events)
+                    result = store.ingest_session(
+                        session, events, run_analysis=not skip_analysis
+                    )
+                    events_total += result["events_stored"]
+                    ingested += 1
+                except Exception as e:
+                    errors += 1
+                    progress.console.print(f"  [red]✗[/red] {file.name}: {e}")
+                finally:
+                    progress.advance(task)
 
         console.print()
         console.print(
@@ -258,6 +325,12 @@ def ingest(
             f"[bold]{events_total}[/bold] events "
             f"([dim]{skipped} skipped, {errors} errors[/dim])"
         )
+        if skip_analysis and ingested > 0:
+            console.print(
+                "\n[dim]Analysis skipped.[/dim] "
+                "Run [cyan]longhand reanalyze[/cyan] to populate episodes, "
+                "segments, and semantic recall vectors."
+            )
     finally:
         release_ingest_lock(store)
 

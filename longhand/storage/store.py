@@ -143,23 +143,26 @@ class LonghandStore:
         # file edit) stay in SQLite for forensic access via find_episodes,
         # patterns, recap, and export — but they clutter the vector space
         # with thin snippets of raw error text, so we skip embedding them.
+        # Collect first, then batch-upsert so ONNX can embed in one pass.
+        episode_items: list[dict] = []
         for ep in episodes:
             if not ep.get("fix_event_id"):
                 continue
             text = _build_episode_text(ep)
             if not text:
                 continue
-            self.vectors.add_episode_embedding(
-                episode_id=ep["episode_id"],
-                text=text,
-                metadata={
+            episode_items.append({
+                "episode_id": ep["episode_id"],
+                "text": text,
+                "metadata": {
                     "session_id": session.session_id,
                     "project_id": project["project_id"] or "",
                     "ended_at": ep["ended_at"],
                     "status": ep.get("status", "unresolved"),
                     "has_fix": True,
                 },
-            )
+            })
+        self.vectors.add_episode_embeddings_batch(episode_items)
 
         # 3b. Conversation segment extraction
         segments = extract_segments(
@@ -169,19 +172,22 @@ class LonghandStore:
         )
         segments_stored = self.sqlite.insert_segments(segments)
 
-        # 3c. Segment embeddings
-        for seg in segments:
-            self.vectors.add_segment_embedding(
-                segment_id=seg["segment_id"],
-                text=seg["summary"],
-                metadata={
+        # 3c. Segment embeddings — batched for the same reason as 3a.
+        segment_items = [
+            {
+                "segment_id": seg["segment_id"],
+                "text": seg["summary"],
+                "metadata": {
                     "session_id": session.session_id,
                     "project_id": project["project_id"] or "",
                     "segment_type": seg.get("segment_type", "discussion"),
                     "started_at": seg["started_at"],
                     "ended_at": seg["ended_at"],
                 },
-            )
+            }
+            for seg in segments
+        ]
+        self.vectors.add_segment_embeddings_batch(segment_items)
 
         # 4. Session summary embedding
         session_text = build_session_text(session, events, outcome, project)
@@ -266,33 +272,43 @@ class LonghandStore:
         if total == 0:
             return 0
 
-        embedded = 0
+        # Skip fixless episodes — they stay in SQLite but aren't embedded.
+        # Keeps vector recall focused on episodes where there's an actual
+        # fix to retrieve.
+        items: list[dict] = []
         for ep in episodes:
-            # Skip fixless episodes — they stay in SQLite but aren't
-            # embedded. Keeps vector recall focused on episodes where
-            # there's an actual fix to retrieve.
             if not ep.get("fix_event_id"):
                 continue
             text = _build_episode_text(ep)
             if not text:
                 continue
-            self.vectors.add_episode_embedding(
-                episode_id=ep["episode_id"],
-                text=text,
-                metadata={
+            items.append({
+                "episode_id": ep["episode_id"],
+                "text": text,
+                "metadata": {
                     "session_id": ep.get("session_id") or "",
                     "project_id": ep.get("project_id") or "",
                     "ended_at": ep.get("ended_at") or "",
                     "status": ep.get("status", "unresolved"),
                     "has_fix": True,
                 },
-            )
-            embedded += 1
-            if progress and embedded % 25 == 0:
+            })
+
+        if not items:
+            if progress:
+                progress(0, total)
+            return 0
+
+        embedded = 0
+        # ONNX embeds far more efficiently when given items in one call,
+        # but callers want incremental progress. Balance the two with a
+        # 500-item reporting chunk that also matches the Chroma upsert chunk.
+        chunk = 500
+        for i in range(0, len(items), chunk):
+            embedded += self.vectors.add_episode_embeddings_batch(items[i : i + chunk])
+            if progress:
                 progress(embedded, total)
 
-        if progress:
-            progress(embedded, total)
         return embedded
 
     def ensure_episode_embeddings(self) -> int:
