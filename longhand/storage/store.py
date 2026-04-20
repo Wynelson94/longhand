@@ -20,7 +20,7 @@ from longhand.analysis.session_summary_embedding import (
     build_session_text,
 )
 from longhand.storage.sqlite_store import SQLiteStore
-from longhand.storage.vector_store import VectorStore
+from longhand.storage.vector_store import CHROMA_BATCH_SIZE, VectorStore
 from longhand.types import Event, Session
 
 DEFAULT_DATA_DIR = Path.home() / ".longhand"
@@ -162,7 +162,7 @@ class LonghandStore:
                     "has_fix": True,
                 },
             })
-        self.vectors.add_episode_embeddings_batch(episode_items)
+        episodes_embedded = self.vectors.add_episode_embeddings_batch(episode_items)
 
         # 3b. Conversation segment extraction
         segments = extract_segments(
@@ -187,7 +187,7 @@ class LonghandStore:
             }
             for seg in segments
         ]
-        self.vectors.add_segment_embeddings_batch(segment_items)
+        segments_embedded = self.vectors.add_segment_embeddings_batch(segment_items)
 
         # 4. Session summary embedding
         session_text = build_session_text(session, events, outcome, project)
@@ -202,7 +202,9 @@ class LonghandStore:
             "project_id": project["project_id"],
             "outcome": outcome["outcome"],
             "episodes": episodes_stored,
+            "episodes_embedded": episodes_embedded,
             "segments": segments_stored,
+            "segments_embedded": segments_embedded,
         }
 
     @staticmethod
@@ -301,11 +303,13 @@ class LonghandStore:
 
         embedded = 0
         # ONNX embeds far more efficiently when given items in one call,
-        # but callers want incremental progress. Balance the two with a
-        # 500-item reporting chunk that also matches the Chroma upsert chunk.
-        chunk = 500
-        for i in range(0, len(items), chunk):
-            embedded += self.vectors.add_episode_embeddings_batch(items[i : i + chunk])
+        # but callers want incremental progress. Report at the same chunk
+        # size Chroma upserts at, so each progress tick corresponds to one
+        # real flush of embeddings.
+        for i in range(0, len(items), CHROMA_BATCH_SIZE):
+            embedded += self.vectors.add_episode_embeddings_batch(
+                items[i : i + CHROMA_BATCH_SIZE]
+            )
             if progress:
                 progress(embedded, total)
 

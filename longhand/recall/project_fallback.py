@@ -136,14 +136,17 @@ def trigger_background_ingest(store: LonghandStore) -> bool:
     log_file = logs / f"background-ingest-{today}.log"
 
     try:
-        log_fh = log_file.open("a")
-        subprocess.Popen(
-            [sys.executable, "-m", "longhand.cli", "ingest"],
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
+        # Open inside a `with` so the parent closes its FD as soon as Popen
+        # duplicates it into the child. Without this, every fallback-trigger
+        # leaks a file descriptor on the calling process.
+        with log_file.open("a") as log_fh:
+            subprocess.Popen(
+                [sys.executable, "-m", "longhand.cli", "ingest"],
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
         return True
     except Exception:
         return False

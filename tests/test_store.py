@@ -171,9 +171,16 @@ def test_batched_embeddings_match_per_item(tmp_path):
 
     # Batched path (current production code).
     batched = LonghandStore(data_dir=tmp_path / "batched")
-    batched.ingest_session(session, events, run_analysis=True)
+    batched_result = batched.ingest_session(session, events, run_analysis=True)
     batched_episode_ids = set(batched.vectors.episodes_collection.get()["ids"])
     batched_segment_ids = set(batched.vectors.segments_collection.get()["ids"])
+
+    # v0.5.13 — the ingest result must expose embedded-vector counts so
+    # callers can tell how many vectors actually landed in Chroma.
+    assert "episodes_embedded" in batched_result
+    assert "segments_embedded" in batched_result
+    assert batched_result["episodes_embedded"] == len(batched_episode_ids)
+    assert batched_result["segments_embedded"] == len(batched_segment_ids)
 
     # Per-item path: re-run analysis but call the singular methods directly
     # to mirror pre-v0.5.12 behavior.
@@ -237,3 +244,22 @@ def test_batched_embeddings_match_per_item(tmp_path):
 
     assert batched_episode_ids == per_item_episode_ids
     assert batched_segment_ids == per_item_segment_ids
+
+
+def test_batched_methods_return_upserted_count(temp_store):
+    """`add_*_embeddings_batch` returns the count of embeddings actually upserted,
+    skipping items with empty/whitespace text."""
+    items = [
+        {"episode_id": "ep-1", "text": "real problem and fix", "metadata": {"has_fix": True}},
+        {"episode_id": "ep-2", "text": "", "metadata": {"has_fix": True}},
+        {"episode_id": "ep-3", "text": "   ", "metadata": {"has_fix": True}},
+        {"episode_id": "ep-4", "text": "another real fix", "metadata": {"has_fix": True}},
+    ]
+    assert temp_store.vectors.add_episode_embeddings_batch(items) == 2
+    assert temp_store.vectors.add_episode_embeddings_batch([]) == 0
+
+    seg_items = [
+        {"segment_id": "s-1", "text": "topic discussion", "metadata": {"segment_type": "discussion"}},
+        {"segment_id": "s-2", "text": "", "metadata": {"segment_type": "discussion"}},
+    ]
+    assert temp_store.vectors.add_segment_embeddings_batch(seg_items) == 1

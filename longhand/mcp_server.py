@@ -29,6 +29,7 @@ except ImportError:
     )
     sys.exit(1)
 
+from longhand.cli.helpers import _resolve_prefix
 from longhand.recall import recall as recall_pipeline
 from longhand.recall.project_match import match_projects
 from longhand.recall.recall_pipeline import recall_project_status
@@ -481,14 +482,6 @@ async def list_tools() -> list[Tool]:
     ]
 
 
-def _resolve_session_prefix(store: LonghandStore, prefix: str) -> str | None:
-    rows = store.sqlite.list_sessions(limit=1000)
-    for row in rows:
-        if row["session_id"].startswith(prefix):
-            return row["session_id"]
-    return None
-
-
 # ─── Tool handlers ──────────────────────────────────────────────────────────
 #
 # Each tool is a module-level async function taking (store, arguments) and
@@ -503,7 +496,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     # Resolve session_id prefix if provided
     search_session_id = None
     if arguments.get("session_id"):
-        search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+        search_session_id = _resolve_prefix(store, arguments["session_id"])
 
     # Resolve project_name → set of session_ids for post-filtering
     project_session_ids: set[str] | None = None
@@ -560,7 +553,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
 async def _tool_search_in_context(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
-    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")]
 
@@ -672,7 +665,7 @@ async def _tool_list_sessions(
 async def _tool_get_session_timeline(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
-    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
@@ -738,7 +731,7 @@ async def _tool_get_session_timeline(
 async def _tool_get_latest_events(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
-    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
@@ -770,7 +763,7 @@ async def _tool_get_latest_events(
 async def _tool_replay_file(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
-    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
@@ -803,7 +796,7 @@ async def _tool_get_file_history(
     engine = ReplayEngine(store.sqlite)
     full_session = None
     if arguments.get("session_id"):
-        full_session = _resolve_session_prefix(store, arguments["session_id"])
+        full_session = _resolve_prefix(store, arguments["session_id"])
     edits = engine.file_history(arguments["file_path"], session_id=full_session)
     formatted = [
         {
@@ -1014,7 +1007,7 @@ async def _tool_get_episode(
 async def _tool_get_session_commits(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
-    full_id = _resolve_session_prefix(store, arguments["session_id"])
+    full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
     ops = store.sqlite.get_git_operations(
@@ -1032,7 +1025,7 @@ async def _tool_find_commits(
 ) -> list[TextContent]:
     search_session_id = None
     if arguments.get("session_id"):
-        search_session_id = _resolve_session_prefix(store, arguments["session_id"])
+        search_session_id = _resolve_prefix(store, arguments["session_id"])
     ops = store.sqlite.search_git_operations(
         query=arguments["query"],
         session_id=search_session_id,

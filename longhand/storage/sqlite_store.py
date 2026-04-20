@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS events (
     file_operation TEXT,
     old_content TEXT,
     new_content TEXT,
+    error_detected INTEGER DEFAULT 0,
+    error_snippet TEXT,
     raw_json TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );

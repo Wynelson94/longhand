@@ -21,6 +21,11 @@ from longhand.types import Event, EventType
 # The full content is always retrievable from SQLite by event_id.
 MAX_EMBED_CHARS = 2000
 
+# Per-upsert batch size for Chroma. Chroma tolerates larger batches but 500
+# is the stable sweet spot: enough to amortize ONNX call overhead, small
+# enough to avoid memory spikes on low-RAM systems.
+CHROMA_BATCH_SIZE = 500
+
 
 class VectorStore:
     """ChromaDB wrapper for semantic search over Longhand events."""
@@ -99,12 +104,12 @@ class VectorStore:
         if not ids:
             return 0
 
-        # Chunk into batches of 500 for Chroma stability
+        # Chunk into batches of CHROMA_BATCH_SIZE for Chroma stability.
         added = 0
-        for i in range(0, len(ids), 500):
-            batch_ids = ids[i : i + 500]
-            batch_docs = documents[i : i + 500]
-            batch_meta = metadatas[i : i + 500]
+        for i in range(0, len(ids), CHROMA_BATCH_SIZE):
+            batch_ids = ids[i : i + CHROMA_BATCH_SIZE]
+            batch_docs = documents[i : i + CHROMA_BATCH_SIZE]
+            batch_meta = metadatas[i : i + CHROMA_BATCH_SIZE]
             self.events_collection.upsert(
                 ids=batch_ids,
                 documents=batch_docs,
@@ -310,8 +315,9 @@ class VectorStore:
         """Upsert multiple segment embeddings in one ONNX batch.
 
         Each item: ``{"segment_id": str, "text": str, "metadata": dict}``.
-        Items with empty or whitespace-only text are dropped. Chunked at 500
-        for Chroma stability. Returns the number of embeddings upserted.
+        Items with empty or whitespace-only text are dropped. Chunked at
+        CHROMA_BATCH_SIZE for Chroma stability. Returns the number of
+        embeddings upserted.
         """
         if not items:
             return 0
@@ -331,13 +337,13 @@ class VectorStore:
             return 0
 
         added = 0
-        for i in range(0, len(ids), 500):
+        for i in range(0, len(ids), CHROMA_BATCH_SIZE):
             self.segments_collection.upsert(
-                ids=ids[i : i + 500],
-                documents=documents[i : i + 500],
-                metadatas=metadatas[i : i + 500],
+                ids=ids[i : i + CHROMA_BATCH_SIZE],
+                documents=documents[i : i + CHROMA_BATCH_SIZE],
+                metadatas=metadatas[i : i + CHROMA_BATCH_SIZE],
             )
-            added += len(ids[i : i + 500])
+            added += len(ids[i : i + CHROMA_BATCH_SIZE])
         return added
 
     def search_segments(
@@ -418,8 +424,9 @@ class VectorStore:
         """Upsert multiple problem→fix episode embeddings in one ONNX batch.
 
         Each item: ``{"episode_id": str, "text": str, "metadata": dict}``.
-        Items with empty or whitespace-only text are dropped. Chunked at 500
-        for Chroma stability. Returns the number of embeddings upserted.
+        Items with empty or whitespace-only text are dropped. Chunked at
+        CHROMA_BATCH_SIZE for Chroma stability. Returns the number of
+        embeddings upserted.
         """
         if not items:
             return 0
@@ -439,13 +446,13 @@ class VectorStore:
             return 0
 
         added = 0
-        for i in range(0, len(ids), 500):
+        for i in range(0, len(ids), CHROMA_BATCH_SIZE):
             self.episodes_collection.upsert(
-                ids=ids[i : i + 500],
-                documents=documents[i : i + 500],
-                metadatas=metadatas[i : i + 500],
+                ids=ids[i : i + CHROMA_BATCH_SIZE],
+                documents=documents[i : i + CHROMA_BATCH_SIZE],
+                metadatas=metadatas[i : i + CHROMA_BATCH_SIZE],
             )
-            added += len(ids[i : i + 500])
+            added += len(ids[i : i + CHROMA_BATCH_SIZE])
         return added
 
     def search_episodes(
