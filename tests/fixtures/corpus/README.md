@@ -85,6 +85,7 @@ If the canary passes pre-fix, the assertion is too loose — tighten it
 | `canary_recall_secondary_match.py` | Mixed-topic session loses its visibility in the narrative when a more focused session also matches. Real-world: `eef364a9` ("v0.8 inside v0.7.0 release notes draft", April 2026). |
 | `canary_project_inference_home_cd.py` | Session that launches in $HOME and `cd`s into a project mid-session was attributed to NULL, causing "No session history found" for projects that clearly had transcripts. Real-world: bsoi-mesh-kit invisible to recall_project_status (April 2026, fixed in v0.6.0). |
 | `canary_fix_summary_intent_prefix.py` | Extracted `fix_summary` started with literal "Intent:" label that leaked into every recall narrative. 100 of 204 episodes (49%) on the reference corpus had this. Fixed in v0.8 + a SQL migration cleans pre-existing rows. |
+| `canary_fix_summary_midcode_truncation.py` | `_compose_fix_summary` sliced old/new content with a hard `[:120]` byte cut, landing mid-token (e.g. `phoneNum'`, `family?:'`). Fixed in v0.8 with a whitespace-boundary truncation + visible `…` ellipsis. Forward-only — existing rows stay as-is until reingestion. |
 
 ## Sibling regression tests (different shape, same intent)
 

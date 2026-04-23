@@ -20,6 +20,27 @@ from longhand.types import Event
 # Events we consider "edits" (candidate fixes)
 _FIX_OPERATIONS = {"edit", "write", "multi_edit", "notebook_edit"}
 
+
+def _truncate_at_boundary(s: str, max_chars: int) -> str:
+    """Truncate `s` to at most `max_chars`, ending at a clean boundary.
+
+    Falls back to the last whitespace within the budget and appends `…` so
+    the truncation is visible. This avoids the `[:N]` problem where slicing
+    lands mid-token (mid-keyword, mid-attribute, mid-quote) — common in
+    real-corpus diff content where _NEW or _OLD are arbitrary code blobs.
+
+    If no whitespace exists in the budget window (rare — e.g. one long
+    string with no spaces), falls back to a hard cut + ellipsis.
+    """
+    if len(s) <= max_chars:
+        return s
+    truncated = s[:max_chars]
+    last_ws = max(truncated.rfind("\n"), truncated.rfind(" "), truncated.rfind("\t"))
+    # Only back off to whitespace if it doesn't lose more than half the budget
+    if last_ws >= max_chars // 2:
+        return truncated[:last_ws].rstrip() + "…"
+    return truncated.rstrip() + "…"
+
 # How many events to look back from a problem event for the anchoring user
 # message. Long Claude runs can emit hundreds of tool calls between user
 # turns, so the lookback needs to be generous. Capped to avoid scanning
@@ -412,9 +433,10 @@ def _compose_fix_summary(
         parts.append(intent_text[:intent_budget])
         budget -= intent_budget + 10
 
-    # Mechanical diff — existing format, grounded in real content
-    old_s = (fix_event.old_content or "")[:120]
-    new_s = (fix_event.new_content or "")[:120]
+    # Mechanical diff — existing format, grounded in real content. Truncate
+    # at a whitespace boundary with `…` so cuts don't land mid-token.
+    old_s = _truncate_at_boundary(fix_event.old_content or "", 120)
+    new_s = _truncate_at_boundary(fix_event.new_content or "", 120)
     fname = Path(fix_event.file_path or "").name if fix_event.file_path else "?"
     tool = fix_event.tool_name or "Edit"
     if old_s or new_s:
