@@ -23,14 +23,14 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-**Upgrading from 0.5.9?** This release enriches how episode summaries are extracted. Existing stores need a one-time rebuild:
+**Upgrading from 0.5.x?** v0.6.0 improves how sessions get attributed to projects — multi-project sessions (ones that `cd` between repos during one Claude Code run) now attribute to the project where most of the work happened instead of the first-event cwd. Existing data benefits from a one-time pass:
 
 ```bash
 pip install --upgrade longhand
-longhand reanalyze    # ~1 min per 100 sessions, idempotent, safe to re-run
+longhand reconcile --fix   # re-attribute existing sessions and catch any the hook missed
 ```
 
-Without `reanalyze`, episodes stored before the upgrade keep their old thin summaries and semantic recall returns weaker matches on that history. New sessions are unaffected.
+Or, if you're upgrading from 0.5.8 or earlier (pre-improved episode summaries), chain them: `longhand reconcile --fix && longhand reanalyze`. Both are idempotent.
 
 **Large history? (>1 GB of `~/.claude/projects`)** Expect the first-time backfill to take 10–30 minutes on an M-class Mac — most of that wall time is the embedding model running on all your cores (which is why you'll see triple-digit CPU%; that's ONNX doing its job, not a hang). To get a working store faster, use the fast-path:
 
@@ -41,7 +41,7 @@ longhand reanalyze               # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `reanalyze` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.5.13 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 107 real Claude Code sessions / 53,668 events / 665 git operations / 376 problem→fix episodes / 299 conversation segments across 37 inferred projects. 174 unit tests passing.*
+> *Status: v0.6.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 182 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 

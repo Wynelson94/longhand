@@ -209,6 +209,77 @@ def test_tool_recall_project_status_unknown(temp_store):
     assert "No project matched" in result[0].text
 
 
+def test_tool_recall_project_status_exposes_staleness(
+    sample_session_file, temp_store, tmp_path, monkeypatch
+):
+    """recall_project_status must surface disk↔DB drift.
+
+    When a JSONL exists on disk referencing the project but isn't in the
+    sessions table, `stale=True` with a reason string pointing at
+    `longhand reconcile --fix`.
+    """
+    import shutil
+
+    # Ingest one session so a project entity exists for "test-project".
+    _ingest(sample_session_file, temp_store)
+
+    # Copy the JSONL to a second path so on-disk count > indexed count.
+    second_copy = tmp_path / "second-session.jsonl"
+    shutil.copy(sample_session_file, second_copy)
+
+    # Point discover_sessions at both files — the second is on disk but NOT
+    # in the sessions table.
+    from longhand.recall import recall_pipeline
+
+    monkeypatch.setattr(
+        recall_pipeline,
+        "discover_sessions",
+        lambda *a, **kw: [sample_session_file, second_copy],
+    )
+
+    result = _call(
+        mcp_server._tool_recall_project_status,
+        temp_store,
+        {"project": "test-project"},
+    )
+    payload = _payload(result)
+
+    assert payload["session_count_indexed"] == 1
+    assert payload["session_count_on_disk"] == 2
+    assert payload["stale"] is True
+    assert payload["stale_reason"]
+    assert "reconcile" in payload["stale_reason"]
+    # Narrative should include the drift warning up front.
+    assert "⚠" in payload["narrative"] or "reconcile" in payload["narrative"]
+
+
+def test_tool_recall_project_status_not_stale_when_in_sync(
+    sample_session_file, temp_store, monkeypatch
+):
+    """When every on-disk JSONL for the project is ingested, stale=False."""
+    from longhand.recall import recall_pipeline
+
+    _ingest(sample_session_file, temp_store)
+
+    monkeypatch.setattr(
+        recall_pipeline,
+        "discover_sessions",
+        lambda *a, **kw: [sample_session_file],
+    )
+
+    result = _call(
+        mcp_server._tool_recall_project_status,
+        temp_store,
+        {"project": "test-project"},
+    )
+    payload = _payload(result)
+
+    assert payload["session_count_indexed"] == 1
+    assert payload["session_count_on_disk"] == 1
+    assert payload["stale"] is False
+    assert payload["stale_reason"] is None
+
+
 def test_tool_match_project(sample_session_file, temp_store):
     _ingest(sample_session_file, temp_store)
     result = _call(mcp_server._tool_match_project, temp_store, {"query": "project", "top_k": 3})

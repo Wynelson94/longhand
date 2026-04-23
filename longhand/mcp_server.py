@@ -916,6 +916,12 @@ async def _tool_recall_project_status(
         ],
         "last_outcome": status.last_outcome,
         "narrative": status.narrative,
+        "session_count_indexed": status.session_count_indexed,
+        "session_count_on_disk": status.session_count_on_disk,
+        "last_ingested_at": status.last_ingested_at_iso,
+        "last_transcript_mtime": status.last_transcript_mtime_iso,
+        "stale": status.stale,
+        "stale_reason": status.stale_reason,
     }
     max_chars = _max_chars(arguments.get("max_chars"), 16000)
     output = json.dumps(payload, indent=2, default=str)

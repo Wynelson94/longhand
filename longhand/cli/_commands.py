@@ -336,6 +336,109 @@ def ingest(
 
 
 # -----------------------------------------------------------------------------
+# RECONCILE — bridge disk↔DB drift
+# -----------------------------------------------------------------------------
+
+
+@app.command()
+def reconcile(
+    data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Re-ingest sessions that are missing or have NULL project_id",
+    ),
+):
+    """Reconcile session transcripts on disk against the sessions table.
+
+    Finds three buckets:
+    - Fully indexed (session row exists, project_id set)
+    - Ingested but project_id IS NULL (project inference failed — often because
+      Claude Code launched from $HOME so the transcript's first-event cwd
+      wasn't a project directory)
+    - Missing from sessions entirely (SessionEnd hook didn't fire, or ingest
+      was skipped)
+
+    By default, only prints a summary. Pass --fix to re-ingest the problem
+    buckets using the current project-inference logic.
+    """
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock,
+        release_ingest_lock,
+    )
+
+    store = _get_store(data_dir)
+
+    files = discover_sessions()
+    if not files:
+        console.print("[yellow]No session files found on disk.[/yellow]")
+        console.print("Default location: ~/.claude/projects")
+        return
+
+    with store.sqlite.connect() as conn:
+        rows = conn.execute(
+            "SELECT transcript_path, project_id FROM sessions"
+        ).fetchall()
+    indexed: dict[str, str | None] = {r[0]: r[1] for r in rows}
+
+    missing: list[Path] = []
+    null_project: list[Path] = []
+    fully_indexed = 0
+    for f in files:
+        state = indexed.get(str(f), "__not_found__")
+        if state == "__not_found__":
+            missing.append(f)
+        elif state is None:
+            null_project.append(f)
+        else:
+            fully_indexed += 1
+
+    console.print(f"[bold]On disk:[/bold] {len(files)} JSONL files")
+    console.print(f"  [green]{fully_indexed}[/green] fully indexed")
+    console.print(
+        f"  [yellow]{len(null_project)}[/yellow] ingested but project_id IS NULL"
+    )
+    console.print(f"  [red]{len(missing)}[/red] missing from sessions")
+
+    if not fix:
+        if missing or null_project:
+            console.print("\n[dim]Run with --fix to re-ingest.[/dim]")
+        return
+
+    to_process = missing + null_project
+    if not to_process:
+        console.print("\n[green]Nothing to fix.[/green]")
+        return
+
+    if not claim_ingest_lock(store):
+        console.print("[yellow]Another ingest is running — aborting reconcile.[/yellow]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[cyan]Re-ingesting {len(to_process)} file(s)...[/cyan]")
+    ingested = 0
+    errors = 0
+    try:
+        for f in to_process:
+            try:
+                parser = JSONLParser(f)
+                events = list(parser.parse_events())
+                if not events:
+                    continue
+                session = parser.build_session(events)
+                store.ingest_session(session, events, run_analysis=True)
+                ingested += 1
+            except Exception as e:
+                errors += 1
+                console.print(f"  [red]✗[/red] {f.name}: {e}")
+    finally:
+        release_ingest_lock(store)
+
+    console.print(
+        f"\n[bold]Re-ingested {ingested}[/bold] ([dim]{errors} errors[/dim])"
+    )
+
+
+# -----------------------------------------------------------------------------
 # SESSIONS
 # -----------------------------------------------------------------------------
 

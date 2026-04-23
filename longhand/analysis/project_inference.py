@@ -88,6 +88,17 @@ def _find_project_root(path: Path, max_walk: int = 8) -> Path:
     This collapses subdirectories of the same repo into one canonical project
     path. If no marker is found within `max_walk` levels, returns `path` as-is.
     """
+    root = find_project_root_strict(path, max_walk=max_walk)
+    return root if root is not None else path
+
+
+def find_project_root_strict(path: Path, max_walk: int = 8) -> Path | None:
+    """Walk up from `path` looking for a project marker; return None if none found.
+
+    Unlike `_find_project_root`, this returns None instead of falling back to
+    the input path. Callers that need to distinguish "real project" from
+    "arbitrary directory" should use this.
+    """
     current = path
     for _ in range(max_walk):
         try:
@@ -108,7 +119,7 @@ def _find_project_root(path: Path, max_walk: int = 8) -> Path:
             break
         current = parent
 
-    return path
+    return None
 
 
 def _canonicalize_path(path: str | None) -> str | None:

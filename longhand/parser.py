@@ -25,6 +25,67 @@ MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500MB per session file
 MAX_LINE_LENGTH = 50 * 1024 * 1024        # 50MB per JSONL line
 
 
+_MAX_UNIQUE_CWDS_SCANNED = 20
+
+
+def _pick_best_project_cwd(events: list[Event]) -> str | None:
+    """Pick the most-common cwd across events that resolves to a real project root.
+
+    Excludes $HOME (Claude Code's default launch dir when no project is open) and
+    any cwd that doesn't walk up to a project marker (.git, pyproject.toml, etc).
+    Returns None if no such cwd exists — caller should fall back.
+    """
+    from longhand.analysis.project_inference import find_project_root_strict
+
+    home_resolved: Path | None
+    try:
+        home_resolved = Path.home().resolve()
+    except (OSError, PermissionError):
+        home_resolved = None
+
+    # Memo cwd-string → resolved-project-root (or None). Bounded: stop resolving
+    # new cwds after _MAX_UNIQUE_CWDS_SCANNED, but keep counting occurrences of
+    # cwds we've already resolved.
+    resolved: dict[str, str | None] = {}
+    counts: Counter[str] = Counter()
+
+    for e in events:
+        cwd = e.cwd
+        if not cwd:
+            continue
+
+        if cwd not in resolved:
+            if len(resolved) >= _MAX_UNIQUE_CWDS_SCANNED:
+                continue
+            resolved[cwd] = _resolve_cwd_to_project(cwd, home_resolved, find_project_root_strict)
+
+        root = resolved[cwd]
+        if root is not None:
+            counts[root] += 1
+
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
+def _resolve_cwd_to_project(
+    cwd: str,
+    home_resolved: Path | None,
+    find_root: Any,
+) -> str | None:
+    """Resolve a cwd string to the project root it belongs to, or None."""
+    try:
+        p = Path(cwd).resolve()
+    except (OSError, PermissionError):
+        return None
+    if home_resolved is not None and p == home_resolved:
+        return None
+    if p.is_file():
+        p = p.parent
+    root = find_root(p)
+    return str(root) if root is not None else None
+
+
 FILE_EDIT_TOOLS = {
     "Edit": FileOperation.EDIT,
     "Write": FileOperation.WRITE,
@@ -454,8 +515,13 @@ class JSONLParser:
         first_real_cwd = next((e.cwd for e in events if e.cwd), None)
         first_real_branch = next((e.git_branch for e in events if e.git_branch), None)
 
+        # For multi-project sessions the first-event cwd is often the shell's
+        # launch dir (commonly $HOME), not where the work happened. Prefer the
+        # most-common non-home cwd that resolves to a real project root.
+        best_cwd = _pick_best_project_cwd(events) or first_real_cwd
+
         session_id = first_real_session or self.file_path.stem
-        project_path = first_real_cwd or str(self.file_path.parent)
+        project_path = best_cwd or str(self.file_path.parent)
         git_branch = first_real_branch
 
         # Ignore the epoch fallback when computing session boundaries
@@ -501,6 +567,11 @@ def discover_sessions(claude_projects_dir: str | Path | None = None) -> list[Pat
     """Discover all Claude Code session JSONL files in a projects directory.
 
     Defaults to `~/.claude/projects` if no directory is provided.
+
+    Only top-level session transcripts are returned. Subagent JSONLs (under
+    `*/subagents/`) and pytest temp-directory leftovers are filtered out —
+    they aren't independent sessions and shouldn't be treated as such by
+    ingestion or reconcile.
     """
     if claude_projects_dir is None:
         claude_projects_dir = Path.home() / ".claude" / "projects"
@@ -512,8 +583,16 @@ def discover_sessions(claude_projects_dir: str | Path | None = None) -> list[Pat
 
     sessions: list[Path] = []
     for jsonl in claude_projects_dir.rglob("*.jsonl"):
+        path_str = str(jsonl)
         # Skip internal plugin/skill files — they don't contain session events
-        if "skill-injections" in jsonl.name or "vercel-plugin" in str(jsonl):
+        if "skill-injections" in jsonl.name or "vercel-plugin" in path_str:
+            continue
+        # Subagent transcripts live under .../<session-id>/subagents/<id>.jsonl.
+        # They're referenced from the parent session's events, not standalone.
+        if "/subagents/" in path_str:
+            continue
+        # Pytest leaves behind JSONLs in tmp project dirs during test runs.
+        if "pytest-of-" in path_str:
             continue
         sessions.append(jsonl)
 

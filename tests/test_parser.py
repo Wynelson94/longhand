@@ -112,6 +112,113 @@ def test_raw_is_preserved(sample_session_file):
             assert "type" in e.raw
 
 
+def _write_multi_cwd_jsonl(
+    path, cwds: list[str], session_id: str = "multi-cwd-session"
+) -> None:
+    """Write a minimal JSONL where each entry uses a cwd from `cwds` in order."""
+    entries = []
+    for i, cwd in enumerate(cwds):
+        entries.append(
+            {
+                "type": "user",
+                "uuid": f"evt-{i}",
+                "sessionId": session_id,
+                "timestamp": f"2026-04-22T12:{i:02d}:00Z",
+                "cwd": cwd,
+                "message": {"role": "user", "content": f"hi from {cwd}"},
+            }
+        )
+    path.write_text("\n".join(json.dumps(e) for e in entries))
+
+
+def test_build_session_picks_mode_non_home_cwd(tmp_path, monkeypatch):
+    """A session that cd's between $HOME and a project dir should attribute to the project.
+
+    Previously `build_session` took the first-event cwd, which was $HOME when
+    Claude Code launched from the user's home dir. That caused project inference
+    to set project_id=NULL on real work sessions. Now we tally all event cwds,
+    filter out $HOME and non-project dirs, and pick the most-common remainder.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "home" / "Projects" / "real-project"
+    project.mkdir(parents=True)
+    (project / ".git").mkdir()  # marker so find_project_root_strict resolves it
+
+    monkeypatch.setenv("HOME", str(home))
+
+    jsonl_path = tmp_path / "session.jsonl"
+    # First event: home. Then 4 events in the project. One event elsewhere.
+    _write_multi_cwd_jsonl(
+        jsonl_path,
+        [
+            str(home),
+            str(project),
+            str(project),
+            str(project),
+            str(project),
+        ],
+    )
+
+    parser = JSONLParser(jsonl_path)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+
+    # cwd should be the project, not $HOME — despite first event being $HOME.
+    assert session.cwd == str(project)
+    assert session.project_path == str(project)
+
+
+def test_build_session_falls_back_to_first_cwd_when_no_project_marker(tmp_path, monkeypatch):
+    """If no cwd resolves to a project root, fall back to the existing behaviour."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    # Both cwds are bare directories (no .git, no pyproject.toml, etc.)
+    bare_a = tmp_path / "a"
+    bare_a.mkdir()
+    bare_b = tmp_path / "b"
+    bare_b.mkdir()
+
+    jsonl_path = tmp_path / "session.jsonl"
+    _write_multi_cwd_jsonl(jsonl_path, [str(bare_a), str(bare_b)])
+
+    parser = JSONLParser(jsonl_path)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+
+    # No project markers → fall back to first-event cwd.
+    assert session.cwd == str(bare_a)
+
+
+def test_build_session_picks_most_common_of_multiple_projects(tmp_path, monkeypatch):
+    """Multi-project sessions should attribute to the project with the most events."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    project_a = tmp_path / "home" / "Projects" / "a"
+    project_a.mkdir(parents=True)
+    (project_a / ".git").mkdir()
+    project_b = tmp_path / "home" / "Projects" / "b"
+    project_b.mkdir(parents=True)
+    (project_b / ".git").mkdir()
+
+    jsonl_path = tmp_path / "session.jsonl"
+    # 5 events in A, 2 events in B — A should win.
+    _write_multi_cwd_jsonl(
+        jsonl_path,
+        [str(project_a)] * 5 + [str(project_b)] * 2,
+    )
+
+    parser = JSONLParser(jsonl_path)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+
+    assert session.cwd == str(project_a)
+
+
 def test_user_image_block_is_replaced_with_placeholder(tmp_path):
     """User messages with pasted images must not leak base64 into event content.
 

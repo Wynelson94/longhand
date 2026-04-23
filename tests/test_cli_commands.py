@@ -159,6 +159,97 @@ def test_cli_prompt_hook_install(runner: CliRunner, isolated_home: Path):
     assert "UserPromptSubmit" in settings.get("hooks", {})
 
 
+# ─── reconcile ──────────────────────────────────────────────────────────────
+
+
+def test_cli_reconcile_help(runner: CliRunner):
+    result = runner.invoke(app, ["reconcile", "--help"])
+    assert result.exit_code == 0
+    assert "disk" in result.stdout.lower() or "sessions table" in result.stdout.lower()
+
+
+def test_cli_reconcile_reports_missing_and_fixes(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sample_session_file: Path,
+):
+    """reconcile must detect a JSONL on disk that isn't in the sessions table,
+    then re-ingest it when --fix is passed.
+    """
+    from longhand.cli import _commands as cli_commands
+    from longhand.storage import LonghandStore
+
+    data_dir = tmp_path / "longhand"
+    store = LonghandStore(data_dir=data_dir)
+
+    # Point discover_sessions at exactly our sample file.
+    monkeypatch.setattr(
+        cli_commands, "discover_sessions", lambda *a, **kw: [sample_session_file]
+    )
+
+    # First pass: sample session is on disk but never ingested → "missing".
+    result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.stdout
+    assert "1 missing" in result.stdout
+    assert "0 fully indexed" in result.stdout
+
+    # --fix should ingest it.
+    result = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.stdout
+    assert "Re-ingested 1" in result.stdout
+
+    # Session row should now exist.
+    with store.sqlite.connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE transcript_path = ?",
+            (str(sample_session_file),),
+        ).fetchone()[0]
+    assert count == 1
+
+    # Third pass: nothing to fix.
+    result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0
+    assert "1 fully indexed" in result.stdout
+    assert "0 missing" in result.stdout
+
+
+def test_cli_reconcile_detects_null_project_rows(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sample_session_file: Path,
+):
+    """reconcile must flag rows where project_id IS NULL so they can be re-analyzed."""
+    from longhand.cli import _commands as cli_commands
+    from longhand.parser import JSONLParser
+    from longhand.storage import LonghandStore
+
+    data_dir = tmp_path / "longhand"
+    store = LonghandStore(data_dir=data_dir)
+
+    # Ingest the sample without analysis so project_id stays NULL.
+    parser = JSONLParser(sample_session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    store.ingest_session(session, events, run_analysis=False)
+
+    with store.sqlite.connect() as conn:
+        pid = conn.execute(
+            "SELECT project_id FROM sessions WHERE transcript_path = ?",
+            (str(sample_session_file),),
+        ).fetchone()[0]
+    assert pid is None, "session should be ingested without project_id"
+
+    monkeypatch.setattr(
+        cli_commands, "discover_sessions", lambda *a, **kw: [sample_session_file]
+    )
+
+    result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.stdout
+    assert "1 ingested but project_id IS NULL" in result.stdout
+
+
 # ─── recall --json flag (R4) ────────────────────────────────────────────────
 
 
