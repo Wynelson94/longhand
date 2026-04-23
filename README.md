@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-174%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 
 **Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
@@ -23,14 +23,19 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-**Upgrading from 0.5.x?** v0.6.0 improves how sessions get attributed to projects — multi-project sessions (ones that `cd` between repos during one Claude Code run) now attribute to the project where most of the work happened instead of the first-event cwd. Existing data benefits from a one-time pass:
+**Upgrading to 0.8.0?** Cleaner recall narratives, plus a real bug-finding test layer underneath:
+
+- Pre-v0.8 `_compose_fix_summary` prepended a literal `"Intent:"` label to half of all extracted episodes (49% of the reference corpus). The label leaked into every recall narrative for those episodes. **Migration v4 strips it from existing rows on first store open** — no command needed.
+- Diff content in `fix_summary` now truncates at whitespace boundaries with a visible `…`, instead of landing mid-token (`phoneNum'`, `family?:'`, `strin'`). Forward-only.
+- Narrative footer "Other matches" lines now include the session id so you can drill in.
+- New canary harness (`tests/fixtures/corpus/`) anchors regression tests to real shipped bugs. New recall validator (`scripts/recall_diff.py`) snapshots and diffs ranking results against your live corpus — catches regressions pytest can't see.
 
 ```bash
 pip install --upgrade longhand
-longhand reconcile --fix   # re-attribute existing sessions and catch any the hook missed
+longhand recall "..."   # migration runs transparently on first open
 ```
 
-Or, if you're upgrading from 0.5.8 or earlier (pre-improved episode summaries), chain them: `longhand reconcile --fix && longhand reanalyze`. Both are idempotent.
+If you're also coming from 0.5.x, run `longhand reconcile --fix` once to re-attribute multi-project sessions per the v0.6 inference improvements (`cd`-into-project sessions now attribute to the project where most work happened, not the first-event cwd). If you're on 0.5.8 or earlier, chain them: `longhand reconcile --fix && longhand reanalyze`. Both are idempotent.
 
 **Large history? (>1 GB of `~/.claude/projects`)** Expect the first-time backfill to take 10–30 minutes on an M-class Mac — most of that wall time is the embedding model running on all your cores (which is why you'll see triple-digit CPU%; that's ONNX doing its job, not a hang). To get a working store faster, use the fast-path:
 
