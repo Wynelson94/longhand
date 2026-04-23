@@ -12,6 +12,7 @@ Takes a fuzzy natural-language query and returns a RecallResult with:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,30 @@ from longhand.recall.segment_search import find_segments
 from longhand.recall.time_parser import parse_time_phrase
 from longhand.replay import ReplayEngine
 from longhand.storage.store import LonghandStore
+
+# Keyword extraction for episode rank scoring. Stopwords are time/question
+# fillers that don't help disambiguate; they would otherwise dominate scoring
+# on queries like "what did we do last week with X".
+_KEYWORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9]{3,}")
+_KEYWORD_STOPWORDS = frozenset({
+    "when", "what", "that", "this", "with", "from", "where",
+    "made", "done", "last", "couple", "months", "weeks", "days",
+    "time", "some", "thing", "about",
+})
+
+
+def _extract_query_keywords(query: str) -> list[str]:
+    """Pull distinctive words from a query for keyword-hit rank scoring.
+
+    Returns words ≥4 chars, lowercased, sorted by length (longest first),
+    minus stopwords. Length-sorted because longer words are usually more
+    distinctive than shorter ones for the substring-match scoring path.
+    """
+    return sorted(
+        [w for w in _KEYWORD_RE.findall(query) if w.lower() not in _KEYWORD_STOPWORDS],
+        key=len,
+        reverse=True,
+    )
 
 
 @dataclass
@@ -175,13 +200,7 @@ def recall(
     since_iso = since.isoformat() if since else None
     until_iso = until.isoformat() if until else None
 
-    # Extract candidate keywords from the cleaned query (longest words are most distinctive)
-    import re as _re
-    query_words = sorted(
-        [w for w in _re.findall(r"[a-zA-Z][a-zA-Z0-9]{3,}", cleaned_query) if w.lower() not in {"when", "what", "that", "this", "with", "from", "where", "made", "done", "last", "couple", "months", "weeks", "days", "time", "some", "thing", "about"}],
-        key=len,
-        reverse=True,
-    )
+    query_words = _extract_query_keywords(cleaned_query)
     # 3. First attempt: semantic search with project + time filters.
     # find_episodes embeds the query against the episodes collection; keyword
     # stays None here so we don't over-filter on literal substrings.
@@ -219,30 +238,12 @@ def recall(
             limit=max_episodes * 4,
         )
 
-    # 7. Semantic re-ranking — use the events vector store to find events most
-    # similar to the query, then boost episodes whose problem/diagnosis/fix
-    # events appear in that set.
-    semantic_event_scores: dict[str, float] = {}
-    if cleaned_query.strip():
-        try:
-            event_hits = store.vectors.search(
-                query=cleaned_query,
-                n_results=50,
-            )
-            for hit in event_hits:
-                eid = hit.get("event_id")
-                if eid:
-                    distance = hit.get("distance", 1.0)
-                    semantic_event_scores[eid] = max(0.0, 1.0 - distance)
-        except Exception:
-            pass
-
     def _rank_score(ep: dict[str, Any]) -> float:
         confidence = ep.get("confidence") or 0.5
 
         # Keyword hit count — substring match on problem/diagnosis/fix text.
-        # Kept because literal matches are a strong relevance signal when the
-        # semantic model already agrees.
+        # Literal matches are a strong relevance signal when the semantic
+        # model already agrees.
         keyword_hits = 0
         if query_words:
             searchable = " ".join([
@@ -254,25 +255,14 @@ def recall(
                 if word.lower() in searchable:
                     keyword_hits += 1
 
-        # Direct semantic boost from the episodes collection — `_distance`
-        # is attached by find_episodes when the episode came from vector
-        # search. Closer distance = stronger signal. A distance of 0.25 or
-        # lower contributes 15+ points, enough to clear the quality gate
-        # without any keyword hits.
+        # Semantic boost from the episodes collection — `_distance` is
+        # attached by find_episodes when the episode came from vector search.
+        # Closer distance = stronger signal. A distance of 0.25 contributes
+        # 15+ points, enough to clear the quality gate without keyword hits.
         ep_distance = ep.get("_distance")
         episode_semantic_boost = 0.0
         if ep_distance is not None:
             episode_semantic_boost = max(0.0, (1.0 - ep_distance) * 20)
-
-        # Event-level semantic boost — older path, checks if any linked event
-        # appears in the top events-collection hits. Kept as a secondary
-        # signal for episodes whose linked events resonate more than their
-        # summaries do.
-        event_semantic_boost = 0.0
-        for eid_field in ("problem_event_id", "diagnosis_event_id", "fix_event_id"):
-            eid = ep.get(eid_field)
-            if eid and eid in semantic_event_scores:
-                event_semantic_boost = max(event_semantic_boost, semantic_event_scores[eid])
 
         # Recency boost — more recent episodes rank higher for fuzzy time queries
         recency_boost = 0.0
@@ -287,12 +277,9 @@ def recall(
             except Exception:
                 pass
 
-        # Final: episode-level semantic dominates, then keyword hits,
-        # then event-level semantic, then confidence + recency
         return (
             episode_semantic_boost
             + keyword_hits * 10
-            + event_semantic_boost * 5
             + confidence
             + recency_boost * 0.5
         )
@@ -396,6 +383,21 @@ def recall(
     use_segments_as_primary = not episodes_are_relevant and bool(segments)
     use_fallback = not episodes_are_relevant and not segments and bool(fallback_snippets)
 
+    # 8.5. Secondary matches — when episodes win the primary slot, segments
+    # from OTHER sessions used to be silently dropped. Surface them as a
+    # footer so the user can see "I also have weaker hits in these sessions"
+    # instead of recall going quiet on partial matches. Filter is by
+    # session_id, with a relevance floor so only meaningful hits show up.
+    secondary_segments: list[dict[str, Any]] = []
+    if episodes and segments:
+        episode_session_ids = {ep.get("session_id") for ep in episodes}
+        for seg in segments:
+            if seg.get("session_id") in episode_session_ids:
+                continue
+            if seg.get("_distance", 1.0) >= 1.5:
+                continue
+            secondary_segments.append(seg)
+
     # 9. Load artifacts for the top episode (only if episodes are the primary result)
     artifacts: dict[str, Any] = {}
     if episodes:
@@ -410,6 +412,7 @@ def recall(
         time_window=(since, until),
         segments=segments if use_segments_as_primary else [],
         fallback_snippets=fallback_snippets if use_fallback else [],
+        secondary_segments=secondary_segments,
     )
 
     return RecallResult(

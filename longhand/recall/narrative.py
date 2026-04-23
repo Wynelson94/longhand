@@ -50,6 +50,7 @@ def build_narrative(
     time_window: tuple[datetime | None, datetime | None] | None = None,
     segments: list[dict[str, Any]] | None = None,
     fallback_snippets: list[dict[str, Any]] | None = None,
+    secondary_segments: list[dict[str, Any]] | None = None,
 ) -> str:
     """Produce a markdown narrative from the recall results."""
     lines: list[str] = []
@@ -137,6 +138,21 @@ def build_narrative(
             summary = (ep.get("problem_description") or "")[:100]
             lines.append(f"- {ep_when}: {summary}")
 
+    # Secondary matches in other sessions — recall used to drop these silently
+    # when episodes won the primary slot, leaving the user unaware of weaker
+    # but still relevant hits. Surface them so they can chase the lead.
+    if secondary_segments:
+        lines.append(f"\n### Also possibly relevant ({len(secondary_segments)})")
+        lines.append("_Weaker matches in other sessions — chase if the primary doesn't answer:_")
+        for seg in secondary_segments[:3]:
+            seg_short = (seg.get("session_id") or "")[:8]
+            seg_when = _humanize_timestamp(seg.get("started_at"))
+            seg_topic = (seg.get("topic") or seg.get("summary") or "")[:120].replace("\n", " ")
+            lines.append(f"- session `{seg_short}` ({seg_when}): {seg_topic}")
+        lines.append(
+            f'[Use `search_in_context("<session>", "{query[:50]}")` to read full context.]'
+        )
+
     return "\n".join(lines)
 
 
@@ -189,13 +205,16 @@ def _build_segment_narrative(
         f"to read the full conversation.]\n"
     )
 
-    # Other segment candidates
+    # Other segment candidates — include session id so the user can drill in.
+    # The id was previously omitted, which silently hid which session each
+    # other-match came from (caught by the secondary-match canary).
     if len(segments) > 1:
         lines.append(f"### Other matches ({len(segments) - 1})")
         for seg in segments[1:4]:
+            seg_short = (seg.get("session_id") or "")[:8]
             seg_when = _humanize_timestamp(seg.get("started_at"))
             seg_topic = (seg.get("topic") or "")[:80]
-            lines.append(f"- {seg_when}: {seg_topic}")
+            lines.append(f"- session `{seg_short}` ({seg_when}): {seg_topic}")
 
     return "\n".join(lines)
 

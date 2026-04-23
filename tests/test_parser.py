@@ -4,8 +4,45 @@ from __future__ import annotations
 
 import json
 
-from longhand.parser import JSONLParser
+from longhand.parser import JSONLParser, discover_sessions
 from longhand.types import EventType, FileOperation
+
+
+def test_discover_sessions_filters_subagent_jsonls():
+    """Regression: subagent JSONLs under .../<session>/subagents/<sub>.jsonl
+    are referenced from the parent session's events, not standalone sessions.
+    Treating them as top-level was the v0.6.0 bug that caused reconcile to
+    re-ingest them and double-count session totals.
+
+    Uses tempfile.TemporaryDirectory directly because pytest's tmp_path lives
+    under `pytest-of-<user>/...` which discover_sessions filters out (a
+    separate guardrail against ingesting test artifacts from the live home).
+    """
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="longhand_canary_") as raw:
+        projects_dir = Path(raw) / "projects"
+        project = projects_dir / "myproj"
+        project.mkdir(parents=True)
+
+        # Top-level session — should be discovered.
+        top_session = project / "session-abc.jsonl"
+        top_session.write_text("")
+
+        # Subagent transcript — should be filtered out.
+        subagent_dir = project / "session-abc" / "subagents"
+        subagent_dir.mkdir(parents=True)
+        sub_transcript = subagent_dir / "agent-xyz.jsonl"
+        sub_transcript.write_text("")
+
+        found = discover_sessions(projects_dir)
+        found_names = {p.name for p in found}
+
+        assert "session-abc.jsonl" in found_names
+        assert "agent-xyz.jsonl" not in found_names, (
+            f"subagent transcript leaked into discover_sessions output: {found}"
+        )
 
 
 def test_parse_sample_session(sample_session_file):

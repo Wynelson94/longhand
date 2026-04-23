@@ -400,6 +400,65 @@ def test_narrative_outcome_only_when_no_episode_summary():
     assert "pull my bsoi-ops" not in narrative
 
 
+def test_recall_narrative_surfaces_secondary_segments():
+    """Regression — when episodes win the primary slot, segment hits in OTHER
+    sessions used to be silently dropped. Surfacing them as a footer so the
+    user can chase weaker-but-relevant matches the primary missed.
+
+    Regression source: session eef364a9 contained a "what v0.8 should fix"
+    list inside a v0.7.0 release-notes draft. Recall returned the older
+    v0.5.x roadmap session as primary and went silent on eef364a9 even though
+    a segment match existed.
+    """
+    from longhand.recall.narrative import build_narrative
+
+    primary_episode = {
+        "session_id": "abc12345-aaaa",
+        "started_at": "2026-04-20T18:00:00+00:00",
+        "problem_description": "Roadmap planning for the v0.5.x cleanup batch",
+        "diagnosis_summary": "",
+        "fix_summary": "Wrote audit-cleanup-roadmap.md",
+        "status": "resolved",
+    }
+    secondary = [
+        {
+            "session_id": "eef364a9-zzzz",
+            "started_at": "2026-04-23T03:55:00+00:00",
+            "topic": "v0.8.0 followups: fix_summary cleanup, doctor inlining",
+            "_distance": 0.9,
+        },
+    ]
+    narrative = build_narrative(
+        query="longhand v0.8 future plans",
+        project_matches=[],
+        episodes=[primary_episode],
+        artifacts={},
+        secondary_segments=secondary,
+    )
+    assert "Also possibly relevant" in narrative
+    assert "eef364a9" in narrative
+    assert "v0.8.0" in narrative
+
+
+def test_recall_narrative_omits_secondary_when_none():
+    """No secondary_segments → no footer (don't render an empty section)."""
+    from longhand.recall.narrative import build_narrative
+
+    narrative = build_narrative(
+        query="anything",
+        project_matches=[],
+        episodes=[{
+            "session_id": "abc12345",
+            "started_at": "2026-04-20T18:00:00+00:00",
+            "problem_description": "p",
+            "fix_summary": "f",
+        }],
+        artifacts={},
+        secondary_segments=None,
+    )
+    assert "Also possibly relevant" not in narrative
+
+
 def test_tool_match_project(sample_session_file, temp_store):
     _ingest(sample_session_file, temp_store)
     result = _call(mcp_server._tool_match_project, temp_store, {"query": "project", "top_k": 3})
