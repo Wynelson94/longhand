@@ -237,6 +237,7 @@ def build_project_status_narrative(
     unresolved_episodes: list[dict[str, Any]],
     recent_segments: list[dict[str, Any]],
     last_outcome: dict[str, Any] | None,
+    latest_fix_summary: str | None = None,
 ) -> str:
     """Build a 'here's where you left off' narrative for a project.
 
@@ -257,21 +258,26 @@ def build_project_status_narrative(
         event_count = last_session.get("event_count", 0)
         outcome_str = ""
         if last_outcome:
-            outcome_str = f"Outcome: **{last_outcome.get('outcome', 'unknown')}** · "
-            summary = last_outcome.get("summary", "")
-            if summary:
-                # Extract just the meaningful part after "outcome: "
-                if ": " in summary:
-                    summary = summary.split(": ", 1)[1]
-                outcome_str += f"{summary[:150]}\n"
+            outcome_str = f"Outcome: **{last_outcome.get('outcome', 'unknown')}**"
+            # session_outcomes.summary is sourced from the first user message
+            # of the session, not a fix description — it's the wrong field for
+            # a narrative trailer. Use the most-recent episode's fix_summary
+            # instead when available.
+            if latest_fix_summary:
+                outcome_str += f" · Last fix: {latest_fix_summary[:150]}"
+            outcome_str += "\n"
         lines.append("### Last session")
         lines.append(f"{outcome_str}{when} · {event_count} events\n")
 
-    # Recent commits
-    if last_commits:
-        lines.append(f"### Recent commits ({len(last_commits)})")
-        for commit in last_commits[:10]:
-            hash_short = (commit.get("commit_hash") or "")[:8]
+    # Recent commits — skip rows with no parseable hash (legacy data) so the
+    # narrative doesn't show blank backticks.
+    rendered_commits = [
+        c for c in last_commits[:10] if (c.get("commit_hash") or "").strip()
+    ]
+    if rendered_commits:
+        lines.append(f"### Recent commits ({len(rendered_commits)})")
+        for commit in rendered_commits:
+            hash_short = commit["commit_hash"][:8]
             message = (commit.get("commit_message") or "no message")[:80]
             when = _humanize_timestamp(commit.get("timestamp"))
 

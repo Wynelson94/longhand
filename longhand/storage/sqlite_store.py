@@ -878,6 +878,12 @@ class SQLiteStore:
             if operation_type:
                 conditions.append("g.operation_type = ?")
                 params.append(operation_type)
+            # Drop rows where a commit op has no parseable hash — historical
+            # data from before the v0.7.0 extractor guard.
+            conditions.append(
+                "(g.operation_type != 'commit' "
+                "OR (g.commit_hash IS NOT NULL AND g.commit_hash != ''))"
+            )
             sql = (
                 "SELECT g.* FROM git_operations g "
                 "INNER JOIN sessions s ON g.session_id = s.session_id "

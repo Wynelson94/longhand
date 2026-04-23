@@ -541,6 +541,14 @@ def recall_project_status(
     )
 
     # 8. Build narrative — prepend drift hint when stale so agents see it first
+    latest_fix_summary = next(
+        (
+            (ep.get("fix_summary") or "").strip()
+            for ep in recent_episodes
+            if (ep.get("fix_summary") or "").strip()
+        ),
+        None,
+    )
     narrative = build_project_status_narrative(
         display_name=project.get("display_name", "unknown"),
         canonical_path=project.get("canonical_path", ""),
@@ -551,6 +559,7 @@ def recall_project_status(
         unresolved_episodes=unresolved_episodes,
         recent_segments=recent_segments,
         last_outcome=last_outcome,
+        latest_fix_summary=latest_fix_summary,
     )
     if drift["stale"] and drift["stale_reason"]:
         narrative = f"⚠ {drift['stale_reason']}\n\n{narrative}"
@@ -584,24 +593,19 @@ def _detect_project_drift(
 ) -> dict[str, Any]:
     """Check whether this project has transcripts on disk that aren't in the DB.
 
-    Returns a dict with count/time fields and a `stale` flag. Stale is True when
-    there are unindexed JSONLs that appear to belong to this project, OR when
-    an indexed transcript's mtime is newer than its ingestion timestamp by more
-    than 60 seconds (meaning the file has changed since we last read it).
+    Returns a dict with count/time fields and a `stale` flag. Stale is True only
+    when there are un-ingested JSONLs referencing this project — sessions
+    attributed to sibling projects don't trigger the flag (that's expected for
+    multi-project sessions).
 
-    Best-effort and bounded: only un-indexed JSONLs are opened, and only the
-    first _DRIFT_SCAN_MAX_EVENTS events per file are inspected. Over a 127-
-    session user with normal ingestion, the un-indexed set is typically empty
-    or a handful of files, so the cost is small.
+    Backed by a filesystem cache keyed on (transcript_path, mtime), so repeated
+    calls are fast. The first call on a cold cache still walks every JSONL.
     """
     from datetime import datetime as _dt
 
-    from longhand.analysis.project_inference import find_project_root_strict
+    from longhand.recall.drift_cache import DriftCache, default_cache_path
 
     # 1. Transcripts indexed for THIS project + the full set of ingested paths.
-    #    We distinguish between "truly missing from DB" (stale, actionable) and
-    #    "ingested under a sibling project" (expected for multi-project
-    #    sessions — not actionable via reconcile).
     try:
         with store.sqlite.connect() as conn:
             indexed_rows = conn.execute(
@@ -636,17 +640,21 @@ def _detect_project_drift(
         target_resolved = None
 
     truly_missing: list[Path] = []       # not in any sessions row
-    cross_attributed: list[Path] = []    # ingested but mapped to a sibling project
+    cross_attributed: list[Path] = []    # ingested but mapped to a sibling
     max_mtime: float = 0.0
 
     if canonical_path:
-        for jsonl in discover_sessions():
+        cache = DriftCache(default_cache_path(store.data_dir))
+        on_disk = discover_sessions()
+        valid_paths = {str(p) for p in on_disk}
+        cache.prune(valid_paths)
+
+        for jsonl in on_disk:
             jsonl_str = str(jsonl)
             if jsonl_str in indexed_for_this_project:
                 continue
-            if not _jsonl_references_project(
-                jsonl, canonical_path, target_resolved, find_project_root_strict
-            ):
+            entry = cache.get_or_compute(jsonl)
+            if entry is None or not entry.references(canonical_path, target_resolved):
                 continue
 
             if jsonl_str in all_ingested:
@@ -660,6 +668,12 @@ def _detect_project_drift(
                 except (OSError, PermissionError):
                     pass
 
+        try:
+            cache.save()
+        except OSError:
+            # Cache is best-effort; a failed write shouldn't break recall.
+            pass
+
     # On-disk total for this project = truly-ours + truly-missing-that-reference.
     # Cross-attributed sessions aren't counted here — they belong to siblings.
     session_count_on_disk = session_count_indexed + len(truly_missing)
@@ -668,8 +682,6 @@ def _detect_project_drift(
     if max_mtime > 0.0:
         last_transcript_mtime_iso = _dt.fromtimestamp(max_mtime).isoformat()
 
-    # Only truly-missing transcripts should trigger a stale flag — those are
-    # the ones reconcile --fix can actually resolve.
     stale = len(truly_missing) > 0
     stale_reason: str | None = None
     if stale:
@@ -688,59 +700,3 @@ def _detect_project_drift(
         "stale": stale,
         "stale_reason": stale_reason,
     }
-
-
-# Hard cap on lines scanned per JSONL during drift detection, so a pathologically
-# large file can't block the pipeline. Most sessions are well under this.
-_DRIFT_SCAN_LINE_LIMIT = 20_000
-
-
-def _jsonl_references_project(
-    jsonl_path: Path,
-    canonical_path: str,
-    target_resolved: Path | None,
-    find_root,
-) -> bool:
-    """True if ANY event in `jsonl_path` references `canonical_path` — either
-    by direct string match (the path that project_inference's fallback would
-    choose for non-existent or non-marker directories) or by walking up to it
-    via project markers.
-
-    Scans the whole file with an early-exit on the first match. Multi-project
-    sessions often start in $HOME and only cd into the real project hundreds
-    of events in, so a narrow first-N-events cap produces false negatives.
-    """
-    import json as _json
-
-    try:
-        with jsonl_path.open() as f:
-            for i, line in enumerate(f):
-                if i >= _DRIFT_SCAN_LINE_LIMIT:
-                    break
-                try:
-                    obj = _json.loads(line)
-                except _json.JSONDecodeError:
-                    continue
-                cwd = obj.get("cwd")
-                if not cwd:
-                    continue
-                # Cheap string match: many real cwds ARE the canonical path.
-                if cwd == canonical_path:
-                    return True
-                if target_resolved is not None:
-                    try:
-                        p = Path(cwd).resolve()
-                    except (OSError, PermissionError):
-                        continue
-                    if p.is_file():
-                        p = p.parent
-                    # Resolved-path match catches symlinks like /tmp → /private/tmp
-                    if p == target_resolved:
-                        return True
-                    # Walk up via project markers
-                    root = find_root(p)
-                    if root is not None and root == target_resolved:
-                        return True
-    except (OSError, PermissionError):
-        return False
-    return False

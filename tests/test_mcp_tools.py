@@ -57,6 +57,48 @@ def test_tool_search_returns_hits(sample_session_file, temp_store):
     _ingest(sample_session_file, temp_store)
     result = _call(mcp_server._tool_search, temp_store, {"query": "edit readme", "limit": 5})
     payload = _payload(result)
+    # Query doesn't name the project → bare list.
+    assert isinstance(payload, list)
+
+
+def test_tool_search_auto_scopes_on_project_name_match(
+    sample_session_file, temp_store
+):
+    """A query that names a known project should auto-filter to that project's
+    events, and the response should advertise the auto-scoping so agents can
+    override it."""
+    _ingest(sample_session_file, temp_store)
+    # sample_session_file's cwd is /tmp/test-project, so the project becomes
+    # "test project" after canonicalization.
+    result = _call(
+        mcp_server._tool_search,
+        temp_store,
+        {"query": "test project readme", "limit": 5},
+    )
+    payload = _payload(result)
+    assert isinstance(payload, dict), "auto-scoping should wrap response in an object"
+    assert payload.get("auto_scoped_to")
+    assert "test" in payload["auto_scoped_to"].lower()
+    assert "hits" in payload
+    assert isinstance(payload["hits"], list)
+
+
+def test_tool_search_honors_explicit_project_name(
+    sample_session_file, temp_store
+):
+    """Explicit project_name in arguments is never overridden by auto-scoping."""
+    _ingest(sample_session_file, temp_store)
+    result = _call(
+        mcp_server._tool_search,
+        temp_store,
+        {
+            "query": "readme",
+            "project_name": "test project",
+            "limit": 5,
+        },
+    )
+    payload = _payload(result)
+    # Explicit filter → bare list, no auto_scoped_to annotation.
     assert isinstance(payload, list)
 
 
@@ -278,6 +320,84 @@ def test_tool_recall_project_status_not_stale_when_in_sync(
     assert payload["session_count_on_disk"] == 1
     assert payload["stale"] is False
     assert payload["stale_reason"] is None
+
+
+def test_narrative_drops_commits_with_blank_hash():
+    """Historical git_operations rows with NULL/empty commit_hash should not
+    produce blank backticks in the narrative."""
+    from longhand.recall.narrative import build_project_status_narrative
+
+    last_commits = [
+        {"commit_hash": "abc1234", "commit_message": "fix thing", "timestamp": "2026-04-23T00:00:00+00:00"},
+        {"commit_hash": None, "commit_message": None, "timestamp": "2026-04-23T00:00:00+00:00"},
+        {"commit_hash": "", "commit_message": "ghost", "timestamp": "2026-04-23T00:00:00+00:00"},
+    ]
+    narrative = build_project_status_narrative(
+        display_name="foo",
+        canonical_path="/tmp/foo",
+        last_commits=last_commits,
+        active_branch=None,
+        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_episodes=[],
+        unresolved_episodes=[],
+        recent_segments=[],
+        last_outcome={"outcome": "fixed"},
+    )
+    # The good commit renders; the bad ones don't.
+    assert "abc1234" in narrative
+    assert "`` " not in narrative  # no empty backtick-pair
+    assert "ghost" not in narrative
+    # Count uses filtered list
+    assert "Recent commits (1)" in narrative
+
+
+def test_narrative_uses_episode_fix_summary_not_user_message():
+    """The last-session outcome trailer should come from an episode's
+    fix_summary, not session_outcomes.summary (which is a user message)."""
+    from longhand.recall.narrative import build_project_status_narrative
+
+    narrative = build_project_status_narrative(
+        display_name="foo",
+        canonical_path="/tmp/foo",
+        last_commits=[],
+        active_branch=None,
+        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_episodes=[{"fix_summary": "refactored the auth middleware to scope tokens"}],
+        unresolved_episodes=[],
+        recent_segments=[],
+        last_outcome={
+            "outcome": "fixed",
+            "summary": "fixed: can you pull my bsoi-ops from my git and review",
+        },
+        latest_fix_summary="refactored the auth middleware to scope tokens",
+    )
+    assert "refactored the auth middleware" in narrative
+    assert "Last fix: refactored the auth middleware" in narrative
+    # The old polluted summary must not leak in.
+    assert "pull my bsoi-ops from my git" not in narrative
+
+
+def test_narrative_outcome_only_when_no_episode_summary():
+    """No episode fix_summary → outcome word stands alone, no misleading text."""
+    from longhand.recall.narrative import build_project_status_narrative
+
+    narrative = build_project_status_narrative(
+        display_name="foo",
+        canonical_path="/tmp/foo",
+        last_commits=[],
+        active_branch=None,
+        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_episodes=[],
+        unresolved_episodes=[],
+        recent_segments=[],
+        last_outcome={
+            "outcome": "fixed",
+            "summary": "fixed: can you pull my bsoi-ops from my git",
+        },
+    )
+    assert "**fixed**" in narrative
+    assert "Last fix:" not in narrative
+    assert "pull my bsoi-ops" not in narrative
 
 
 def test_tool_match_project(sample_session_file, temp_store):

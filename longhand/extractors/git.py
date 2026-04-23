@@ -74,14 +74,18 @@ _COMMIT_MSG_RE = re.compile(
 _FILES_CHANGED_RE = re.compile(r"(\d+)\s+files?\s+changed")
 
 
-def _parse_commit(command: str, output: str) -> GitSignal:
-    commit_hash = None
+def _parse_commit(command: str, output: str) -> GitSignal | None:
+    m = _COMMIT_HASH_RE.search(output)
+    if not m:
+        # Without a parseable commit hash we have nothing worth recording.
+        # A "commit" row with no hash ends up rendered as blank in narratives
+        # and adds noise to git_operations queries.
+        return None
+    commit_hash = m.group(1)
+
     commit_message = None
     files_changed = None
 
-    m = _COMMIT_HASH_RE.search(output)
-    if m:
-        commit_hash = m.group(1)
     m = _COMMIT_MSG_RE.search(output)
     if m:
         commit_message = m.group(1).strip()

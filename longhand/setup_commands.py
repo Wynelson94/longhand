@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from longhand.parser import JSONLParser
+from longhand.parser import JSONLParser, discover_sessions
 from longhand.storage import LonghandStore
 
 console = Console()
@@ -462,6 +462,65 @@ def ingest_single_session(
 
 # ─── Doctor ────────────────────────────────────────────────────────────────
 
+
+def _freshness_status(store: LonghandStore) -> str | None:
+    """Check that recent on-disk JSONLs have corresponding sessions rows.
+
+    Returns a Rich-formatted string, or None if the check couldn't be performed
+    (e.g. ~/.claude/projects doesn't exist yet). For each JSONL whose mtime is
+    within the last 7 days, check whether the sessions table has a row for it.
+    Ratio drives the status: ≥0.9 green, ≥0.5 yellow, <0.5 red.
+    """
+    import time as _time
+
+
+    try:
+        jsonls = discover_sessions()
+    except Exception:
+        return None
+    if not jsonls:
+        return None
+
+    cutoff = _time.time() - 7 * 86400
+    recent: list[str] = []
+    for j in jsonls:
+        try:
+            if j.stat().st_mtime >= cutoff:
+                recent.append(str(j))
+        except (OSError, PermissionError):
+            continue
+
+    if not recent:
+        return "[green]✓[/green] no recent Claude Code activity"
+
+    try:
+        with store.sqlite.connect() as conn:
+            placeholders = ",".join("?" * len(recent))
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM sessions WHERE transcript_path IN ({placeholders})",
+                recent,
+            ).fetchone()
+            ingested = row[0] if row else 0
+    except Exception:
+        return None
+
+    ratio = ingested / len(recent)
+    summary = f"{ingested}/{len(recent)} transcripts ingested"
+
+    if ratio >= 0.9:
+        return f"[green]✓[/green] {summary}"
+    if ratio >= 0.5:
+        return (
+            f"[yellow]⚠[/yellow] {summary} — "
+            "run [bold]longhand reconcile --fix[/bold] to catch up"
+        )
+    return (
+        f"[red]✗[/red] {summary} — hook may be silently failing. "
+        "Run [bold]longhand reconcile --fix[/bold] and verify "
+        "[bold]longhand hook install[/bold]."
+    )
+
+
 def doctor() -> None:
     """Diagnose Longhand installation and data."""
     table = Table(title="Longhand Doctor", show_header=False, border_style="cyan")
@@ -560,7 +619,14 @@ def doctor() -> None:
         f"[green]✓[/green] {store.data_dir}" if data_ok else f"[red]✗[/red] {store.data_dir}",
     )
 
-    # 5. Stats
+    # 5. Recent ingest freshness — detects silently broken hooks. If Claude
+    # Code wrote N transcripts in the last 7 days but only M got ingested,
+    # the hook is either misconfigured or failing quietly.
+    freshness_row = _freshness_status(store)
+    if freshness_row:
+        table.add_row("Recent ingest (7d)", freshness_row)
+
+    # 6. Stats
     stats = store.stats()
     table.add_row("Sessions ingested", f"{stats.get('sessions', 0):,}")
     table.add_row("Events stored", f"{stats.get('events', 0):,}")

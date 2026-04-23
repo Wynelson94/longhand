@@ -3,7 +3,7 @@
   "name": "io.github.Wynelson94/longhand",
   "title": "Longhand",
   "description": "Local memory for Claude Code. Semantic recall across session history with zero API calls.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "repository": {
     "url": "https://github.com/Wynelson94/longhand",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "longhand",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

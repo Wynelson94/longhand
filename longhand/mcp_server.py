@@ -502,6 +502,21 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     project_session_ids: set[str] | None = None
     project_id = arguments.get("project_id")
     project_name = arguments.get("project_name")
+
+    # Auto-scope when the query names a project but no explicit project
+    # filter was set. Reuses match_projects — the same fuzzy infrastructure
+    # the recall tool uses — so literal project names don't get buried under
+    # semantically-similar events from sibling projects.
+    auto_scoped_to: str | None = None
+    if not project_id and not project_name:
+        try:
+            matches = match_projects(store, arguments.get("query", ""), top_k=1)
+            if matches and matches[0].score >= 0.8:
+                project_name = matches[0].display_name
+                auto_scoped_to = matches[0].display_name
+        except Exception:
+            pass
+
     if project_id or project_name:
         if project_name and not project_id:
             projects = store.sqlite.list_projects(keyword=project_name, limit=5)
@@ -546,7 +561,19 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
         ]
 
     hits = hits[:limit]
-    output = json.dumps(hits, indent=2, default=str)
+    payload: dict[str, Any] | list[dict[str, Any]]
+    if auto_scoped_to is not None:
+        payload = {
+            "auto_scoped_to": auto_scoped_to,
+            "auto_scope_hint": (
+                f"Query appeared to name a project; results are scoped to "
+                f"'{auto_scoped_to}'. Pass project_name=None to override."
+            ),
+            "hits": hits,
+        }
+    else:
+        payload = hits
+    output = json.dumps(payload, indent=2, default=str)
     return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_SEARCH))]
 
 

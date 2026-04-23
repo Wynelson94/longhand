@@ -250,6 +250,95 @@ def test_cli_reconcile_detects_null_project_rows(
     assert "1 ingested but project_id IS NULL" in result.stdout
 
 
+# ─── doctor freshness ──────────────────────────────────────────────────────
+
+
+def test_freshness_status_green_when_all_recent_ingested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Every recent JSONL is in the sessions table → green."""
+    from longhand import setup_commands
+    from longhand.parser import JSONLParser
+    from longhand.setup_commands import _freshness_status
+    from longhand.storage import LonghandStore
+    from tests.conftest import _line  # noqa: F401  (re-uses fixture helpers indirectly)
+
+    # Make a minimal JSONL and ingest it.
+    jsonl = tmp_path / "fresh.jsonl"
+    jsonl.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": "u1",
+                "sessionId": "s-fresh",
+                "timestamp": "2026-04-23T00:00:00Z",
+                "cwd": str(tmp_path),
+                "message": {"role": "user", "content": "hi"},
+            }
+        )
+        + "\n"
+    )
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    parser = JSONLParser(jsonl)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    store.ingest_session(session, events, run_analysis=False)
+
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [jsonl])
+    status = _freshness_status(store)
+    assert status is not None
+    assert "green" in status
+    assert "1/1 transcripts ingested" in status
+
+
+def test_freshness_status_red_when_most_recent_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Fresh JSONLs exist on disk but none are in the sessions table → red."""
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+    from longhand.storage import LonghandStore
+
+    jsonls = []
+    for i in range(4):
+        p = tmp_path / f"miss-{i}.jsonl"
+        p.write_text(json.dumps({"type": "user", "uuid": f"u{i}"}) + "\n")
+        jsonls.append(p)
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: jsonls)
+    status = _freshness_status(store)
+    assert status is not None
+    assert "red" in status
+    assert "reconcile --fix" in status
+    assert "0/4" in status
+
+
+def test_freshness_status_no_recent_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """When no JSONLs are recent, freshness returns green with a neutral hint."""
+    import os
+
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+    from longhand.storage import LonghandStore
+
+    old_jsonl = tmp_path / "old.jsonl"
+    old_jsonl.write_text(json.dumps({"type": "user"}) + "\n")
+    # Backdate mtime beyond the 7-day window.
+    old_ts = old_jsonl.stat().st_mtime - 30 * 86400
+    os.utime(old_jsonl, (old_ts, old_ts))
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [old_jsonl])
+    status = _freshness_status(store)
+    assert status is not None
+    assert "green" in status
+    assert "no recent Claude Code activity" in status
+
+
 # ─── recall --json flag (R4) ────────────────────────────────────────────────
 
 
