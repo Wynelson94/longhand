@@ -136,3 +136,78 @@ def test_new_crud_roundtrip(tmp_path: Path):
     pair = store.get_tool_pair("toolu_123")
     assert pair is not None
     assert pair["success"] == 1
+
+
+def test_migration_v4_strips_intent_prefix_from_fix_summary(tmp_path: Path):
+    """v0.8 migration strips the leaked 'Intent: ' label from existing fix_summary rows.
+
+    Anchored to the 2026-04-23 audit of /Users/natenelson/.longhand where
+    100 of 204 episodes had fix_summary starting with "Intent:" because
+    pre-v0.8 _compose_fix_summary prepended the label "so the embedding
+    treats it structurally" (per the original comment). The label leaked
+    into the user-visible narrative on every recall.
+    """
+    store = SQLiteStore(tmp_path / "intent.db")
+    store.insert_episodes([
+        {
+            "episode_id": "ep_dirty_1",
+            "session_id": "s1",
+            "project_id": "p1",
+            "started_at": "2026-04-01T10:00:00Z",
+            "ended_at": "2026-04-01T10:30:00Z",
+            "problem_event_id": "ev1",
+            "fix_event_id": "ev2",
+            "problem_description": "something broke",
+            "fix_summary": "Intent: I'll patch the thing. Edit on x.py: 'a' → 'b'",
+            "touched_files": [],
+            "tags": [],
+            "status": "resolved",
+        },
+        {
+            "episode_id": "ep_dirty_2",
+            "session_id": "s1",
+            "project_id": "p1",
+            "started_at": "2026-04-01T11:00:00Z",
+            "ended_at": "2026-04-01T11:30:00Z",
+            "problem_event_id": "ev3",
+            "fix_event_id": "ev4",
+            "problem_description": "another thing broke",
+            "fix_summary": "Intent: Let me fix it. Write on y.py",
+            "touched_files": [],
+            "tags": [],
+            "status": "resolved",
+        },
+        {
+            "episode_id": "ep_clean",
+            "session_id": "s1",
+            "project_id": "p1",
+            "started_at": "2026-04-01T12:00:00Z",
+            "ended_at": "2026-04-01T12:30:00Z",
+            "problem_event_id": "ev5",
+            "fix_event_id": "ev6",
+            "problem_description": "this one was already clean",
+            "fix_summary": "I'll fix it. Edit on z.py",
+            "touched_files": [],
+            "tags": [],
+            "status": "resolved",
+        },
+    ])
+
+    # Simulate a pre-v2 DB by rolling the schema_version back before applying.
+    with store.connect() as conn:
+        conn.execute("DELETE FROM schema_version WHERE version = 4")
+        conn.commit()
+        applied = apply_migrations(conn)
+
+    assert 4 in applied
+
+    # Dirty rows cleaned; clean row untouched.
+    dirty1 = store.get_episode("ep_dirty_1")
+    dirty2 = store.get_episode("ep_dirty_2")
+    clean = store.get_episode("ep_clean")
+
+    assert dirty1["fix_summary"].startswith("I'll patch")
+    assert not dirty1["fix_summary"].startswith("Intent:")
+    assert dirty2["fix_summary"].startswith("Let me fix")
+    assert not dirty2["fix_summary"].startswith("Intent:")
+    assert clean["fix_summary"].startswith("I'll fix")

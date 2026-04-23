@@ -133,6 +133,15 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX IF NOT EXISTS idx_segments_ended_at ON conversation_segments(ended_at DESC);
     CREATE INDEX IF NOT EXISTS idx_segments_type ON conversation_segments(segment_type);
     """,
+    4: """
+    -- v4: strip leaked Intent label from existing fix_summary rows.
+    -- See longhand/analysis/episode_extraction.py history for context.
+    -- 100 of 204 episodes (49%) had this on the reference corpus audit.
+
+    UPDATE episodes
+    SET fix_summary = substr(fix_summary, 9)
+    WHERE fix_summary LIKE 'Intent: %';
+    """,
 }
 
 

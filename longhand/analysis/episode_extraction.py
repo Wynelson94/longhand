@@ -404,10 +404,12 @@ def _compose_fix_summary(
     parts: list[str] = []
     budget = max_chars
 
-    # Intent — prefix with label so the embedding treats it structurally
+    # Intent — the assistant's substantive text right before the fix.
+    # Embedded directly without a structural label; the prose stands on its
+    # own and the label was leaking into user-facing narratives.
     if intent_text:
         intent_budget = min(len(intent_text), budget // 2)
-        parts.append(f"Intent: {intent_text[:intent_budget]}")
+        parts.append(intent_text[:intent_budget])
         budget -= intent_budget + 10
 
     # Mechanical diff — existing format, grounded in real content
