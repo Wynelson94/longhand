@@ -32,7 +32,8 @@ except ImportError:
 from longhand.cli.helpers import _resolve_prefix
 from longhand.recall import recall as recall_pipeline
 from longhand.recall.project_match import match_projects
-from longhand.recall.recall_pipeline import recall_project_status
+from longhand.recall.recall_pipeline import recall_project_status, staleness_banner
+from longhand.recall.reconcile import run_reconcile
 from longhand.replay import ReplayEngine
 from longhand.storage import LonghandStore
 from longhand.storage.sqlite_store import _escape_like
@@ -191,13 +192,16 @@ async def list_tools() -> list[Tool]:
                 "Use this to orient before drilling into a specific session — e.g., "
                 "'which sessions touched this project last week?' Filter by project "
                 "path substring to narrow results. NOT for searching content — "
-                "use search or recall for that."
+                "use search or recall for that. When a `project` filter matches a "
+                "known project and its on-disk transcripts exceed what's indexed, "
+                "the response wraps a `{stale, stale_reason, sessions}` envelope — "
+                "call the `reconcile` tool to catch up."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')"},
-                    "limit": {"default": 20, "description": "Max results (default 20)"},
+                    "limit": {"default": 50, "description": "Max results (default 50)"},
                 },
             },
         ),
@@ -346,6 +350,31 @@ async def list_tools() -> list[Tool]:
                     "max_chars": {"default": 16000, "description": "Max output characters"},
                 },
                 "required": ["project"],
+            },
+        ),
+        Tool(
+            name="reconcile",
+            description=(
+                "Bridge disk↔DB drift from inside an MCP session. Re-ingests any "
+                "on-disk Claude Code transcripts that are missing from the sessions "
+                "table or have NULL project_id, using current project-inference "
+                "logic. Call this when another tool surfaces `stale: true` with a "
+                "`stale_reason` pointing at reconcile, or when `recall_project_status` "
+                "reports `session_count_on_disk > session_count_indexed`. "
+                "Returns counts of fully-indexed, null-project, missing, ingested, "
+                "and errors. Acquires the ingest lock — serialized with concurrent "
+                "ingestion. May take 30s+ on cold state because it runs embeddings "
+                "and episode extraction during re-ingest."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "fix": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Re-ingest missing/null-project transcripts (default True). Pass false for a dry-run summary.",
+                    },
+                },
             },
         ),
         Tool(
@@ -561,16 +590,33 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
         ]
 
     hits = hits[:limit]
+
+    # Staleness banner: when this search was scoped to a project (auto or
+    # explicit), check whether that project has on-disk transcripts not yet in
+    # the DB. If so, wrap the response with a stale/stale_reason banner so the
+    # caller sees the same signal `recall_project_status` surfaces — closes the
+    # silent-failure class where a stale index returned `hits: []` with no hint.
+    canonical_path: str | None = None
+    if project_id:
+        proj = store.sqlite.get_project(project_id)
+        if proj:
+            canonical_path = proj.get("canonical_path")
+    banner = staleness_banner(store, project_id, canonical_path)
+
     payload: dict[str, Any] | list[dict[str, Any]]
-    if auto_scoped_to is not None:
-        payload = {
-            "auto_scoped_to": auto_scoped_to,
-            "auto_scope_hint": (
+    if auto_scoped_to is not None or banner is not None:
+        envelope: dict[str, Any] = {}
+        if auto_scoped_to is not None:
+            envelope["auto_scoped_to"] = auto_scoped_to
+            envelope["auto_scope_hint"] = (
                 f"Query appeared to name a project; results are scoped to "
                 f"'{auto_scoped_to}'. Pass project_name=None to override."
-            ),
-            "hits": hits,
-        }
+            )
+        if banner is not None:
+            envelope["stale"] = True
+            envelope["stale_reason"] = banner["stale_reason"]
+        envelope["hits"] = hits
+        payload = envelope
     else:
         payload = hits
     output = json.dumps(payload, indent=2, default=str)
@@ -681,11 +727,39 @@ async def _tool_search_in_context(
 async def _tool_list_sessions(
     store: LonghandStore, arguments: dict[str, Any]
 ) -> list[TextContent]:
+    project_filter = arguments.get("project")
     rows = store.sqlite.list_sessions(
-        project_path=arguments.get("project"),
-        limit=_limit(arguments.get("limit"), 20),
+        project_path=project_filter,
+        limit=_limit(arguments.get("limit"), 50),
     )
-    output = json.dumps(rows, indent=2, default=str)
+
+    # Staleness banner: when filtered by project, resolve to a project_id and
+    # surface drift. Global list_sessions (no filter) has no project to check.
+    banner = None
+    if project_filter:
+        try:
+            matches = match_projects(store, project_filter, top_k=1)
+            if matches and matches[0].score >= 0.8:
+                proj = store.sqlite.get_project(matches[0].project_id)
+                if proj:
+                    banner = staleness_banner(
+                        store,
+                        matches[0].project_id,
+                        proj.get("canonical_path"),
+                    )
+        except Exception:
+            banner = None
+
+    payload: dict[str, Any] | list[dict[str, Any]]
+    if banner is not None:
+        payload = {
+            "stale": True,
+            "stale_reason": banner["stale_reason"],
+            "sessions": rows,
+        }
+    else:
+        payload = rows
+    output = json.dumps(payload, indent=2, default=str)
     return [TextContent(type="text", text=_truncate_output(output, 16000, _HINT_LIST_SESSIONS))]
 
 
@@ -1108,6 +1182,22 @@ async def _tool_get_project_timeline(
     return [TextContent(type="text", text=json.dumps(enriched, indent=2, default=str))]
 
 
+async def _tool_reconcile(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    """Bridge disk↔DB drift from inside an MCP session.
+
+    With `fix=True` (the default for MCP callers): re-ingests any on-disk
+    transcripts that are missing from the sessions table or have NULL
+    project_id. Closes the loop so Claude can self-heal the index after a
+    staleness banner fires, without shelling out to the CLI.
+    """
+    fix = _bool(arguments.get("fix"), True)
+    report = run_reconcile(store, fix=fix)
+    output = json.dumps(report.to_dict(), indent=2, default=str)
+    return [TextContent(type="text", text=output)]
+
+
 _DISPATCH: dict[str, Any] = {
     "search": _tool_search,
     "search_in_context": _tool_search_in_context,
@@ -1119,6 +1209,7 @@ _DISPATCH: dict[str, Any] = {
     "get_stats": _tool_get_stats,
     "recall": _tool_recall,
     "recall_project_status": _tool_recall_project_status,
+    "reconcile": _tool_reconcile,
     "match_project": _tool_match_project,
     "find_episodes": _tool_find_episodes,
     "get_episode": _tool_get_episode,

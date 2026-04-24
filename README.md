@@ -23,7 +23,13 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
-**Upgrading to 0.8.0?** Cleaner recall narratives, plus a real bug-finding test layer underneath:
+**Upgrading to 0.8.1?** Staleness signals now propagate everywhere they belong, and `reconcile` is an MCP tool — Claude can self-heal the index from inside a session:
+
+- `search` and `list_sessions` now wrap the response with `stale: true` + `stale_reason` when the project they're scoped to has on-disk transcripts not yet ingested. Pre-v0.8.1 these returned clean-looking empty results (same silent-failure shape `recall_project_status` was built to catch — just one layer up).
+- New `reconcile` MCP tool wraps `longhand reconcile --fix`. After a staleness banner fires, Claude calls `reconcile` directly instead of asking the user to run a CLI command.
+- `list_sessions` default `limit` raised from 20 to 50 — active days routinely cross 5+ projects across 5+ sessions; the old default truncated reviews silently.
+
+**Upgrading from 0.7.x or earlier?** Cleaner recall narratives, plus a real bug-finding test layer underneath (from 0.8.0):
 
 - Pre-v0.8 `_compose_fix_summary` prepended a literal `"Intent:"` label to half of all extracted episodes (49% of the reference corpus). The label leaked into every recall narrative for those episodes. **Migration v4 strips it from existing rows on first store open** — no command needed.
 - Diff content in `fix_summary` now truncates at whitespace boundaries with a visible `…`, instead of landing mid-token (`phoneNum'`, `family?:'`, `strin'`). Forward-only.
@@ -46,7 +52,7 @@ longhand reanalyze               # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `reanalyze` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.8.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 205 unit tests passing.*
+> *Status: v0.8.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 211 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 

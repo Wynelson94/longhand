@@ -177,15 +177,17 @@ def test_cli_reconcile_reports_missing_and_fixes(
     """reconcile must detect a JSONL on disk that isn't in the sessions table,
     then re-ingest it when --fix is passed.
     """
-    from longhand.cli import _commands as cli_commands
+    from longhand.recall import reconcile as reconcile_mod
     from longhand.storage import LonghandStore
 
     data_dir = tmp_path / "longhand"
     store = LonghandStore(data_dir=data_dir)
 
-    # Point discover_sessions at exactly our sample file.
+    # Point discover_sessions at exactly our sample file. The reconcile core
+    # was factored into longhand.recall.reconcile in v0.8.1 so the patch lives
+    # there now (the CLI is a thin display wrapper).
     monkeypatch.setattr(
-        cli_commands, "discover_sessions", lambda *a, **kw: [sample_session_file]
+        reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file]
     )
 
     # First pass: sample session is on disk but never ingested → "missing".
@@ -221,8 +223,8 @@ def test_cli_reconcile_detects_null_project_rows(
     sample_session_file: Path,
 ):
     """reconcile must flag rows where project_id IS NULL so they can be re-analyzed."""
-    from longhand.cli import _commands as cli_commands
     from longhand.parser import JSONLParser
+    from longhand.recall import reconcile as reconcile_mod
     from longhand.storage import LonghandStore
 
     data_dir = tmp_path / "longhand"
@@ -242,7 +244,7 @@ def test_cli_reconcile_detects_null_project_rows(
     assert pid is None, "session should be ingested without project_id"
 
     monkeypatch.setattr(
-        cli_commands, "discover_sessions", lambda *a, **kw: [sample_session_file]
+        reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file]
     )
 
     result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])

@@ -703,3 +703,29 @@ def _detect_project_drift(
         "stale": stale,
         "stale_reason": stale_reason,
     }
+
+
+def staleness_banner(
+    store: LonghandStore,
+    project_id: str | None,
+    canonical_path: str | None,
+) -> dict[str, Any] | None:
+    """Return a {stale, stale_reason} banner dict for the project, or None if fresh.
+
+    Thin wrapper over `_detect_project_drift` for MCP handlers that need to
+    surface the same drift warning `recall_project_status` does without the
+    full status payload. Failures inside drift detection return None so the
+    calling tool's fast path continues uninterrupted.
+    """
+    if not project_id or not canonical_path:
+        return None
+    try:
+        drift = _detect_project_drift(store, project_id, canonical_path)
+    except Exception:
+        return None
+    if not drift.get("stale"):
+        return None
+    return {
+        "stale": True,
+        "stale_reason": drift.get("stale_reason"),
+    }

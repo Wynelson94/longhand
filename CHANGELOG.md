@@ -9,6 +9,50 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.8.1] — 2026-04-23
+
+Closes the staleness silent-failure class across MCP entry points and
+exposes `reconcile` as an MCP tool so Claude can self-heal the index from
+inside a session.
+
+### Fixed
+
+- **`search` and `list_sessions` now surface `stale: true / stale_reason`**
+  when the project they're scoped to has on-disk transcripts not yet in the
+  DB. Pre-v0.8.1 these tools returned clean-looking empty results — same
+  failure shape `recall_project_status` was built to catch, just one layer
+  up. Caught live tonight: `search("portneuf junk removal")` returned
+  `hits: []` for a project whose only transcript existed on disk but
+  hadn't been ingested yet. `recall_project_status` already reported
+  staleness; now `search` and `list_sessions` do too.
+- **`list_sessions` default `limit` raised from 20 to 50.** Active days
+  routinely cross 5+ projects across 5+ sessions; the old default
+  truncated reviews silently.
+
+### Added
+
+- **`reconcile` MCP tool.** Wraps `longhand reconcile --fix` so Claude can
+  re-ingest missing transcripts in-session after a staleness banner fires —
+  no shell-out required. Defaults to `fix=True` for MCP callers (CLI keeps
+  `fix=False` default — dry-run summary). Same ingest lock as the CLI; safe
+  under concurrent ingestion.
+- **Shared reconcile core** at `longhand/recall/reconcile.py` with a
+  `ReconcileReport` dataclass. CLI and MCP tool both call `run_reconcile`;
+  only the presentation differs.
+- **`staleness_banner()` helper** in `recall_pipeline.py` — thin wrapper
+  over `_detect_project_drift` for any handler that needs the same
+  drift signal `recall_project_status` returns. Cache-backed; cheap on
+  repeat calls.
+
+### Tests
+
+- 6 new tests covering: search staleness on auto-scope, list_sessions
+  staleness on project filter, reconcile dry-run, reconcile fix-ingests,
+  reconcile MCP default of `fix=True`, dispatch count.
+- 211 tests passing (was 205).
+
+---
+
 ## [0.8.0] — 2026-04-23
 
 Cleaner narratives + a real bug-finding test layer underneath.

@@ -362,79 +362,43 @@ def reconcile(
     By default, only prints a summary. Pass --fix to re-ingest the problem
     buckets using the current project-inference logic.
     """
-    from longhand.recall.project_fallback import (
-        claim_ingest_lock,
-        release_ingest_lock,
-    )
+    from longhand.recall.reconcile import run_reconcile
 
     store = _get_store(data_dir)
+    report = run_reconcile(store, fix=fix)
 
-    files = discover_sessions()
-    if not files:
+    if report.files_on_disk == 0:
         console.print("[yellow]No session files found on disk.[/yellow]")
         console.print("Default location: ~/.claude/projects")
         return
 
-    with store.sqlite.connect() as conn:
-        rows = conn.execute(
-            "SELECT transcript_path, project_id FROM sessions"
-        ).fetchall()
-    indexed: dict[str, str | None] = {r[0]: r[1] for r in rows}
-
-    missing: list[Path] = []
-    null_project: list[Path] = []
-    fully_indexed = 0
-    for f in files:
-        state = indexed.get(str(f), "__not_found__")
-        if state == "__not_found__":
-            missing.append(f)
-        elif state is None:
-            null_project.append(f)
-        else:
-            fully_indexed += 1
-
-    console.print(f"[bold]On disk:[/bold] {len(files)} JSONL files")
-    console.print(f"  [green]{fully_indexed}[/green] fully indexed")
+    console.print(f"[bold]On disk:[/bold] {report.files_on_disk} JSONL files")
+    console.print(f"  [green]{report.fully_indexed}[/green] fully indexed")
     console.print(
-        f"  [yellow]{len(null_project)}[/yellow] ingested but project_id IS NULL"
+        f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL"
     )
-    console.print(f"  [red]{len(missing)}[/red] missing from sessions")
+    console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
 
     if not fix:
-        if missing or null_project:
+        if report.missing or report.null_project:
             console.print("\n[dim]Run with --fix to re-ingest.[/dim]")
         return
 
-    to_process = missing + null_project
-    if not to_process:
-        console.print("\n[green]Nothing to fix.[/green]")
-        return
-
-    if not claim_ingest_lock(store):
+    if report.lock_unavailable:
         console.print("[yellow]Another ingest is running — aborting reconcile.[/yellow]")
         raise typer.Exit(1)
 
-    console.print(f"\n[cyan]Re-ingesting {len(to_process)} file(s)...[/cyan]")
-    ingested = 0
-    errors = 0
-    try:
-        for f in to_process:
-            try:
-                parser = JSONLParser(f)
-                events = list(parser.parse_events())
-                if not events:
-                    continue
-                session = parser.build_session(events)
-                store.ingest_session(session, events, run_analysis=True)
-                ingested += 1
-            except Exception as e:
-                errors += 1
-                console.print(f"  [red]✗[/red] {f.name}: {e}")
-    finally:
-        release_ingest_lock(store)
+    if not (report.missing or report.null_project):
+        console.print("\n[green]Nothing to fix.[/green]")
+        return
 
     console.print(
-        f"\n[bold]Re-ingested {ingested}[/bold] ([dim]{errors} errors[/dim])"
+        f"\n[cyan]Re-ingesting {len(report.missing) + len(report.null_project)} file(s)...[/cyan]"
+    )
+    for err in report.errors:
+        console.print(f"  [red]✗[/red] {Path(err['path']).name}: {err['error']}")
+    console.print(
+        f"\n[bold]Re-ingested {report.ingested}[/bold] ([dim]{len(report.errors)} errors[/dim])"
     )
 
 
