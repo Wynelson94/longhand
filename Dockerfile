@@ -1,5 +1,5 @@
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir longhand==0.8.0
+RUN pip install --no-cache-dir longhand==0.8.1
 
 ENTRYPOINT ["longhand", "mcp-server"]
