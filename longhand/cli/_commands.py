@@ -907,6 +907,46 @@ def projects(
 
 
 # -----------------------------------------------------------------------------
+# PLANS — every Write/Edit to ~/.claude/plans/*.md across all sessions
+# -----------------------------------------------------------------------------
+
+
+plans_app = typer.Typer(name="plans", help="Plan files written across all sessions")
+app.add_typer(plans_app, name="plans")
+
+
+@plans_app.command("list")
+def plans_list(
+    limit: int = typer.Option(50, "--limit"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """List every Write/Edit ever made to a `~/.claude/plans/*.md` file."""
+    store = _get_store(data_dir)
+    rows = store.sqlite.list_plans(limit=limit)
+
+    if not rows:
+        console.print("[yellow]No plan files found in ingested sessions.[/yellow]")
+        return
+
+    table = Table(title=f"Plan writes ({len(rows)})", show_lines=False)
+    table.add_column("When", style="dim")
+    table.add_column("Plan", style="cyan", overflow="fold")
+    table.add_column("Bytes", justify="right")
+    table.add_column("Session", style="magenta")
+
+    for row in rows:
+        plan_name = row["file_path"].split("/")[-1]
+        table.add_row(
+            _format_timestamp(row["timestamp"]),
+            plan_name,
+            str(row["bytes"] or 0),
+            row["session_id"][:8],
+        )
+
+    console.print(table)
+
+
+# -----------------------------------------------------------------------------
 # GIT LOG — show git operations from sessions
 
 @app.command()
@@ -1883,23 +1923,47 @@ def history(
 # INSTALL / AUTO-INGEST / DOCTOR
 # -----------------------------------------------------------------------------
 
-hook_app = typer.Typer(name="hook", help="Claude Code SessionEnd hook (auto-ingest)")
+hook_app = typer.Typer(
+    name="hook",
+    help="Claude Code SessionEnd + Stop hooks (auto-ingest, live + final)",
+)
 mcp_app = typer.Typer(name="mcp", help="Claude Desktop MCP server integration")
+schedule_app = typer.Typer(
+    name="schedule",
+    help="Background reconciler (launchd) — catches sessions when hooks miss",
+)
 
 app.add_typer(hook_app, name="hook")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(schedule_app, name="schedule")
 
 
 @hook_app.command("install")
 def hook_install_cmd():
-    """Install the SessionEnd hook into ~/.claude/settings.json."""
+    """Install the SessionEnd + Stop hooks into ~/.claude/settings.json."""
     _hook_install()
 
 
 @hook_app.command("uninstall")
 def hook_uninstall_cmd():
-    """Remove the SessionEnd hook."""
+    """Remove the SessionEnd + Stop hooks."""
     _hook_uninstall()
+
+
+@schedule_app.command("install-reconciler")
+def schedule_install_reconciler_cmd():
+    """Install a launchd job that runs `longhand reconcile --fix` every 30 minutes."""
+    from longhand.setup_commands import schedule_install_reconciler
+
+    schedule_install_reconciler()
+
+
+@schedule_app.command("uninstall-reconciler")
+def schedule_uninstall_reconciler_cmd():
+    """Remove the launchd reconciler job."""
+    from longhand.setup_commands import schedule_uninstall_reconciler
+
+    schedule_uninstall_reconciler()
 
 
 # Prompt hook subcommands — auto-context injection on user message
@@ -1992,6 +2056,45 @@ def ingest_session_cmd(
             return
 
     _ingest_single(transcript, data_dir)
+
+
+@app.command("ingest-live")
+def ingest_live_cmd(
+    transcript: str | None = typer.Option(
+        None, "--transcript", "-t", help="Path to a single session JSONL"
+    ),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Tail-read new bytes of a transcript and upsert their events.
+
+    Called by the Stop hook (fires once per assistant turn). Idempotent and
+    fast — skips heavy analysis (episodes, segments, embeddings). The full
+    pass still runs at SessionEnd; this just keeps the events table fresh
+    during the session so a crash doesn't lose work.
+
+    Dual-mode: accepts ``--transcript <path>`` for direct CLI use, OR reads
+    ``{"transcript_path": "..."}`` JSON from stdin when invoked by Claude
+    Code's Stop hook.
+    """
+    from longhand.setup_commands import ingest_live_tail as _ingest_live_tail
+
+    if not transcript:
+        import json as _json
+        import sys as _sys
+
+        try:
+            raw = _sys.stdin.read(262144)  # bounded, ≤256KB
+            if raw.strip():
+                data = _json.loads(raw)
+                if isinstance(data, dict):
+                    transcript = data.get("transcript_path") or data.get("transcript") or None
+        except Exception:
+            pass
+
+        if not transcript:
+            return
+
+    _ingest_live_tail(transcript, data_dir)
 
 
 @app.command()

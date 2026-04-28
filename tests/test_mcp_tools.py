@@ -45,7 +45,7 @@ def _payload(result):
 
 def test_dispatch_has_all_tools():
     """Every handler is registered and every registration points to a coroutine."""
-    assert len(mcp_server._DISPATCH) == 18
+    assert len(mcp_server._DISPATCH) == 19
     for name, handler in mcp_server._DISPATCH.items():
         assert inspect.iscoroutinefunction(handler), f"{name} is not a coroutine"
 

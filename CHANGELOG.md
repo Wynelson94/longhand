@@ -9,6 +9,58 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.9.0] — 2026-04-28
+
+Live ingestion. Sessions are now ingested incrementally during the session
+instead of only at SessionEnd, so a Claude Code crash can no longer wipe an
+in-progress session's events from the index.
+
+### Added
+
+- **`Stop` hook + `longhand ingest-live` command.** Fires once per assistant
+  turn. Tail-reads new bytes from the transcript JSONL and upserts new
+  events into SQLite. Skips heavy analysis (episodes, segments, embeddings,
+  project inference) — those still run at SessionEnd. The events table
+  stays current within seconds of each turn, so an editor crash, a kernel
+  panic, or a stuck SessionEnd subprocess no longer means lost work.
+  `longhand hook install` now installs both SessionEnd and Stop in one go.
+- **Plan history is now first-class.** Every Write/Edit to a
+  `~/.claude/plans/*.md` file is captured as an event. The new
+  `plans_index` SQL view (`longhand plans list` / `mcp_longhand_list_plans`)
+  exposes them in chronological order. Pair with `replay_file` to
+  reconstruct an early version of a plan that was later overwritten —
+  previously, only the final plan was visible because the file on disk
+  had been overwritten by the time SessionEnd fired.
+- **`longhand schedule install-reconciler`** writes a launchd job
+  (macOS) that runs `longhand reconcile --fix` every 30 minutes.
+  Belt-and-suspenders for hard crashes that take down both hooks. Opt-in;
+  `longhand doctor` flags it when missing.
+- **MCP tool `list_plans`** for the Claude-side view of plan history.
+
+### Changed
+
+- **SQLite WAL mode** enabled at first connect. Cuts hook latency under
+  contention from worst-case 5s (`busy_timeout`) to ~10ms. Single-user DB,
+  safe.
+- **`longhand hook uninstall`** now also removes the Stop hook.
+- **`longhand doctor`** has new rows for Stop hook and Reconciler job.
+
+### Schema
+
+- Migration v5: adds `last_offset` column to `ingestion_log` (live cursor
+  separate from `file_size`, which still tracks last-full-ingest size).
+  Backfill: existing rows get `last_offset = file_size`. Adds
+  `plans_index` view over `events`.
+
+### Tests
+
+- 11 new tests covering: stdin contract, offset advance, partial-line
+  handling, lock contention, plans_index view, migration v5,
+  live → SessionEnd composition, episodes-skipped invariant.
+- 222 tests passing (was 211).
+
+---
+
 ## [0.8.1] — 2026-04-23
 
 Closes the staleness silent-failure class across MCP entry points and

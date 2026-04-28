@@ -124,6 +124,10 @@ class SQLiteStore:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout = 5000")
+        # WAL lets the Stop hook ingest concurrently with reads from MCP/CLI
+        # without serializing on the busy_timeout. Idempotent: SQLite remembers
+        # the journal mode in the file header.
+        conn.execute("PRAGMA journal_mode = WAL")
         try:
             yield conn
             conn.commit()
@@ -266,6 +270,74 @@ class SQLiteStore:
             if row is None:
                 return False
             return row["file_size"] == current_size
+
+    def get_live_offset(self, transcript_path: str) -> int:
+        """Return the byte offset already parsed by live ingest (0 if never seen)."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT last_offset FROM ingestion_log WHERE transcript_path = ?",
+                (transcript_path,),
+            ).fetchone()
+            if row is None:
+                return 0
+            return int(row["last_offset"] or 0)
+
+    def live_caught_up(self, transcript_path: str, current_size: int) -> bool:
+        """True when live ingest has already consumed every byte of the file."""
+        return self.get_live_offset(transcript_path) >= current_size
+
+    def update_live_progress(
+        self,
+        transcript_path: str,
+        session_id: str,
+        last_offset: int,
+        event_count: int,
+    ) -> None:
+        """Advance live-ingest cursor without touching `file_size`.
+
+        `file_size` is the size at the last full SessionEnd ingest — leaving it
+        alone preserves the `already_ingested()` short-circuit for the heavy
+        path. Only `last_offset` advances during a Stop-hook tail-read.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ingestion_log
+                    (transcript_path, session_id, ingested_at, file_size, event_count, last_offset)
+                VALUES (?, ?, ?, 0, ?, ?)
+                ON CONFLICT(transcript_path) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    ingested_at = excluded.ingested_at,
+                    event_count = excluded.event_count,
+                    last_offset = excluded.last_offset
+                """,
+                (
+                    transcript_path,
+                    session_id,
+                    _iso(datetime.now()),
+                    event_count,
+                    last_offset,
+                ),
+            )
+
+    def list_plans(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Every Write/Edit ever made to a `~/.claude/plans/*.md` file.
+
+        Backed by the `plans_index` view (migration v5). Plans are stored as
+        regular events; this view is just a convenience filter for the
+        "show me every plan I've written" question.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, event_id, file_path, timestamp, bytes
+                FROM plans_index
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
