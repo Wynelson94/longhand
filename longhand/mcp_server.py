@@ -508,6 +508,22 @@ async def list_tools() -> list[Tool]:
                 "required": ["project_id"],
             },
         ),
+        Tool(
+            name="list_plans",
+            description=(
+                "Every Write/Edit ever made to a `~/.claude/plans/*.md` file across "
+                "all ingested sessions. Returned newest-first with session_id and the "
+                "exact event_id of each write — pair with replay_file to reconstruct "
+                "an early version of a plan that was later overwritten. Use when the "
+                "user asks 'what was the original plan' or 'what did I plan for X.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"default": 50, "description": "Max plans to return (default 50)"},
+                },
+            },
+        ),
     ]
 
 
@@ -1198,6 +1214,13 @@ async def _tool_reconcile(
     return [TextContent(type="text", text=output)]
 
 
+async def _tool_list_plans(
+    store: LonghandStore, arguments: dict[str, Any]
+) -> list[TextContent]:
+    rows = store.sqlite.list_plans(limit=_limit(arguments.get("limit"), 50))
+    return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
+
+
 _DISPATCH: dict[str, Any] = {
     "search": _tool_search,
     "search_in_context": _tool_search_in_context,
@@ -1217,6 +1240,7 @@ _DISPATCH: dict[str, Any] = {
     "find_commits": _tool_find_commits,
     "list_projects": _tool_list_projects,
     "get_project_timeline": _tool_get_project_timeline,
+    "list_plans": _tool_list_plans,
 }
 
 

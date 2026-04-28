@@ -142,12 +142,36 @@ MIGRATIONS: dict[int, str] = {
     SET fix_summary = substr(fix_summary, 9)
     WHERE fix_summary LIKE 'Intent: %';
     """,
+    5: """
+    -- v5: live-ingest support + plans_index view.
+    -- last_offset column is added by _apply_alters with column-existence guard.
+    -- Backfill (last_offset = file_size for existing rows) also runs there.
+
+    CREATE VIEW IF NOT EXISTS plans_index AS
+    SELECT
+        session_id,
+        event_id,
+        file_path,
+        timestamp,
+        length(new_content) AS bytes
+    FROM events
+    WHERE file_path LIKE '%/.claude/plans/%.md'
+      AND file_operation IN ('write', 'edit', 'multi_edit');
+    """,
 }
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(r[1] == column for r in rows)
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
 
 
 def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
@@ -162,6 +186,22 @@ def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
             conn.execute("ALTER TABLE events ADD COLUMN error_detected INTEGER DEFAULT 0")
         if not _column_exists(conn, "events", "error_snippet"):
             conn.execute("ALTER TABLE events ADD COLUMN error_snippet TEXT")
+    if version == 5:
+        # last_offset = byte position parsed during live ingest. file_size still
+        # tracks the size at last full SessionEnd ingest, so already_ingested()
+        # short-circuits unchanged. Backfill last_offset = file_size so the
+        # first Stop hook after upgrade tails new bytes only.
+        # Guard on table existence: migrations may be applied before the base
+        # SCHEMA was loaded (test path that exercises apply_migrations alone).
+        if _table_exists(conn, "ingestion_log") and not _column_exists(
+            conn, "ingestion_log", "last_offset"
+        ):
+            conn.execute(
+                "ALTER TABLE ingestion_log ADD COLUMN last_offset INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                "UPDATE ingestion_log SET last_offset = file_size WHERE last_offset = 0"
+            )
 
 
 def _ensure_version_table(conn: sqlite3.Connection) -> None:

@@ -237,6 +237,84 @@ class JSONLParser:
                     yield event
                     sequence += 1
 
+    def parse_tail_from_offset(
+        self, start_offset: int, base_sequence: int = 0
+    ) -> tuple[list[Event], int]:
+        """Parse only newline-terminated lines starting at `start_offset`.
+
+        Returns ``(events, safe_offset)``:
+        - ``events`` are Event objects parsed from full lines beyond ``start_offset``.
+          Each event's ``sequence`` is offset by ``base_sequence`` so it slots
+          chronologically after events the caller already has.
+        - ``safe_offset`` is one past the last newline byte we consumed. The
+          caller should persist this as the next ``start_offset``. Bytes past
+          ``safe_offset`` are treated as a partial line still being written by
+          Claude Code — re-read on the next call.
+
+        Used by the live-ingest Stop hook. Cross-boundary tool linkage (a
+        tool_result whose tool_call lived in earlier bytes) is best-effort:
+        ``_tool_name_by_id`` only covers the current tail. SessionEnd's full
+        re-parse fills in any gaps.
+        """
+        if start_offset < 0:
+            start_offset = 0
+
+        try:
+            file_size = self.file_path.stat().st_size
+        except OSError:
+            return [], start_offset
+
+        if start_offset >= file_size:
+            return [], file_size
+
+        events: list[Event] = []
+        sequence = base_sequence
+        # We don't dedupe across boundaries — events with colliding base ids
+        # already in the DB are upserted via INSERT OR REPLACE keyed on event_id.
+        seen_ids: dict[str, int] = {}
+
+        # Read the new bytes as raw bytes so we can reason about exact offsets.
+        with self.file_path.open("rb") as f:
+            f.seek(start_offset)
+            buffer = f.read(file_size - start_offset)
+
+        # Find the last newline — anything past it is a partial line in flight.
+        last_nl = buffer.rfind(b"\n")
+        if last_nl < 0:
+            # No complete line yet; don't advance the cursor.
+            return [], start_offset
+
+        complete = buffer[: last_nl + 1]
+        safe_offset = start_offset + last_nl + 1
+
+        for raw_line in complete.split(b"\n"):
+            if not raw_line:
+                continue
+            if len(raw_line) > MAX_LINE_LENGTH:
+                continue
+            try:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+            except Exception:
+                continue
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            for event in self._entry_to_events(entry, sequence):
+                base_id = event.event_id
+                if base_id in seen_ids:
+                    seen_ids[base_id] += 1
+                    event.event_id = f"{base_id}#{seen_ids[base_id]}"
+                else:
+                    seen_ids[base_id] = 0
+                events.append(event)
+                sequence += 1
+
+        return events, safe_offset
+
     def _entry_to_events(self, entry: dict[str, Any], base_sequence: int) -> list[Event]:
         """Convert one JSONL entry into zero or more Events.
 
