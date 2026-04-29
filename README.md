@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 
 **Persistent local memory for Claude Code.** Every tool call, every file edit, every thinking block from every Claude Code session — stored verbatim on your machine. Searchable, replayable, and recallable by fuzzy natural-language questions. Zero API calls. Zero summaries. Zero decisions made by an AI about what's worth remembering.
@@ -22,6 +22,13 @@ pip install longhand
 longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
+
+**Upgrading to 0.9.0?** Live ingestion captures sessions in flight, plan history is preserved as first-class data, and an optional reconciler job keeps the index honest in the background:
+
+- New `longhand ingest-live` command runs from Claude Code's `Stop` hook to tail the active transcript between assistant turns. Sessions show up in `recall` while you're still working, not after they end.
+- New `longhand plans list` command and `list_plans` MCP tool surface every Write/Edit to `~/.claude/plans/*.md` across your entire history. Plans are now extracted as their own entity alongside episodes.
+- New `longhand schedule install-reconciler` installs an optional launchd job that runs `reconcile --fix` periodically — catches anything the live and post-session hooks missed without you ever thinking about it.
+- The Stop hook coexists with the existing SessionEnd hook: live tails the transcript as it grows; SessionEnd does the full analysis pass when the session closes.
 
 **Upgrading to 0.8.1?** Staleness signals now propagate everywhere they belong, and `reconcile` is an MCP tool — Claude can self-heal the index from inside a session:
 
@@ -52,7 +59,7 @@ longhand reanalyze               # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `reanalyze` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.8.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 211 unit tests passing.*
+> *Status: v0.9.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 222 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -173,8 +180,11 @@ Longhand reads those files. Then it gives you:
 - **Conversation segments** — topic-level clustering (stories, design discussions, debugging, planning) so recall finds the *why*, not just the *what*
 - **Git-aware project recall** — ask "where did we leave off on X" and get recent commits, unresolved issues, last session outcome in one call
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
-- **MCP server** — 16 tools that let Claude query Longhand directly during live conversations
+- **MCP server** — 19 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
+- **Live ingestion** — optional `Stop` hook tails the active transcript between turns so in-flight sessions show up in `recall` immediately
+- **Plan history** — every Write/Edit to `~/.claude/plans/*.md` is captured as a first-class entity, queryable via `longhand plans list` and the `list_plans` MCP tool
+- **Background reconciler** — optional launchd job (`longhand schedule install-reconciler`) keeps the index honest without manual `reconcile --fix` runs
 - **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message (configurable threshold and size cap)
 - **Configurable** — `longhand config` to tune injection relevance, token budget, and behavior without editing code
 
@@ -204,13 +214,15 @@ longhand setup
 <summary>Or run the individual commands yourself</summary>
 
 ```bash
-longhand ingest                # ingest all your existing Claude Code history
-longhand analyze --all         # run analysis (projects, outcomes, episodes, segments)
-longhand hook install          # auto-ingest every future session
-longhand prompt-hook install   # (optional) auto-inject past context into new prompts
-longhand mcp install           # let Claude Code call Longhand as MCP tools
-longhand config                # view/tune hook behavior (relevance threshold, injection size)
-longhand doctor                # verify everything is wired up
+longhand ingest                       # ingest all your existing Claude Code history
+longhand analyze --all                # run analysis (projects, outcomes, episodes, segments)
+longhand hook install                 # wires both SessionEnd and Stop hooks
+longhand ingest-live                  # live-tail the active transcript (Stop hook calls this)
+longhand prompt-hook install          # (optional) auto-inject past context into new prompts
+longhand mcp install                  # let Claude Code call Longhand as MCP tools
+longhand schedule install-reconciler  # (optional) launchd job to run reconcile --fix periodically
+longhand config                       # view/tune hook behavior (relevance threshold, injection size)
+longhand doctor                       # verify everything is wired up
 ```
 </details>
 
@@ -261,6 +273,11 @@ longhand export <session-id-prefix>         # full session timeline
 longhand config                             # show current hook settings
 longhand config --set hook.min_relevance=3.0  # tune injection threshold
 longhand config --set hook.max_inject_chars=1000  # cap token usage
+
+# Plans + background maintenance
+longhand plans list                         # every plan-mode plan you've written
+longhand plans list --limit 100             # raise the row cap (default 50)
+longhand schedule install-reconciler        # background launchd job; runs reconcile --fix
 ```
 
 Session IDs accept prefix matches — `longhand timeline cf86` is enough if only one session starts with that.
@@ -309,12 +326,13 @@ That's one local command. No API call. The fix came from a session file Claude C
 
 ## MCP Integration (Claude Desktop)
 
-Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has sixteen tools:
+Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has nineteen tools:
 
 **Core (searchable archive):**
 - `search` — semantic search with session, project, tool, file, and event_type filters (all combinable)
 - `list_sessions` — recent sessions with project/time filters
 - `get_session_timeline` — chronological view with offset/tail pagination and summary-only scan mode
+- `get_latest_events` — most recent events across all sessions, project- and tool-filterable
 - `replay_file` — reconstruct file state at a point in time
 - `get_file_history` — every edit to a file across all sessions
 - `get_stats` — storage statistics
@@ -328,10 +346,14 @@ Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After 
 - `get_episode` — full detail for one episode including diff + file state
 - `list_projects` — browse inferred projects (compact by default, verbose optional)
 - `get_project_timeline` — session-level timeline for one project
+- `list_plans` — every Write/Edit to `~/.claude/plans/*.md` across your entire history
 
 **Git history:**
 - `get_session_commits` — all git operations in a session (commits, pushes, checkouts, merges)
 - `find_commits` — search across all sessions by commit message, hash prefix, or branch name
+
+**Self-healing:**
+- `reconcile` — wraps `longhand reconcile --fix` so Claude can re-attribute and re-ingest from inside a session after a staleness banner
 
 All tools support `max_chars` output capping with pagination hints. No more 96k dumps crashing your context.
 
@@ -341,19 +363,29 @@ Once installed, you can ask Claude things like *"what did we decide about the au
 
 ## Auto-Ingest
 
-`longhand hook install` adds a `SessionEnd` hook to `~/.claude/settings.json`:
+`longhand hook install` adds two hooks to `~/.claude/settings.json` — `Stop` for live tailing between turns, `SessionEnd` for the full analysis pass at session close:
 
 ```json
 {
   "hooks": {
+    "Stop": [
+      {"command": "longhand ingest-live"}
+    ],
     "SessionEnd": [
-      {"command": "longhand ingest-session --transcript \"$CLAUDE_TRANSCRIPT_PATH\""}
+      {"command": "longhand ingest-session"}
     ]
   }
 }
 ```
 
-Every Claude Code session you have from that point forward will be automatically ingested and analyzed when it ends. Non-blocking. Runs in one to two seconds. You don't have to think about it again.
+Both commands read `transcript_path` from the hook's stdin JSON, so no flags are needed in the hook entry itself.
+
+- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and ingests new events incrementally so an in-flight session is queryable in `recall` while you're still working in it.
+- **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings.
+
+Both are non-blocking and run in one to two seconds. You don't have to think about either of them again.
+
+**Optional background reconciler:** `longhand schedule install-reconciler` adds a launchd plist that runs `reconcile --fix` on a schedule. Catches any sessions the hooks missed (e.g., when a hook silently failed) without you ever needing to remember it exists.
 
 ---
 
@@ -373,7 +405,7 @@ longhand/
 ├── analysis/              — per-session (project, outcomes, episodes, embeddings)
 ├── recall/                — per-query (time parsing, project match, narrative)
 ├── cli.py                 — Typer CLI with Rich output
-├── mcp_server.py          — Model Context Protocol server (16 tools)
+├── mcp_server.py          — Model Context Protocol server (19 tools)
 └── setup_commands.py      — hook install, mcp install, config, doctor
 ```
 
@@ -449,7 +481,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-174 unit tests passing. All 17 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+222 unit tests passing. All 19 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 
