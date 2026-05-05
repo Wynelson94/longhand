@@ -19,7 +19,7 @@ from typing import Any
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent, Tool, ToolAnnotations
 except ImportError:
     print(
         "The `mcp` package is required for the MCP server. "
@@ -84,6 +84,62 @@ MAX_LIMIT = 1000
 MAX_OUTPUT_CHARS = 200000
 
 
+# All tools except `reconcile` are pure read-over-local-storage:
+#   readOnlyHint=True so MCP clients can auto-approve them
+#   openWorldHint=False — no network, no external services, just SQLite + Chroma + JSONL
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+
+# `reconcile` mutates the SQLite store (re-ingests missing transcripts) but is
+# idempotent — re-running with the same on-disk state is a no-op.
+_RECONCILE_HINTS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+
+
+# Reusable output schemas — most Longhand tools return either a flat list of
+# event-shaped rows or a list of session-shaped rows. Defining once and
+# reusing keeps the Tool() blocks readable.
+_EVENT_ROW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "event_id": {"type": "string"},
+        "session_id": {"type": "string"},
+        "event_type": {"type": "string"},
+        "timestamp": {"type": "string"},
+        "tool_name": {"type": ["string", "null"]},
+        "file_path": {"type": ["string", "null"]},
+        "content": {"type": "string"},
+    },
+}
+_GIT_OP_ROW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string"},
+        "timestamp": {"type": "string"},
+        "operation_type": {"type": "string"},
+        "branch": {"type": ["string", "null"]},
+        "hash": {"type": ["string", "null"]},
+        "message": {"type": ["string", "null"]},
+    },
+}
+_SESSION_ROW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "session_id": {"type": "string"},
+        "started_at": {"type": ["string", "null"]},
+        "ended_at": {"type": ["string", "null"]},
+        "event_count": {"type": ["integer", "null"]},
+        "project_id": {"type": ["string", "null"]},
+        "project_path": {"type": ["string", "null"]},
+        "outcome": {"type": ["string", "null"]},
+        "outcome_summary": {"type": ["string", "null"]},
+    },
+}
+
+
 def _int(value: Any, default: int) -> int:
     """Coerce a value to int, handling string inputs from MCP bridge."""
     if value is None:
@@ -133,6 +189,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="search",
+            title="Search Session Events (Semantic)",
             description=(
                 "Semantic search across all stored Claude Code session events. "
                 "Returns events matching a natural language query, with optional "
@@ -145,8 +202,8 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language query"},
-                    "limit": {"default": 10, "description": "Max results (default 10)"},
-                    "session_id": {"type": "string", "description": "Scope search to a single session (prefix match)"},
+                    "limit": {"type": "integer", "default": 10, "description": "Max results (default 10, capped at 1000)"},
+                    "session_id": {"type": "string", "description": "Scope search to a single session (prefix match — first 8 chars usually enough)"},
                     "project_id": {"type": "string", "description": "Scope search to a project by project_id"},
                     "project_name": {"type": "string", "description": "Scope search to a project by name substring (e.g. 'gonzo')"},
                     "event_type": {
@@ -155,13 +212,20 @@ async def list_tools() -> list[Tool]:
                     },
                     "tool_name": {"type": "string", "description": "Filter by tool name (Edit, Bash, Read, etc.)"},
                     "file_path_contains": {"type": "string", "description": "Filter to events with an explicit file_path containing this string (tool_call/tool_result events only — user messages won't have file_path metadata)"},
-                    "max_chars": {"default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
+                    "max_chars": {"type": "integer", "default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
                 },
                 "required": ["query"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Array of matching events ordered by semantic relevance.",
+                "items": _EVENT_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="search_in_context",
+            title="Search a Session With Surrounding Context",
             description=(
                 "Search within a specific session and return matches WITH surrounding "
                 "conversation context. This is the tool you want when you know WHICH "
@@ -173,40 +237,75 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match)"},
+                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
                     "query": {"type": "string", "description": "Natural language query to find within the session"},
-                    "context_events": {"default": 5, "description": "Number of events to include before AND after each match (default 5)"},
-                    "limit": {"default": 3, "description": "Max number of matches to return with context (default 3)"},
+                    "context_events": {"type": "integer", "default": 5, "description": "Number of events to include before AND after each match (default 5)"},
+                    "limit": {"type": "integer", "default": 3, "description": "Max number of matches to return with context (default 3)"},
                     "event_type": {"type": "string", "description": "Optional: filter matches to a single event type"},
-                    "max_chars": {"default": 20000, "description": "Max total output characters (default 20000)"},
+                    "max_chars": {"type": "integer", "default": 20000, "description": "Max total output characters (default 20000)"},
                 },
                 "required": ["session_id", "query"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Array of matches; each match wraps the matched event plus the surrounding window.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "match": _EVENT_ROW_SCHEMA,
+                        "context_before": {"type": "array", "items": _EVENT_ROW_SCHEMA},
+                        "context_after": {"type": "array", "items": _EVENT_ROW_SCHEMA},
+                    },
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="list_sessions",
+            title="List Indexed Sessions",
             description=(
                 "List recent Claude Code sessions that Longhand has indexed. "
                 "Returns session ID, project path, start/end timestamps, event count, "
                 "and outcome (shipped/fixed/stuck/exploratory) for each session. "
                 "Use this to orient before drilling into a specific session — e.g., "
                 "'which sessions touched this project last week?' Filter by project "
-                "path substring to narrow results. NOT for searching content — "
-                "use search or recall for that. When a `project` filter matches a "
-                "known project and its on-disk transcripts exceed what's indexed, "
-                "the response wraps a `{stale, stale_reason, sessions}` envelope — "
-                "call the `reconcile` tool to catch up."
+                "path substring to narrow results. NOT for searching content — use "
+                "`search` or `recall` for that. NOT for cross-session git history — "
+                "use `find_commits`. When a `project` filter matches a known project "
+                "and its on-disk transcripts exceed what's indexed, the response wraps "
+                "a `{stale, stale_reason, sessions}` envelope — call the `reconcile` "
+                "tool to catch up."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')"},
-                    "limit": {"default": 50, "description": "Max results (default 50)"},
+                    "limit": {"type": "integer", "default": 50, "description": "Max results (default 50, capped at 1000)"},
                 },
             },
+            outputSchema={
+                "oneOf": [
+                    {
+                        "type": "array",
+                        "description": "Plain list of session rows when no staleness was detected.",
+                        "items": _SESSION_ROW_SCHEMA,
+                    },
+                    {
+                        "type": "object",
+                        "description": "Staleness envelope when on-disk transcripts exceed indexed count.",
+                        "properties": {
+                            "stale": {"type": "boolean"},
+                            "stale_reason": {"type": "string"},
+                            "sessions": {"type": "array", "items": _SESSION_ROW_SCHEMA},
+                        },
+                    },
+                ],
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_session_timeline",
+            title="Session Event Timeline",
             description=(
                 "Get a chronological timeline of events in a session. Supports session "
                 "id prefix match. Use 'tail' to get only the last N events (great for "
@@ -218,9 +317,9 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"default": 100, "description": "Max events to return (default 100)"},
-                    "offset": {"default": 0, "description": "Skip first N events (for pagination)"},
-                    "tail": {"description": "Return only the last N events of the session"},
+                    "limit": {"type": "integer", "default": 100, "description": "Max events to return (default 100, capped at 1000)"},
+                    "offset": {"type": "integer", "default": 0, "description": "Skip first N events (for pagination)"},
+                    "tail": {"type": "integer", "description": "Return only the last N events of the session"},
                     "include_thinking": {"type": "boolean", "default": True},
                     "event_type": {"type": "string", "description": "Filter to a single event type"},
                     "summary_only": {
@@ -228,13 +327,26 @@ async def list_tools() -> list[Tool]:
                         "default": False,
                         "description": "Return only event_type, timestamp, tool_name, file_path — no content. Great for scanning long sessions.",
                     },
-                    "max_chars": {"default": 16000, "description": "Max total output characters"},
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["session_id"],
             },
+            outputSchema={
+                "type": "object",
+                "description": "Wrapped result with pagination metadata + the events array.",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "returned": {"type": "integer"},
+                    "offset": {"type": ["integer", "null"]},
+                    "tail": {"type": ["integer", "null"]},
+                    "events": {"type": "array", "items": _EVENT_ROW_SCHEMA},
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_latest_events",
+            title="Latest Events in a Session",
             description=(
                 "Get the N most recent events in a session, in reverse chronological order "
                 "(sequence DESC). Use this when you need 'what was the latest X' — e.g., "
@@ -246,46 +358,73 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"default": 10, "description": "Max events to return (default 10)"},
+                    "limit": {"type": "integer", "default": 10, "description": "Max events to return (default 10, capped at 1000)"},
                     "event_type": {
                         "type": "string",
                         "description": "Optional: filter to a single event type (user_message, assistant_text, tool_call, etc.)",
                     },
-                    "max_chars": {"default": 16000, "description": "Max total output characters"},
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["session_id"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Events in reverse chronological order (most recent first).",
+                "items": _EVENT_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="replay_file",
+            title="Reconstruct File State at a Point in Time",
             description=(
                 "Reconstruct the exact state of a file at any point in a past session. "
                 "Applies every Write/Edit event verbatim from the session JSONL in order — "
                 "no summarization, no approximation. Returns the full file content as it "
-                "existed at that moment. Use this when you need to see 'what did this file "
+                "existed at that moment. Use when you need to see 'what did this file "
                 "look like after that refactor?' or 'what was the state before it broke?' "
                 "Pass at_event_id to stop replay at a specific event; omit it to get the "
-                "final state at session end. Requires session_id and file_path."
+                "final state at session end. NOT for browsing every change to a file — "
+                "use `get_file_history` for an edit-by-edit log instead. NOT for finding "
+                "which session edited a file — use `get_file_history` (no session_id) for "
+                "that. Requires session_id and file_path."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match supported)"},
-                    "file_path": {"type": "string", "description": "Exact file path to reconstruct"},
-                    "at_event_id": {"type": "string", "description": "Optional: stop replay at this event ID to get mid-session state"},
+                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
+                    "file_path": {"type": "string", "description": "Exact file path to reconstruct (must match the path the session used)"},
+                    "at_event_id": {"type": "string", "description": "Optional: stop replay at this event ID to get mid-session state. Omit for final state at session end."},
                 },
                 "required": ["session_id", "file_path"],
             },
+            outputSchema={
+                "type": "object",
+                "description": "Reconstructed file state and the metadata about how it was built.",
+                "properties": {
+                    "file_path": {"type": "string"},
+                    "session_id": {"type": "string"},
+                    "at_event_id": {"type": ["string", "null"]},
+                    "at_timestamp": {"type": "string"},
+                    "source": {"type": "string", "description": "Origin of the base content (write, initial_read, etc.)"},
+                    "edits_applied": {"type": "integer"},
+                    "content": {"type": "string", "description": "Full reconstructed file content at the requested point in time."},
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_file_history",
+            title="Edit Log for a File Across Sessions",
             description=(
                 "Get every edit ever made to a file across all sessions, in chronological "
                 "order. Returns session ID, timestamp, event type (Write/Edit), old and new "
                 "content for each change. Use this to answer 'how has this file evolved?' or "
-                "'who changed this and when?' across your entire history. Optionally scope "
-                "to a single session. For reconstructing exact file state at a point in time, "
-                "use replay_file instead."
+                "'which session edited this file last?' across your entire history. "
+                "Optionally scope to a single session. NOT for reconstructing a file's "
+                "state at a moment in time — use `replay_file` for that. NOT for content "
+                "search inside the file body — use `search` with `file_path_contains` "
+                "instead."
             ),
             inputSchema={
                 "type": "object",
@@ -295,21 +434,50 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["file_path"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Chronological list of edit events for the file.",
+                "items": _EVENT_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_stats",
+            title="Storage Statistics",
             description=(
-                "Get overall Longhand storage statistics: total sessions, events, "
-                "tool calls, file edits, thinking blocks, vectors indexed, projects, "
-                "episodes (resolved/unresolved), and data directory path. "
-                "Use this to verify Longhand is healthy, check how much history is "
-                "indexed, or answer 'how many sessions do I have?' Returns a flat "
-                "key-value object — no parameters needed."
+                "Returns a flat key-value snapshot of Longhand's local SQLite + Chroma "
+                "store: total sessions, events, tool_calls, file_edits, thinking_blocks, "
+                "vectors_indexed, projects, episodes (resolved + unresolved), and the "
+                "data_dir path. Use as a health check after a fresh upgrade, to verify "
+                "ingest is keeping up with on-disk transcripts, or to answer 'how much "
+                "have I indexed?' "
+                "NOT for searching session content — `search` and `recall` are the tools "
+                "for that. NOT for per-project counts — call `list_projects` for that. "
+                "Takes no parameters; output is a single flat object."
             ),
             inputSchema={"type": "object", "properties": {}},
+            outputSchema={
+                "type": "object",
+                "description": "Flat key-value snapshot of Longhand's local store.",
+                "properties": {
+                    "total_sessions": {"type": "integer"},
+                    "total_events": {"type": "integer"},
+                    "total_tool_calls": {"type": "integer"},
+                    "total_file_edits": {"type": "integer"},
+                    "total_thinking_blocks": {"type": "integer"},
+                    "total_vectors": {"type": "integer"},
+                    "total_projects": {"type": "integer"},
+                    "total_episodes": {"type": "integer"},
+                    "resolved_episodes": {"type": "integer"},
+                    "unresolved_episodes": {"type": "integer"},
+                    "data_dir": {"type": "string"},
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="recall",
+            title="Proactive Recall (Episodes + Narrative)",
             description=(
                 "PROACTIVE MEMORY — START HERE for any 'do you remember...' question. "
                 "Handles fuzzy time references ('a couple months ago'), project matching "
@@ -322,14 +490,16 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language question"},
-                    "max_episodes": {"default": 5, "description": "Max episodes to return"},
-                    "max_chars": {"default": 16000, "description": "Max total output characters"},
+                    "max_episodes": {"type": "integer", "default": 5, "description": "Max episodes to return"},
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
                 },
                 "required": ["query"],
             },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="recall_project_status",
+            title="Pick Up Where You Left Off (Project Status)",
             description=(
                 "Get the current status of a project — where you left off, recent "
                 "commits, unresolved issues, and latest conversation context. Takes "
@@ -345,15 +515,17 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Project name, alias, or ID (fuzzy match)",
                     },
-                    "max_commits": {"default": 10, "description": "Max recent commits to show"},
-                    "max_episodes": {"default": 5, "description": "Max recent episodes"},
-                    "max_chars": {"default": 16000, "description": "Max output characters"},
+                    "max_commits": {"type": "integer", "default": 10, "description": "Max recent commits to show"},
+                    "max_episodes": {"type": "integer", "default": 5, "description": "Max recent episodes"},
+                    "max_chars": {"type": "integer", "default": 16000, "description": "Max output characters"},
                 },
                 "required": ["project"],
             },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="reconcile",
+            title="Re-ingest Missing Transcripts (Disk ↔ DB)",
             description=(
                 "Bridge disk↔DB drift from inside an MCP session. Re-ingests any "
                 "on-disk Claude Code transcripts that are missing from the sessions "
@@ -362,9 +534,10 @@ async def list_tools() -> list[Tool]:
                 "`stale_reason` pointing at reconcile, or when `recall_project_status` "
                 "reports `session_count_on_disk > session_count_indexed`. "
                 "Returns counts of fully-indexed, null-project, missing, ingested, "
-                "and errors. Acquires the ingest lock — serialized with concurrent "
-                "ingestion. May take 30s+ on cold state because it runs embeddings "
-                "and episode extraction during re-ingest."
+                "and errors. Idempotent — re-running with the same on-disk state is a "
+                "no-op. Acquires the ingest lock — serialized with concurrent ingestion. "
+                "May take 30s+ on cold state because it runs embeddings and episode "
+                "extraction during re-ingest. Pass `fix=false` for a dry-run summary."
             ),
             inputSchema={
                 "type": "object",
@@ -376,9 +549,22 @@ async def list_tools() -> list[Tool]:
                     },
                 },
             },
+            outputSchema={
+                "type": "object",
+                "description": "Counts of fully-indexed, null-project, missing, ingested, and errors.",
+                "properties": {
+                    "fully_indexed": {"type": "integer"},
+                    "null_project": {"type": "integer"},
+                    "missing": {"type": "integer"},
+                    "ingested": {"type": "integer"},
+                    "errors": {"type": "integer"},
+                },
+            },
+            annotations=_RECONCILE_HINTS,
         ),
         Tool(
             name="match_project",
+            title="Fuzzy Project Match",
             description=(
                 "Fuzzy project matching. Given a partial project name, category, or "
                 "description, returns candidate projects with match reasons. Useful for "
@@ -388,67 +574,135 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "top_k": {"default": 5, "description": "Max project matches to return"},
+                    "top_k": {"type": "integer", "default": 5, "description": "Max project matches to return"},
                 },
                 "required": ["query"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Project candidates with match reasons.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "display_name": {"type": ["string", "null"]},
+                        "canonical_path": {"type": ["string", "null"]},
+                        "category": {"type": ["string", "null"]},
+                        "score": {"type": ["number", "null"]},
+                        "reasons": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="find_episodes",
+            title="Find Problem→Fix Episodes",
             description=(
                 "Structured search for problem→fix episodes. Filters: project_ids, time "
                 "range, keyword, has_fix. Returns raw episode rows. Use this when you "
-                "already know the project or want data instead of narrative."
+                "already know the project or want raw data instead of narrative. NOT "
+                "for narrative recall — use `recall` for that. NOT for full episode "
+                "detail — pass an episode_id to `get_episode` after this."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project_ids": {"type": "array", "items": {"type": "string"}},
-                    "since": {"type": "string", "description": "ISO timestamp"},
-                    "until": {"type": "string", "description": "ISO timestamp"},
-                    "keyword": {"type": "string"},
-                    "has_fix": {"type": "boolean", "default": True},
-                    "limit": {"default": 20, "description": "Max results (default 20)"},
+                    "project_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional: filter to one or more project_ids"},
+                    "since": {"type": "string", "description": "ISO timestamp — only episodes after this date"},
+                    "until": {"type": "string", "description": "ISO timestamp — only episodes before this date"},
+                    "keyword": {"type": "string", "description": "Substring match against episode summary text"},
+                    "has_fix": {"type": "boolean", "default": True, "description": "If True, return only episodes that have a resolved fix"},
+                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
                 },
             },
+            outputSchema={
+                "type": "array",
+                "description": "Raw episode rows in reverse chronological order.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "episode_id": {"type": "string"},
+                        "project_id": {"type": ["string", "null"]},
+                        "session_id": {"type": ["string", "null"]},
+                        "started_at": {"type": ["string", "null"]},
+                        "resolved_at": {"type": ["string", "null"]},
+                        "summary": {"type": ["string", "null"]},
+                        "fix_summary": {"type": ["string", "null"]},
+                        "has_fix": {"type": "boolean"},
+                    },
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_episode",
+            title="Full Episode Detail (Problem → Fix → Verify)",
             description=(
                 "Full detail for one episode by episode_id. Includes all referenced events "
                 "(problem, diagnosis thinking block, fix edit, verification), the diff, "
-                "and the reconstructed file state after the fix."
+                "and the reconstructed file state after the fix. NOT for browsing — call "
+                "`find_episodes` first to discover episode_ids. NOT for finding episodes by "
+                "topic — `recall` is the narrative entry point."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"episode_id": {"type": "string"}},
+                "properties": {"episode_id": {"type": "string", "description": "Exact episode_id from find_episodes or recall"}},
                 "required": ["episode_id"],
             },
+            outputSchema={
+                "type": "object",
+                "description": "Episode metadata, referenced events, diff, and post-fix file state.",
+                "properties": {
+                    "episode_id": {"type": "string"},
+                    "summary": {"type": ["string", "null"]},
+                    "fix_summary": {"type": ["string", "null"]},
+                    "events": {"type": "array", "items": _EVENT_ROW_SCHEMA},
+                    "diff": {"type": ["string", "null"]},
+                    "file_state_after_fix": {"type": ["string", "null"]},
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_session_commits",
+            title="Get Git Operations from a Session",
             description=(
-                "Get all git operations (commits, pushes, merges, checkouts, etc.) from a "
-                "session, chronologically. Links session work to git history — the in-between "
-                "that git log doesn't capture."
+                "Returns every git operation (commit, push, pull, checkout, merge, etc.) "
+                "captured during a single Claude Code session, in chronological order. "
+                "Each row carries the timestamp, operation type, branch, hash, and "
+                "commit message — the in-between that `git log` doesn't capture, like "
+                "the failed pushes, mid-work checkouts, and rolled-back merges. "
+                "Use when you want to reconstruct the git story of one session, link a "
+                "specific session event to its commit, or audit a session's history. NOT "
+                "for cross-session search — use `find_commits` if you don't already have "
+                "a session_id. Filter by `operation_type` to focus (e.g. only commits)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match)"},
-                    "operation_type": {"type": "string", "description": "Filter: commit, push, pull, checkout, merge, etc."},
-                    "limit": {"default": 100, "description": "Max results"},
-                    "max_chars": {"default": 12000, "description": "Max output characters"},
+                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
+                    "operation_type": {"type": "string", "description": "Filter by operation: commit, push, pull, checkout, merge, fetch, rebase, etc."},
+                    "limit": {"type": "integer", "default": 100, "description": "Max results (default 100, capped at 1000)"},
+                    "max_chars": {"type": "integer", "default": 12000, "description": "Max output characters (default 12000); response truncates with a hint past this size"},
                 },
                 "required": ["session_id"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Git operations in chronological order.",
+                "items": _GIT_OP_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="find_commits",
+            title="Find Commits Across Sessions",
             description=(
                 "Search across all sessions for git commits matching a query — by commit "
                 "message, hash prefix, or branch name. Great for 'find that commit where "
-                "we fixed the parser' queries."
+                "we fixed the parser' queries. NOT for getting every operation in a known "
+                "session — use `get_session_commits` for that."
             ),
             inputSchema={
                 "type": "object",
@@ -456,28 +710,37 @@ async def list_tools() -> list[Tool]:
                     "query": {"type": "string", "description": "Commit message substring, hash prefix, or branch name"},
                     "session_id": {"type": "string", "description": "Optional: scope to a single session (prefix match)"},
                     "operation_type": {"type": "string", "description": "Filter by operation type (default: all)"},
-                    "limit": {"default": 20, "description": "Max results"},
-                    "max_chars": {"default": 12000, "description": "Max output characters"},
+                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
+                    "max_chars": {"type": "integer", "default": 12000, "description": "Max output characters"},
                 },
                 "required": ["query"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Matching git operations across sessions.",
+                "items": _GIT_OP_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="list_projects",
+            title="List Inferred Projects",
             description=(
                 "Browse all projects Longhand has inferred from your session history. "
                 "Returns project ID, display name, canonical path, category (cli tool / "
                 "web app / library / etc.), and session count. Filter by keyword (matches "
                 "name, path, aliases) or category. Use this to find a project_id before "
                 "calling get_project_timeline or recall_project_status. Set verbose=true "
-                "to include full metadata (aliases, languages, keywords arrays)."
+                "to include full metadata (aliases, languages, keywords arrays). NOT for "
+                "session-level activity — use `get_project_timeline` after you have a "
+                "project_id."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "keyword": {"type": "string", "description": "Filter: matches project name, path, or aliases"},
                     "category": {"type": "string", "description": "Filter: e.g. 'cli tool', 'web app', 'library'"},
-                    "limit": {"default": 20, "description": "Max results (default 20)"},
+                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
                     "verbose": {
                         "type": "boolean",
                         "default": False,
@@ -485,17 +748,36 @@ async def list_tools() -> list[Tool]:
                     },
                 },
             },
+            outputSchema={
+                "type": "array",
+                "description": "Inferred project summaries; verbose mode adds aliases/keywords/languages.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "display_name": {"type": ["string", "null"]},
+                        "canonical_path": {"type": ["string", "null"]},
+                        "category": {"type": ["string", "null"]},
+                        "session_count": {"type": ["integer", "null"]},
+                        "total_edits": {"type": ["integer", "null"]},
+                        "last_seen": {"type": ["string", "null"]},
+                    },
+                },
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="get_project_timeline",
+            title="Project Session Timeline",
             description=(
                 "Session-level timeline for a project — bird's-eye view of what's been "
                 "happening. Returns each session's start/end time, event count, outcome "
                 "(shipped / fixed / stuck / exploratory), and a summary line. Use this "
                 "after list_projects to understand velocity and recent activity on a "
                 "specific project. Filter by date range with since/until (ISO format). "
-                "For content-level search within a project, use search with project_name "
-                "instead."
+                "NOT for content-level search within a project — use `search` with "
+                "`project_name` instead. NOT a starting point if you don't have a "
+                "project_id — call `list_projects` or `match_project` first."
             ),
             inputSchema={
                 "type": "object",
@@ -503,13 +785,20 @@ async def list_tools() -> list[Tool]:
                     "project_id": {"type": "string", "description": "Project ID from list_projects or match_project"},
                     "since": {"type": "string", "description": "ISO date — only sessions after this date"},
                     "until": {"type": "string", "description": "ISO date — only sessions before this date"},
-                    "limit": {"default": 50, "description": "Max results (default 50)"},
+                    "limit": {"type": "integer", "default": 50, "description": "Max results (default 50, capped at 1000)"},
                 },
                 "required": ["project_id"],
             },
+            outputSchema={
+                "type": "array",
+                "description": "Sessions for the project, each enriched with outcome + summary.",
+                "items": _SESSION_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
         Tool(
             name="list_plans",
+            title="List Plan Writes",
             description=(
                 "Every Write/Edit ever made to a `~/.claude/plans/*.md` file across "
                 "all ingested sessions. Returned newest-first with session_id and the "
@@ -520,9 +809,15 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "limit": {"default": 50, "description": "Max plans to return (default 50)"},
+                    "limit": {"type": "integer", "default": 50, "description": "Max plans to return (default 50, capped at 1000)"},
                 },
             },
+            outputSchema={
+                "type": "array",
+                "description": "Plan write events ordered newest-first.",
+                "items": _EVENT_ROW_SCHEMA,
+            },
+            annotations=_READ_ONLY,
         ),
     ]
 

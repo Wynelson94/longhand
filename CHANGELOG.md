@@ -9,6 +9,39 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.9.1] — 2026-05-05
+
+Tool definition quality pass. Every MCP tool now serializes a human-readable
+`title`, an `annotations` block (`readOnlyHint`, `openWorldHint`, plus
+`idempotentHint` on `reconcile`), and — for the 17 tools whose response is
+pure structured JSON — an `outputSchema` describing the response shape.
+
+### Added
+
+- `title`, `annotations`, and `outputSchema` on all 19 MCP tools. Two
+  helper constants (`_READ_ONLY` and `_RECONCILE_HINTS`) at the top of
+  `mcp_server.py` keep the per-tool blocks readable.
+- Anti-pattern callouts in the descriptions of the four lowest-scoring
+  tools (`get_stats`, `replay_file`, `get_project_timeline`,
+  `get_session_commits`) and the borderline tools (`find_episodes`,
+  `get_episode`, `find_commits`, `list_projects`, `list_sessions`,
+  `get_file_history`, `replay_file`) — every tool description now names
+  what NOT to use it for, making tool selection sharper.
+- `server.json` description tightened to mention tool count and capability
+  grouping.
+
+### Why
+
+GLAMA scores MCP tool definitions on six dimensions, with `outputSchema`
+and `annotations` being two MCP-spec fields most directly tied to
+"Behavioral Transparency" and "Contextual Completeness." This release adds
+both across the surface so MCP clients (and ranking sites like GLAMA) can
+treat each tool as documented metadata rather than free-form prose.
+
+No behavior changes. No breaking schema changes.
+
+---
+
 ## [0.9.0] — 2026-04-28
 
 Live ingestion. Sessions are now ingested incrementally during the session
