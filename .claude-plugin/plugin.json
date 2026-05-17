@@ -1,7 +1,7 @@
 {
   "name": "longhand",
-  "version": "0.9.1",
-  "description": "Persistent local memory for Claude Code. Every tool call, every file edit, every thinking block from every session — stored verbatim on your machine. Semantic recall in ~126ms with zero API calls.",
+  "version": "0.9.2",
+  "description": "Persistent local memory for Claude Code. Every tool call, every file edit, every thinking block from every session \u2014 stored verbatim on your machine. Semantic recall in ~126ms with zero API calls.",
   "author": {
     "name": "Nate Nelson",
     "url": "https://github.com/Wynelson94"

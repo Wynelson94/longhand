@@ -48,7 +48,9 @@ def _run_recall(store: LonghandStore, query: str, *, now: datetime) -> None:
     """Run recall and pretty-print the narrative."""
     result = recall_pipeline(store, query, now=now)
     if result.narrative:
-        console.print(Panel(Markdown(result.narrative), title=f"recall: {query!r}", border_style="cyan"))
+        console.print(
+            Panel(Markdown(result.narrative), title=f"recall: {query!r}", border_style="cyan")
+        )
     else:
         console.print(f"[yellow]No narrative produced for {query!r}[/yellow]")
 
@@ -57,9 +59,17 @@ def _run_project_status(store: LonghandStore, project: str) -> None:
     """Run recall_project_status and pretty-print."""
     result = recall_project_status(store, project)
     if result is not None and result.narrative:
-        console.print(Panel(Markdown(result.narrative), title=f"recall_project_status({project!r})", border_style="magenta"))
+        console.print(
+            Panel(
+                Markdown(result.narrative),
+                title=f"recall_project_status({project!r})",
+                border_style="magenta",
+            )
+        )
     else:
-        console.print(f"[yellow]No project status produced for {project!r} (project may not be known to the store).[/yellow]")
+        console.print(
+            f"[yellow]No project status produced for {project!r} (project may not be known to the store).[/yellow]"
+        )
 
 
 def run_demo(*, keep: bool = False) -> Path | None:
@@ -103,32 +113,44 @@ def run_demo(*, keep: bool = False) -> Path | None:
     store = LonghandStore(data_dir=store_dir)
     console.print("[bold]Seeding 3 fake Claude Code sessions into a temp store...[/bold]")
     n_events = _seed_corpus(store, jsonl_dir, project_dir)
-    console.print(f"  → ingested 3 sessions, [cyan]{n_events}[/cyan] events on project [magenta]demo-shop[/magenta]")
+    console.print(
+        f"  → ingested 3 sessions, [cyan]{n_events}[/cyan] events on project [magenta]demo-shop[/magenta]"
+    )
     console.print()
     console.print("[dim]Workflow in the corpus:[/dim]")
-    console.print("  [dim]• 2 days ago:[/dim] Stripe webhook handler + signature-verification bug fix")
-    console.print("  [dim]• 1 day ago:[/dim] Supabase auth migration from createClient → SSR createServerClient")
-    console.print("  [dim]• today:[/dim]    Quick 401 fix in /api/checkout caused by yesterday's auth migration")
+    console.print(
+        "  [dim]• 2 days ago:[/dim] Stripe webhook handler + signature-verification bug fix"
+    )
+    console.print(
+        "  [dim]• 1 day ago:[/dim] Supabase auth migration from createClient → SSR createServerClient"
+    )
+    console.print(
+        "  [dim]• today:[/dim]    Quick 401 fix in /api/checkout caused by yesterday's auth migration"
+    )
     console.print()
 
     # 2. Recall — cross-session bug retrieval
     console.print(Rule("[cyan]Try 1: cross-session bug retrieval[/cyan]"))
-    console.print("[dim]Question: \"the stripe signature bug on demo-shop\"[/dim]")
-    console.print("[dim]Longhand finds the bug fix from 2 days ago — even though the session is closed.[/dim]")
+    console.print('[dim]Question: "the stripe signature bug on demo-shop"[/dim]')
+    console.print(
+        "[dim]Longhand finds the bug fix from 2 days ago — even though the session is closed.[/dim]"
+    )
     console.print()
     _run_recall(store, "the stripe signature bug on demo-shop", now=demo_now)
     console.print()
 
     # 3. Recall — finding the auth migration pattern
-    console.print(Rule("[cyan]Try 2: \"where did I switch to SSR auth?\"[/cyan]"))
-    console.print("[dim]Question: \"supabase ssr auth migration on demo-shop\"[/dim]")
+    console.print(Rule('[cyan]Try 2: "where did I switch to SSR auth?"[/cyan]'))
+    console.print('[dim]Question: "supabase ssr auth migration on demo-shop"[/dim]')
     console.print()
     _run_recall(store, "supabase ssr auth migration on demo-shop", now=demo_now)
     console.print()
 
     # 4. Project status — pick up where we left off
-    console.print(Rule("[magenta]Try 3: \"pick up where I left off on demo-shop\"[/magenta]"))
-    console.print("[dim]recall_project_status(\"demo-shop\") returns recent activity + last session outcome.[/dim]")
+    console.print(Rule('[magenta]Try 3: "pick up where I left off on demo-shop"[/magenta]'))
+    console.print(
+        '[dim]recall_project_status("demo-shop") returns recent activity + last session outcome.[/dim]'
+    )
     console.print()
     _run_project_status(store, "demo-shop")
     console.print()
@@ -140,7 +162,9 @@ def run_demo(*, keep: bool = False) -> Path | None:
     console.print("  [bold]pip install longhand[/bold]")
     console.print("  [bold]longhand setup[/bold]")
     console.print()
-    console.print("Then any future Claude Code session feeds the index automatically (SessionEnd + Stop hooks).")
+    console.print(
+        "Then any future Claude Code session feeds the index automatically (SessionEnd + Stop hooks)."
+    )
     console.print("Once you've worked a bit, try:")
     console.print('  [bold]longhand recall "that bug from last week"[/bold]')
     console.print()
