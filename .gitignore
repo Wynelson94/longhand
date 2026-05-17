@@ -31,6 +31,15 @@ htmlcov/
 *.sqlite
 chroma/
 
+# Secrets (defensive — no such files should ever exist in this repo)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+*.token
+
 # OS
 .DS_Store
 Thumbs.db
