@@ -9,6 +9,42 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.9.2] — 2026-05-17
+
+`longhand demo` — try Longhand on a sample corpus without touching your real history.
+
+### Added
+
+- **New `longhand demo` CLI command.** Generates a sandboxed store at
+  `/tmp/longhand-demo-<timestamp>/`, seeds it with 3 fictional Claude Code
+  sessions covering a realistic Stripe-webhook bug + Supabase auth migration
+  + downstream 401 fix on a `demo-shop` project, then walks through `recall`
+  and `recall_project_status` against the seeded store so the user can see
+  what the output looks like before pointing Longhand at their own data.
+  Cleans up afterwards; pass `--keep` to leave the sandbox in place for
+  further exploration with `LONGHAND_DIR=<path> longhand …`.
+- `longhand.demo` package containing the corpus generator
+  (`longhand/demo/corpus.py`) and walkthrough runner
+  (`longhand/demo/runner.py`). 6 new tests verify the corpus is
+  deterministic, valid Claude Code event shape, ingests cleanly into a
+  fresh store, and that recall returns sensible results against the seeded
+  data.
+
+### Why
+
+The 2026-05-17 audit identified an onboarding gap: new users had no way to
+preview Longhand on safe data before running `longhand setup` on their
+real `~/.claude`. `longhand demo` closes that gap with a 60-second
+walkthrough that exercises the cross-session recall, file history, and
+project-status surfaces without modifying anything on disk outside the
+sandbox.
+
+### Tests
+
+- 228 tests passing (was 222).
+
+---
+
 ## [0.9.1] — 2026-05-05
 
 Tool definition quality pass. Every MCP tool now serializes a human-readable

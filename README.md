@@ -24,6 +24,13 @@ longhand setup        # ingest history + install hooks + configure MCP
 longhand recall "that stripe webhook bug from last week"
 ```
 
+**Want to kick the tires first?** Run `longhand demo` for a 60-second walkthrough on a fake 3-session sample corpus — your real `~/.claude` and `~/.longhand` are not touched. The demo seeds a sandboxed store with a Stripe-webhook bug + Supabase auth migration + downstream 401 fix, then runs cross-session recall and project-status so you can see what the output looks like before committing.
+
+```bash
+pip install longhand
+longhand demo         # sandboxed; cleans up afterwards (pass --keep to explore)
+```
+
 **Upgrading to 0.9.0?** Live ingestion captures sessions in flight, plan history is preserved as first-class data, and an optional reconciler job keeps the index honest in the background:
 
 - New `longhand ingest-live` command runs from Claude Code's `Stop` hook to tail the active transcript between assistant turns. Sessions show up in `recall` while you're still working, not after they end.

@@ -193,6 +193,34 @@ def setup(
 
 
 # -----------------------------------------------------------------------------
+# DEMO — sandboxed walkthrough on a sample corpus
+# -----------------------------------------------------------------------------
+
+
+@app.command()
+def demo(
+    keep: bool = typer.Option(
+        False,
+        "--keep",
+        help="Leave the demo corpus + store on disk after the walkthrough so you can explore further. Default: clean up.",
+    ),
+):
+    """Try Longhand on a fake 3-session corpus without touching your real history.
+
+    Creates a sandboxed Longhand store under /tmp/longhand-demo-<timestamp>/,
+    seeds it with 3 fictional Claude Code sessions covering a Stripe webhook
+    bug + auth migration + downstream 401 fix, then runs through `recall` and
+    `recall_project_status` so you can see what the output looks like before
+    pointing Longhand at your own data.
+
+    Your real ~/.longhand and ~/.claude are not modified.
+    """
+    from longhand.demo import run_demo
+
+    run_demo(keep=keep)
+
+
+# -----------------------------------------------------------------------------
 # INGEST
 # -----------------------------------------------------------------------------
 
