@@ -5,8 +5,8 @@ Longhand is a local-first tool that ingests Claude Code session transcripts into
 ## TL;DR
 
 - **Local-only.** No network calls. Nothing leaves your machine. The only network activity is the one-time ChromaDB embedding model download (~80MB) and any commands you explicitly invoke (e.g. `git push`).
-- **No subprocess execution.** Longhand never calls `subprocess`, `os.system`, `eval`, or `exec`. Zero command injection surface.
-- **Parameterized SQL everywhere.** No SQL is built from f-strings. LIKE clauses escape `%` and `_` wildcards.
+- **No shell, no `eval`/`exec`.** Longhand never uses a shell, `os.system`, `os.popen`, `eval`, or `exec`. It does spawn two fixed, list-form subprocesses — `launchctl` (to (un)load the optional reconciler) and `python -m longhand.cli ingest` (a detached background re-ingest) — neither of which interpolates user input or stored data, so the command-injection surface is zero.
+- **Parameterized SQL everywhere.** Every user-supplied value is a bound parameter, never interpolated into SQL. LIKE clauses escape `%` and `_` wildcards. (The one f-string in SQL is `PRAGMA table_info({table})` with a hardcoded internal table name — no user input.)
 - **Bounded inputs.** Stdin readers, file sizes, line lengths, and filter strings are all capped to prevent DoS.
 - **Read-only on the source data.** Longhand never writes back to `~/.claude/projects/` — it only reads JSONL files.
 - **The hooks fail open.** If anything goes wrong inside a hook, it returns `{}` and Claude Code proceeds as if Longhand wasn't there.
@@ -41,7 +41,7 @@ Anything outside `~/.longhand/` and `~/.claude/projects/` is out of scope. Longh
 
 | Threat                                  | Defense |
 |-----------------------------------------|---------|
-| Command injection via tool output       | No subprocess/eval/exec calls anywhere. Tool output is never executed. |
+| Command injection via tool output       | No shell, `eval`, or `exec`. The two `subprocess` spawns use fixed, list-form argv (`launchctl …`, `python -m longhand.cli ingest`) with no user- or tool-derived arguments. Tool output is never executed. |
 | SQL injection via search queries        | All SQL uses parameterized queries. LIKE wildcards escaped with `ESCAPE '\\'`. |
 | Path traversal via file_path filters    | File paths from queries are used only as LIKE substrings against the indexed `events` table. Longhand never opens files based on user input — it only opens JSONL files inside `~/.claude/projects/`. |
 | OOM via huge JSONL files                | Hard 500MB file size limit and 50MB per-line limit in `parser.py`. Lines exceeding the limit are skipped, not parsed. |
@@ -126,18 +126,25 @@ Users concerned about token costs or stale context injection can raise the thres
 
 All hook handlers wrap their full execution in try/except. On any exception they print `{}` to stdout and return cleanly. The intent is that Longhand can crash internally without ever crashing or hanging Claude Code.
 
-### No subprocess, no eval
+### Subprocess use — no shell, no injection
+
+Longhand uses `subprocess` in exactly two places. Both pass a fixed, list-form argv (never a shell string), and neither includes any value derived from user input, tool output, or stored data:
+
+- `longhand/setup_commands.py` — `["launchctl", "unload"|"load", RECONCILER_PLIST_PATH]`, run only when you explicitly install or uninstall the optional reconciler. The plist path is a fixed module constant.
+- `longhand/recall/project_fallback.py` — `subprocess.Popen([sys.executable, "-m", "longhand.cli", "ingest"], close_fds=True, start_new_session=True)`, a detached background re-ingest the recall pipeline may spawn when it notices a stale index.
+
+There is no `shell=True`, no `os.system`/`os.popen`, and no `eval`/`exec` anywhere in the source — verify with:
 
 ```bash
-$ grep -rn 'subprocess\|os\.system\|os\.popen\|shell=True\|eval(\|exec(' longhand/
+$ grep -rn 'shell=True\|os\.system\|os\.popen\|eval(\|exec(' longhand/
 # (no results)
 ```
 
-There are no subprocess calls, no shell invocations, no eval, and no exec anywhere in the Longhand source. The only external command Longhand can invoke is its own `mcp-server` subcommand via the Claude Desktop / Claude Code MCP integration, which is configured by the user explicitly.
+Because every argv element is a string literal or an internal constant, there is no command-injection surface even though `subprocess` itself is used.
 
 ### Parameterized SQL
 
-Every `conn.execute()` call uses bound parameters. There are zero f-string SQL constructions. The only dynamic SQL is the placeholder list for `IN (?, ?, ?)` clauses, which uses fixed-string placeholders and bound parameters for the values.
+Every user-supplied value reaches SQLite as a bound parameter — no user input is ever interpolated into SQL. The only dynamic SQL constructions are (1) the placeholder list for `IN (?, ?, ?)` clauses (fixed `?` strings, bound values), and (2) a single `PRAGMA table_info({table})` in `migrations.py`, where `{table}` is a hardcoded internal table name from a fixed dict — never user input.
 
 ### Read-only against source data
 
@@ -159,7 +166,7 @@ I'd rather hear about it.
 
 A few things that might look suspicious but aren't:
 
-- **`__prompt-hook-run`** is the internal hook handler. It's prefixed with `__` and marked `hidden=True` in Typer so it doesn't show in `--help`. It only reads bounded stdin and only invokes the local recall pipeline. It never spawns subprocesses, never opens network sockets, and never reads files outside what the recall pipeline already accesses.
+- **`__prompt-hook-run`** is the internal hook handler. It's prefixed with `__` and marked `hidden=True` in Typer so it doesn't show in `--help`. It only reads bounded stdin and only invokes the local recall pipeline. That pipeline may spawn one detached, fixed-argv `python -m longhand.cli ingest` to refresh a stale index (see *Subprocess use — no shell, no injection* above); it never opens network sockets and never reads files outside what the recall pipeline already accesses.
 - **`__pycache__/` and `*.pyc`** are normal Python bytecode caches, not malicious files.
 - **The `chromadb` dependency pulls in `onnxruntime`** for the local embedding model. ONNX runs in a sandboxed inference graph — it doesn't execute Python. The model itself (`all-MiniLM-L6-v2`) is open and well-known.
 - **The `mcp` dependency is required** because the MCP server ships in the main package. It's a well-known Python client/server library published by Anthropic; see the [mcp package on PyPI](https://pypi.org/project/mcp/).
