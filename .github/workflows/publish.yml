@@ -36,6 +36,9 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    # NOTE: enable "Required reviewers" on the 'pypi' environment in the repo
+    # Settings → Environments so a human must approve each publish. Without that
+    # protection rule, any pushed v* tag publishes to PyPI unattended.
     environment: pypi
     permissions:
       id-token: write
