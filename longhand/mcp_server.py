@@ -184,10 +184,26 @@ def _format_project_compact(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool(**kwargs: Any) -> Tool:
+    """Build a Tool, intentionally dropping any ``outputSchema``.
+
+    The handlers below return ``TextContent`` only (JSON dumped as text), never
+    MCP ``structuredContent`` — so the per-tool ``outputSchema`` blocks are kept
+    purely as inline documentation of each tool's JSON shape and are NOT sent to
+    the client. Claude Code's MCP validator rejects any tool whose
+    ``outputSchema.type`` is not ``"object"``, which silently broke loading of
+    12 of 19 tools (issue #9). Stripping the field makes every tool load, is
+    spec-compliant (outputSchema is optional), and is honest: we don't emit
+    structured output, so we don't advertise a schema for it.
+    """
+    kwargs.pop("outputSchema", None)
+    return Tool(**kwargs)
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
-        Tool(
+        _tool(
             name="search",
             title="Search Session Events (Semantic)",
             description=(
@@ -223,7 +239,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="search_in_context",
             title="Search a Session With Surrounding Context",
             description=(
@@ -260,7 +276,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="list_sessions",
             title="List Indexed Sessions",
             description=(
@@ -303,7 +319,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_session_timeline",
             title="Session Event Timeline",
             description=(
@@ -344,7 +360,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_latest_events",
             title="Latest Events in a Session",
             description=(
@@ -374,7 +390,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="replay_file",
             title="Reconstruct File State at a Point in Time",
             description=(
@@ -413,7 +429,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_file_history",
             title="Edit Log for a File Across Sessions",
             description=(
@@ -441,7 +457,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_stats",
             title="Storage Statistics",
             description=(
@@ -475,7 +491,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="recall",
             title="Proactive Recall (Episodes + Narrative)",
             description=(
@@ -497,7 +513,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="recall_project_status",
             title="Pick Up Where You Left Off (Project Status)",
             description=(
@@ -523,7 +539,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="reconcile",
             title="Re-ingest Missing Transcripts (Disk ↔ DB)",
             description=(
@@ -562,7 +578,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_RECONCILE_HINTS,
         ),
-        Tool(
+        _tool(
             name="match_project",
             title="Fuzzy Project Match",
             description=(
@@ -595,7 +611,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="find_episodes",
             title="Find Problem→Fix Episodes",
             description=(
@@ -635,7 +651,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_episode",
             title="Full Episode Detail (Problem → Fix → Verify)",
             description=(
@@ -664,7 +680,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_session_commits",
             title="Get Git Operations from a Session",
             description=(
@@ -695,7 +711,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="find_commits",
             title="Find Commits Across Sessions",
             description=(
@@ -722,7 +738,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="list_projects",
             title="List Inferred Projects",
             description=(
@@ -766,7 +782,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="get_project_timeline",
             title="Project Session Timeline",
             description=(
@@ -796,7 +812,7 @@ async def list_tools() -> list[Tool]:
             },
             annotations=_READ_ONLY,
         ),
-        Tool(
+        _tool(
             name="list_plans",
             title="List Plan Writes",
             description=(

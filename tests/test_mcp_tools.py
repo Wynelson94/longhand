@@ -50,6 +50,23 @@ def test_dispatch_has_all_tools():
         assert inspect.iscoroutinefunction(handler), f"{name} is not a coroutine"
 
 
+def test_no_tool_declares_output_schema():
+    """list_tools() must emit no outputSchema.
+
+    Claude Code's MCP validator rejects any tool whose outputSchema.type is not
+    "object", and our handlers return TextContent (not structuredContent), so we
+    strip outputSchema entirely. Guards issue #9 — 12 of 19 tools silently failed
+    to load when array/oneOf outputSchemas were declared.
+    """
+    tools = asyncio.run(mcp_server.list_tools())
+    assert tools, "list_tools returned no tools"
+    assert len(tools) == 19
+    offenders = [t.name for t in tools if getattr(t, "outputSchema", None) is not None]
+    assert not offenders, (
+        f"tools must not declare outputSchema (Claude Code rejects them): {offenders}"
+    )
+
+
 # ─── Search tools ───────────────────────────────────────────────────────────
 
 
