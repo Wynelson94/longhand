@@ -9,6 +9,24 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.9.3] — 2026-05-28
+
+Bug-fix release: restores two features that were silently broken in Claude Code, plus CI/test/doc hardening.
+
+### Fixed
+
+- **Auto-context injection hook restored.** The `UserPromptSubmit` hook imported `context` from `longhand.cli`, which exports only `app` after the `cli.py` → `cli/` package split. The swallowed `ImportError` made the hook emit `{}` on every prompt — so automatic context injection had been silently dead since v0.9.0. (#11)
+- **MCP tools now load in Claude Code.** 12 of 19 tools declared an `outputSchema` whose `type` was `array`/`oneOf`; Claude Code's MCP validator rejects any `outputSchema.type` that isn't `"object"`, so those tools silently failed to load. Handlers return text (never structured content), so the schemas were decorative — they are now stripped before tools reach the client. (#9)
+
+### Changed
+
+- `SECURITY.md` corrected to describe the two fixed-argv `subprocess` call sites and the single hardcoded-identifier `PRAGMA` f-string. The code was always injection-safe; the "no subprocess / zero f-string SQL" claims were stale. (#12)
+
+### Internal
+
+- CI now tests Python 3.14 (non-blocking — onnxruntime's cp314 wheel intermittently raises an illegal-instruction SIGILL on GitHub's heterogeneous runners), gates coverage at `--cov-fail-under=60`, and runs a non-blocking `mypy` job. (#13)
+- Behavioral test backfill for the CLI and the recall time parser; total coverage 66% → 73%, `time_parser.py` → 100%. (#14)
+
 ## [0.9.2] — 2026-05-17
 
 `longhand demo` — try Longhand on a sample corpus without touching your real history.

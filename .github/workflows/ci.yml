@@ -27,6 +27,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Run pytest (with coverage gate)
+        # 3.14 runs but is non-blocking: onnxruntime's cp314 wheel (via chromadb)
+        # intermittently raises an illegal-instruction SIGILL on GitHub's
+        # heterogeneous runner CPUs. The CPython code is fine (3.14 passes locally
+        # and on most runners); only the native embedding lib is unstable. Keep
+        # 3.10–3.13 gated; surface 3.14 without letting a native crash block PRs.
+        continue-on-error: ${{ matrix.python-version == '3.14' }}
         run: pytest -q --cov=longhand --cov-report=term-missing --cov-fail-under=60
 
   lint:
