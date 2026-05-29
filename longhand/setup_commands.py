@@ -323,7 +323,7 @@ def run_prompt_hook() -> None:
         # Capture context output
         import contextlib
 
-        from longhand.cli import context as context_cmd
+        from longhand.cli._commands import context as context_cmd
 
         captured = _io.StringIO()
         with contextlib.redirect_stdout(captured):
