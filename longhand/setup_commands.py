@@ -587,7 +587,7 @@ def ingest_single_session(
     Called by the SessionEnd hook. Non-blocking, fast (~1-2s) when analysis
     runs; even faster when skipped. Pass ``run_analysis=False`` to populate
     SQLite only (no episodes, segments, or vectors). Power users can defer
-    the analysis pass via ``longhand reanalyze``.
+    the analysis pass via ``longhand analyze --all``.
     """
     path = Path(transcript).expanduser()
     if not path.exists():

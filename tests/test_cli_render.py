@@ -209,3 +209,82 @@ def test_doctor_runs_clean(runner: CliRunner, tmp_path: Path, monkeypatch):
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0, result.stdout
     assert plain(result.stdout).strip(), "doctor should print a report"
+
+
+# ─── v0.11 surface trim ───────────────────────────────────────────────────────
+
+
+def test_help_shows_grouped_panels(runner: CliRunner):
+    out = plain(runner.invoke(app, ["--help"]).stdout)
+    for panel in (
+        "Recall",
+        "Archaeology",
+        "Browse & insights",
+        "Data",
+        "Setup & health",
+        "Plumbing",
+    ):
+        assert panel in out, f"missing help panel: {panel}"
+
+
+def test_help_hides_plumbing_commands(runner: CliRunner):
+    out = plain(runner.invoke(app, ["--help"]).stdout)
+    for hidden_cmd in (
+        "ingest-session",
+        "ingest-live",
+        "backfill-episodes",
+        "reanalyze",
+        "mcp-server",
+    ):
+        assert hidden_cmd not in out, f"plumbing command leaked into --help: {hidden_cmd}"
+
+
+def test_hidden_commands_still_callable(runner: CliRunner):
+    """hidden=True must not break the hook-wired entry points."""
+    for cmd in ("ingest-session", "ingest-live", "context", "backfill-episodes", "mcp-server"):
+        result = runner.invoke(app, [cmd, "--help"])
+        assert result.exit_code == 0, f"{cmd} --help failed"
+
+
+def test_reanalyze_alias_warns_and_delegates(runner: CliRunner, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = runner.invoke(app, ["reanalyze", "--data-dir", str(tmp_path / "store")])
+    assert result.exit_code == 0
+    out = plain(result.stdout)
+    assert "deprecated" in out.lower()
+    assert "analyze --all" in out
+
+
+def test_stats_splits_low_confidence_noise(runner: CliRunner, tmp_path: Path, monkeypatch):
+    """Resolved rate must exclude low-confidence fixless extractions."""
+    from longhand.storage.store import LonghandStore
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    data_dir = tmp_path / "store"
+    store = LonghandStore(data_dir=data_dir)
+
+    rows = [
+        # (id, confidence, fix_event_id, status)
+        ("ep-resolved", 0.9, "fix-1", "resolved"),
+        ("ep-real-open", 0.8, None, "unresolved"),
+        ("ep-noise", 0.2, None, "unresolved"),
+    ]
+    with store.sqlite.connect() as conn:
+        for ep_id, conf, fix, status in rows:
+            conn.execute(
+                "INSERT INTO episodes (episode_id, session_id, started_at, ended_at, "
+                "fix_event_id, confidence, status) VALUES (?, 's1', 't0', 't1', ?, ?, ?)",
+                (ep_id, fix, conf, status),
+            )
+
+    s = store.stats()
+    assert s["episodes"] == 3
+    assert s["resolved_episodes"] == 1
+    assert s["low_confidence_episodes"] == 1
+    # rate over substantive episodes (3 - 1 noise = 2): 1/2 = 50%
+    assert s["resolved_rate_pct"] == 50
+
+    out = plain(runner.invoke(app, ["stats", "--data-dir", str(data_dir)]).stdout)
+    assert "low-confidence" in out
+    assert "50%" in out
+    assert "excludes low-confidence" in out

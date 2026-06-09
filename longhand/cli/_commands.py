@@ -76,7 +76,7 @@ app = typer.Typer(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Setup & health")
 def setup(
     skip_ingest: bool = typer.Option(
         False, "--skip-ingest", help="Skip backfilling existing sessions"
@@ -91,7 +91,7 @@ def setup(
         help=(
             "Skip episodes, segments, and vector embeddings during the backfill "
             "pass. Populates SQLite only — fast path for very large corpora. "
-            "Run `longhand reanalyze` later to fill in the vectors."
+            "Run `longhand analyze --all` later to fill in the vectors."
         ),
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
@@ -110,7 +110,7 @@ def setup(
 
     For huge histories (>1GB of ~/.claude/projects), pass ``--skip-analysis``
     to get a working SQLite store in under a minute and defer embeddings to
-    a later ``longhand reanalyze`` run.
+    a later ``longhand analyze --all`` run.
     """
     console.print("[bold cyan]→ Longhand setup[/bold cyan]\n")
 
@@ -144,7 +144,7 @@ def setup(
                 console.print(f"[green]   ✓[/green] Ingested {ingested} session(s)")
                 if skip_analysis:
                     console.print(
-                        "   [dim]Run `longhand reanalyze` to populate episodes/segments/vectors.[/dim]"
+                        "   [dim]Run `longhand analyze --all` to populate episodes/segments/vectors.[/dim]"
                     )
             else:
                 console.print(f"[yellow]   ⚠ No Claude Code history found at {target}[/yellow]")
@@ -190,8 +190,31 @@ def setup(
     _doctor()
 
     console.print("\n[bold green]→ Setup complete.[/bold green]")
-    console.print('Try: [cyan]longhand recall "what was I working on"[/cyan]')
-    console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
+
+    # Summarize what setup actually built, and suggest queries derived from
+    # the user's own data — a generic hint teaches less than a real one.
+    top_project: str | None = None
+    try:
+        store = _get_store(data_dir)
+        s = store.stats()
+        parts = [f"{s['sessions']:,} sessions"]
+        if s.get("projects"):
+            parts.append(f"{s['projects']:,} projects")
+        if s.get("episodes"):
+            parts.append(f"{s['episodes']:,} episodes")
+        console.print(f"[dim]Indexed: {' · '.join(parts)}[/dim]")
+        projects = store.sqlite.list_projects(limit=1)
+        if projects:
+            top_project = projects[0].get("display_name")
+    except Exception:
+        pass
+
+    console.print('\nTry: [cyan]longhand recall "what was I working on last week"[/cyan]')
+    if top_project:
+        console.print(f'Or:  [cyan]longhand status "{top_project}"[/cyan]')
+    else:
+        console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
+    console.print("Or:  [cyan]longhand recap --days 7[/cyan]")
     console.print(
         "\n[dim]If Longhand earns its keep, a star helps others find it: "
         "[/dim][cyan]https://github.com/Wynelson94/longhand[/cyan]"
@@ -203,7 +226,7 @@ def setup(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Setup & health")
 def demo(
     keep: bool = typer.Option(
         False,
@@ -231,7 +254,7 @@ def demo(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Data")
 def ingest(
     path: str | None = typer.Argument(
         None,
@@ -245,7 +268,7 @@ def ingest(
         "--skip-analysis",
         help=(
             "Populate SQLite only — skip episodes, segments, and vector "
-            "embeddings. Fast path for huge corpora. Run `longhand reanalyze` "
+            "embeddings. Fast path for huge corpora. Run `longhand analyze --all` "
             "afterwards to fill in the vectors."
         ),
     ),
@@ -258,7 +281,7 @@ def ingest(
 
     Pass ``--skip-analysis`` to populate SQLite only. Exact-text search,
     file history, and timelines all still work; semantic ``recall`` needs
-    ``longhand reanalyze`` to run afterwards. Useful when the first-time
+    ``longhand analyze --all`` to run afterwards. Useful when the first-time
     backfill of a multi-GB corpus would otherwise take a long time.
     """
     from rich.progress import (
@@ -362,8 +385,12 @@ def ingest(
         if skip_analysis and ingested > 0:
             console.print(
                 "\n[dim]Analysis skipped.[/dim] "
-                "Run [cyan]longhand reanalyze[/cyan] to populate episodes, "
+                "Run [cyan]longhand analyze --all[/cyan] to populate episodes, "
                 "segments, and semantic recall vectors."
+            )
+        elif ingested > 0:
+            console.print(
+                '\n[dim]Next:[/dim] [cyan]longhand recall "what was I working on last week"[/cyan]'
             )
     finally:
         release_ingest_lock(store)
@@ -374,7 +401,7 @@ def ingest(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Data")
 def reconcile(
     data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     fix: bool = typer.Option(
@@ -439,7 +466,7 @@ def reconcile(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Browse & insights")
 def sessions(
     project: str | None = typer.Option(None, "--project", help="Filter by project path substring"),
     limit: int = typer.Option(20, "--limit", help="Max sessions to show"),
@@ -479,7 +506,7 @@ def sessions(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Recall")
 def search(
     query: str = typer.Argument(..., help="Semantic query text"),
     limit: int = typer.Option(10, "--limit", "-n"),
@@ -552,7 +579,7 @@ def search(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Archaeology")
 def timeline(
     session_id: str = typer.Argument(..., help="Session ID (prefix match supported)"),
     limit: int = typer.Option(100, "--limit", "-n"),
@@ -635,7 +662,7 @@ def _event_marker(event_type: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Archaeology")
 def replay(
     session_id: str = typer.Argument(..., help="Session ID (prefix match)"),
     file_path: str = typer.Argument(..., help="File path to reconstruct"),
@@ -717,7 +744,7 @@ def _guess_language(file_path: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Archaeology")
 def diff(
     event_id: str = typer.Argument(..., help="Event ID of an edit"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
@@ -751,7 +778,7 @@ def diff(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Browse & insights")
 def stats(
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
@@ -774,10 +801,21 @@ def stats(
     if "episodes" in s:
         table.add_row("Episodes", f"{s['episodes']:,}")
         resolved = s.get("resolved_episodes", 0)
-        table.add_row("Resolved episodes", f"{resolved:,}")
+        noise = s.get("low_confidence_episodes", 0)
+        unresolved = max(0, s["episodes"] - resolved - noise)
+        table.add_row("  resolved", f"{resolved:,}")
+        table.add_row("  unresolved", f"{unresolved:,}")
+        table.add_row("  low-confidence (likely noise)", f"{noise:,}")
+        if "resolved_rate_pct" in s:
+            table.add_row("Resolved rate", f"{s['resolved_rate_pct']}%")
     table.add_row("Data directory", str(store.data_dir))
 
     console.print(table)
+    if s.get("low_confidence_episodes"):
+        console.print(
+            "[dim]Resolved rate excludes low-confidence fixless extractions "
+            "(probes, tool churn) — they are noise, not unsolved problems.[/dim]"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -785,7 +823,7 @@ def stats(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Recall")
 def recall(
     query: str = typer.Argument(..., help="Fuzzy natural-language question about past work"),
     max_episodes: int = typer.Option(5, "--max", "-n"),
@@ -869,7 +907,7 @@ def recall(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Data")
 def analyze(
     all_sessions: bool = typer.Option(False, "--all", help="Re-analyze every ingested session"),
     session: str | None = typer.Option(
@@ -925,13 +963,40 @@ def analyze(
         f"([dim]{errors} errors[/dim])"
     )
 
+    # A full re-analysis can shift episode boundaries, leaving stale
+    # embeddings under old episode_ids. Clear and rebuild the collection
+    # from the now-current SQLite rows (formerly `reanalyze`'s job).
+    if all_sessions:
+        console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
+        try:
+            store.vectors.client.delete_collection(name="episodes")
+            store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
+                name="episodes"
+            )
+        except Exception:
+            pass
+
+        def _progress(done: int, total: int) -> None:
+            console.print(f"   {done}/{total}...", end="\r")
+
+        embedded = store.backfill_episode_embeddings(progress=_progress)
+        console.print(f"[green]✓[/green] Embedded {embedded} episode(s).")
+
+
+def _deprecated(old: str, new: str) -> None:
+    """Print a deprecation warning for an aliased command.
+
+    Aliases that print this are removed in v1.0.
+    """
+    console.print(f"[yellow]`longhand {old}` is deprecated — use `longhand {new}`.[/yellow]")
+
 
 # -----------------------------------------------------------------------------
 # PROJECTS
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Browse & insights")
 def projects(
     keyword: str | None = typer.Option(None, "--keyword", "-k"),
     category: str | None = typer.Option(None, "--category", "-c"),
@@ -973,7 +1038,7 @@ def projects(
 
 
 plans_app = typer.Typer(name="plans", help="Plan files written across all sessions")
-app.add_typer(plans_app, name="plans")
+app.add_typer(plans_app, name="plans", rich_help_panel="Plumbing")
 
 
 @plans_app.command("list")
@@ -1011,7 +1076,7 @@ def plans_list(
 # GIT LOG — show git operations from sessions
 
 
-@app.command()
+@app.command(rich_help_panel="Archaeology")
 def git_log(
     session_id: str | None = typer.Argument(
         None, help="Session ID (prefix match). Shows recent across all sessions if omitted."
@@ -1075,7 +1140,7 @@ def git_log(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Setup & health")
 def config(
     show: bool = typer.Option(
         True, "--show/--edit", help="Show current config (default) or open for editing"
@@ -1198,7 +1263,7 @@ _REDACT_TABLES: dict[str, tuple[str, list[str]]] = {
 }
 
 
-@app.command()
+@app.command(rich_help_panel="Data")
 def redact(
     apply: bool = typer.Option(
         False, "--apply", help="Mask matches in place (irreversible). Default: scan-only report."
@@ -1293,7 +1358,7 @@ def redact(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(hidden=True)
 def context(
     query: str = typer.Argument(..., help="The user's prompt or query"),
     max_episodes: int = typer.Option(2, "--max", "-n"),
@@ -1442,7 +1507,7 @@ def context(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Browse & insights")
 def export(
     target: str = typer.Argument(
         ...,
@@ -1699,7 +1764,7 @@ def _session_to_markdown(store, session_id: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Browse & insights")
 def patterns(
     limit: int = typer.Option(10, "--limit", "-n", help="Top N pattern groups to show"),
     min_count: int = typer.Option(2, "--min", help="Minimum episode count per pattern"),
@@ -1827,7 +1892,7 @@ def patterns(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Recall")
 def recap(
     days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
     limit: int = typer.Option(10, "--limit", "-n"),
@@ -1938,7 +2003,7 @@ def recap(
 # -----------------------------------------------------------------------------
 
 
-@app.command("status")
+@app.command("status", rich_help_panel="Recall")
 def status_cmd(
     project: str = typer.Argument(..., help="Project name (fuzzy match)"),
     commits: int = typer.Option(10, "--commits", "-c", help="Max recent commits to show"),
@@ -1967,7 +2032,7 @@ def status_cmd(
 # -----------------------------------------------------------------------------
 
 
-@app.command("continue")
+@app.command("continue", rich_help_panel="Recall")
 def continue_cmd(
     session_id: str = typer.Argument(..., help="Session ID prefix"),
     n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
@@ -2075,7 +2140,7 @@ def continue_cmd(
 # -----------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Archaeology")
 def history(
     file_path: str = typer.Argument(..., help="File path (exact or substring match)"),
     limit: int = typer.Option(50, "--limit"),
@@ -2167,9 +2232,9 @@ schedule_app = typer.Typer(
     help="Background reconciler (launchd) — catches sessions when hooks miss",
 )
 
-app.add_typer(hook_app, name="hook")
-app.add_typer(mcp_app, name="mcp")
-app.add_typer(schedule_app, name="schedule")
+app.add_typer(hook_app, name="hook", rich_help_panel="Plumbing")
+app.add_typer(mcp_app, name="mcp", rich_help_panel="Plumbing")
+app.add_typer(schedule_app, name="schedule", rich_help_panel="Plumbing")
 
 
 @hook_app.command("install")
@@ -2205,7 +2270,7 @@ prompt_hook_app = typer.Typer(
     name="prompt-hook",
     help="Claude Code UserPromptSubmit hook (auto-context injection)",
 )
-app.add_typer(prompt_hook_app, name="prompt-hook")
+app.add_typer(prompt_hook_app, name="prompt-hook", rich_help_panel="Plumbing")
 
 
 @prompt_hook_app.command("install")
@@ -2252,7 +2317,7 @@ def mcp_serve_cmd():
 
 
 # Short alias so `longhand mcp-server` also works (matches install command)
-@app.command("mcp-server")
+@app.command("mcp-server", hidden=True)
 def mcp_server_cmd():
     """Run the MCP server (stdio). Used by Claude Desktop."""
     import asyncio
@@ -2262,7 +2327,7 @@ def mcp_server_cmd():
     asyncio.run(mcp_main())
 
 
-@app.command("ingest-session")
+@app.command("ingest-session", hidden=True)
 def ingest_session_cmd(
     transcript: str | None = typer.Option(
         None, "--transcript", "-t", help="Path to a single session JSONL"
@@ -2296,7 +2361,7 @@ def ingest_session_cmd(
     _ingest_single(transcript, data_dir)
 
 
-@app.command("ingest-live")
+@app.command("ingest-live", hidden=True)
 def ingest_live_cmd(
     transcript: str | None = typer.Option(
         None, "--transcript", "-t", help="Path to a single session JSONL"
@@ -2335,101 +2400,25 @@ def ingest_live_cmd(
     _ingest_live_tail(transcript, data_dir)
 
 
-@app.command()
+@app.command(rich_help_panel="Setup & health")
 def doctor():
     """Diagnose Longhand installation and data."""
     _doctor()
 
 
-@app.command("reanalyze")
+@app.command("reanalyze", hidden=True)
 def reanalyze(
     data_dir: str | None = typer.Option(None, "--data-dir"),
-    limit: int = typer.Option(0, "--limit", help="Max number of sessions to reanalyze (0 = all)"),
+    limit: int = typer.Option(0, "--limit", help="Deprecated — ignored."),
 ):
-    """Re-run analysis on every ingested session.
-
-    Needed once after upgrading to a Longhand version that changed episode
-    extraction, segment extraction, or any analysis output. Re-parses each
-    session's transcript, re-extracts episodes + segments + outcome, and
-    upserts the refreshed rows into SQLite. Then re-embeds everything.
-
-    Sessions whose transcript file has been deleted from disk (Claude Code
-    rotates JSONL after a few weeks) are skipped with a warning. Their
-    original episodes stay intact — this is idempotent.
-    """
-    store = _get_store(data_dir)
-
-    # Pull session IDs + transcript paths. Use a generous cap to cover
-    # heavy users; 5000 sessions is well above any realistic history.
-    sessions = store.sqlite.list_sessions(limit=5000)
+    """Deprecated alias for `longhand analyze --all`. Removed in v1.0."""
+    _deprecated("reanalyze", "analyze --all")
     if limit > 0:
-        sessions = sessions[:limit]
-
-    if not sessions:
-        console.print("[yellow]No sessions to reanalyze.[/yellow]")
-        return
-
-    console.print(f"[cyan]Reanalyzing {len(sessions)} session(s)...[/cyan]")
-
-    reanalyzed = 0
-    missing_transcript = 0
-    errors = 0
-
-    for idx, row in enumerate(sessions, start=1):
-        transcript = row.get("transcript_path")
-        if not transcript or not Path(transcript).exists():
-            missing_transcript += 1
-            continue
-
-        try:
-            parser = JSONLParser(Path(transcript))
-            events = list(parser.parse_events())
-            if not events:
-                continue
-            session = parser.build_session(events)
-            store.analyze_session(session, events)
-            reanalyzed += 1
-        except Exception as e:
-            errors += 1
-            console.print(f"  [red]✗[/red] {row['session_id'][:8]}: {e}")
-
-        if idx % 10 == 0:
-            console.print(
-                f"   [dim]{idx}/{len(sessions)}[/dim] "
-                f"(done={reanalyzed}, skipped={missing_transcript}, errors={errors})"
-            )
-
-    # After analysis, episodes are upserted with fresh summaries. The
-    # embedding collection wasn't cleared though — stale embeddings linger
-    # under their old episode_ids if extraction algorithm changes shift
-    # episode boundaries. Easiest safe path: clear the collection and
-    # rebuild from the now-current SQLite rows.
-    console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
-    try:
-        store.vectors.client.delete_collection(name="episodes")
-        store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
-            name="episodes"
-        )
-    except Exception:
-        pass
-
-    def _progress(done: int, total: int) -> None:
-        console.print(f"   {done}/{total}...", end="\r")
-
-    embedded = store.backfill_episode_embeddings(progress=_progress)
-
-    console.print(
-        f"\n[green]✓[/green] Reanalyzed {reanalyzed} session(s), embedded {embedded} episode(s)."
-    )
-    if missing_transcript:
-        console.print(
-            f"[dim]   {missing_transcript} session(s) skipped (transcript rotated/deleted).[/dim]"
-        )
-    if errors:
-        console.print(f"[red]   {errors} session(s) errored — see messages above.[/red]")
+        console.print("[dim]--limit is deprecated and ignored; analyzing all sessions.[/dim]")
+    analyze(all_sessions=True, session=None, data_dir=data_dir)
 
 
-@app.command("backfill-episodes")
+@app.command("backfill-episodes", hidden=True)
 def backfill_episodes(
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):

@@ -546,6 +546,16 @@ class SQLiteStore:
                 stats["resolved_episodes"] = conn.execute(
                     "SELECT COUNT(*) FROM episodes WHERE status = 'resolved'"
                 ).fetchone()[0]
+                # Fixless low-confidence extractions are mostly benign noise
+                # (probes, tool churn) — bucket them separately so the
+                # resolved rate reflects real problems, not extraction noise.
+                stats["low_confidence_episodes"] = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE confidence < 0.5 AND fix_event_id IS NULL"
+                ).fetchone()[0]
+                substantive = stats["episodes"] - stats["low_confidence_episodes"]
+                stats["resolved_rate_pct"] = (
+                    round(100 * stats["resolved_episodes"] / substantive) if substantive else 0
+                )
                 stats["outcomes"] = conn.execute(
                     "SELECT COUNT(*) FROM session_outcomes"
                 ).fetchone()[0]

@@ -56,16 +56,16 @@ pip install --upgrade longhand
 longhand recall "..."   # migration runs transparently on first open
 ```
 
-If you're also coming from 0.5.x, run `longhand reconcile --fix` once to re-attribute multi-project sessions per the v0.6 inference improvements (`cd`-into-project sessions now attribute to the project where most work happened, not the first-event cwd). If you're on 0.5.8 or earlier, chain them: `longhand reconcile --fix && longhand reanalyze`. Both are idempotent.
+If you're also coming from 0.5.x, run `longhand reconcile --fix` once to re-attribute multi-project sessions per the v0.6 inference improvements (`cd`-into-project sessions now attribute to the project where most work happened, not the first-event cwd). If you're on 0.5.8 or earlier, chain them: `longhand reconcile --fix && longhand analyze --all`. Both are idempotent.
 
 **Large history? (>1 GB of `~/.claude/projects`)** Expect the first-time backfill to take 10–30 minutes on an M-class Mac — most of that wall time is the embedding model running on all your cores (which is why you'll see triple-digit CPU%; that's ONNX doing its job, not a hang). To get a working store faster, use the fast-path:
 
 ```bash
 longhand setup --skip-analysis   # SQLite only; works in ~1 min for multi-GB corpora
-longhand reanalyze               # fill in episodes + vectors whenever, safe to background
+longhand analyze --all           # fill in episodes + vectors whenever, safe to background
 ```
 
-Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `reanalyze` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
+Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
 > *Status: v0.10.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 311 unit tests passing.*
 
