@@ -226,6 +226,10 @@ class JSONLParser:
                 except json.JSONDecodeError:
                     # Skip corrupted lines rather than failing the whole parse
                     continue
+                if not isinstance(entry, dict):
+                    # Valid JSON but not an object (e.g. a bare list/string) —
+                    # skip it rather than crashing the whole session parse.
+                    continue
 
                 for event in self._entry_to_events(entry, sequence):
                     base_id = event.event_id
@@ -301,6 +305,8 @@ class JSONLParser:
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
                 continue
 
             for event in self._entry_to_events(entry, sequence):

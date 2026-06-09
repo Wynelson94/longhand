@@ -170,13 +170,27 @@ def claim_ingest_lock(store: LonghandStore) -> bool:
             return True
         if existing and _lock_holder_alive(existing):
             return False
-        # Stale — fall through and overwrite.
+        # Stale — remove it so the atomic create below can claim it.
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
 
     try:
-        lock.write_text(str(my_pid))
-        return True
+        # O_CREAT|O_EXCL makes create-if-absent atomic: if two processes
+        # race past the exists() check above, exactly one wins here.
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
     except OSError:
         return False
+    try:
+        os.write(fd, str(my_pid).encode())
+    finally:
+        os.close(fd)
+    return True
 
 
 def release_ingest_lock(store: LonghandStore) -> None:
