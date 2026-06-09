@@ -14,7 +14,7 @@
 
 > **Claude Code quietly rotates your session files after a few weeks.** Longhand captures them into SQLite before they're gone. Once ingested, your history stays forever — even after the source JSONL files are deleted. Install early; the past you don't capture is unrecoverable.
 
-> **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can find any fix, decision, or conversation you've had in ~126ms — without a single API call.**
+> **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can search across every fix, decision, and conversation you've had in ~56ms — without a single API call.**
 
 > **Does it use a lot of tokens? No — every tool is capped by design.** A full `recall` across 100+ sessions returns ~4K tokens. Reading one raw session JSONL costs 10–50× more. See [Token budget](#token-budget).
 
@@ -86,7 +86,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 | **Where it lives**   | Rented from a model provider                 | A SQLite file + ChromaDB on your laptop |
 | **Cost per query**   | Tokens × dollars                             | Zero                              |
 | **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
-| **Speed**            | Seconds to minutes for large contexts        | ~126ms                            |
+| **Speed**            | Seconds to minutes for large contexts        | ~56ms search · ~1.4s full recall  |
 | **Loss**             | Attention degrades in the middle of long contexts | Every event from the source file, nothing dropped |
 | **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |
 | **Across model versions** | Doesn't transfer                        | Same data, any model              |
@@ -422,7 +422,7 @@ longhand/
 
 **Analysis layer:** Runs at ingest time, not query time. Pre-computes projects, session outcomes, and episodes so recall queries are fast. Fully deterministic, no LLM.
 
-**Recall pipeline:** `query → time parse → project match → episode search → rank → load artifacts → narrative`. Target latency under 200ms on a warm database.
+**Recall pipeline:** `query → time parse → project match → episode search → rank → load artifacts → narrative`. A single vector search is ~56ms; full recall runs ~7 of them (events, projects, episodes, segments, plus relaxation retries) and then loads artifacts and composes the narrative — landing around ~1.4s on a warm 246-session corpus.
 
 ---
 
@@ -459,8 +459,9 @@ Tested end-to-end on a real Claude Code history:
 - 4,090 conversation segments (design, story, debugging, discussion, planning)
 - 1,561 git operations extracted (90 commits linked)
 - 77,711 vectors indexed
-- Vector search: ~126ms
-- SQL queries: <30ms
+- Vector search: ~56ms median (p90 ~62ms)
+- SQL queries (`get_events`): ~2ms median (p90 ~13ms)
+- Full recall pipeline: ~1.4s median, warm (~7 vector queries + artifact load + narrative)
 - Storage footprint: 2.0 GB total (1.4 GB SQLite + 618 MB ChromaDB) across 246 sessions — ~8 MB per session
 
 ---
