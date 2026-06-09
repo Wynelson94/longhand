@@ -9,6 +9,24 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.9.4] — 2026-06-09
+
+Hardening release: closes the six findings left open after the v0.9.3 security audit (AUDIT-2026-05-28). No new features, no API changes.
+
+### Fixed
+
+- **Parser no longer crashes on non-object JSON lines.** A transcript line that is valid JSON but not an object (a bare list, string, or number) raised `AttributeError` and silently lost the rest of the session. Both the full-parse and live-tail paths now skip such lines. (#22)
+- **Ingest lock is now race-safe.** `claim_ingest_lock` used a check-then-write that let two racing processes both believe they held the lock. The lock is now claimed with an atomic `O_CREAT|O_EXCL` create; stale locks from dead PIDs are unlinked and re-claimed. (#22)
+
+### Security
+
+- **MCP input bounds tightened.** A negative `limit` could slip past the cap and become SQLite's unbounded `LIMIT -1`; `limit` is now clamped to `[1, 1000]` and `offset` floored at 0. Semantic queries are capped at 2,000 characters before reaching the ChromaDB ONNX encoder, across all query-taking tools. Local-only exposure either way, but defense-in-depth is cheap. (#22)
+
+### Internal
+
+- The `posthog<3.0` pin is now documented in `pyproject.toml`: it deliberately constrains chromadb's transitive telemetry client (posthog ≥3 breaks chromadb's `capture()` calls and floods stderr — the v0.5.11 fix). It is not a dead dependency; do not remove it.
+- Un-skipped the fixless-episode forensic assertion in the test suite (it passes) and added coverage for the parser guard, lock atomicity, and MCP bounds. 273 → 280 tests.
+
 ## [0.9.3] — 2026-05-28
 
 Bug-fix release: restores two features that were silently broken in Claude Code, plus CI/test/doc hardening.

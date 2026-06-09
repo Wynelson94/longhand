@@ -3,7 +3,7 @@
   "name": "io.github.Wynelson94/longhand",
   "title": "Longhand",
   "description": "Local memory for Claude Code: 19 MCP tools for semantic recall, file replay, project timelines, and git history across your session JSONL \u2014 zero API calls, all local.",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "repository": {
     "url": "https://github.com/Wynelson94/longhand",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "longhand",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
