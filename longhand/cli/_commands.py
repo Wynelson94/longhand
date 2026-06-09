@@ -78,8 +78,12 @@ app = typer.Typer(
 
 @app.command()
 def setup(
-    skip_ingest: bool = typer.Option(False, "--skip-ingest", help="Skip backfilling existing sessions"),
-    skip_prompt_hook: bool = typer.Option(False, "--skip-prompt-hook", help="Skip auto-context injection hook"),
+    skip_ingest: bool = typer.Option(
+        False, "--skip-ingest", help="Skip backfilling existing sessions"
+    ),
+    skip_prompt_hook: bool = typer.Option(
+        False, "--skip-prompt-hook", help="Skip auto-context injection hook"
+    ),
     skip_mcp: bool = typer.Option(False, "--skip-mcp", help="Skip MCP server install"),
     skip_analysis: bool = typer.Option(
         False,
@@ -159,7 +163,9 @@ def setup(
 
     # 3. Prompt hook (optional)
     if not skip_prompt_hook:
-        console.print("\n[bold]3/5[/bold] Installing UserPromptSubmit hook (auto-context injection)...")
+        console.print(
+            "\n[bold]3/5[/bold] Installing UserPromptSubmit hook (auto-context injection)..."
+        )
         try:
             _prompt_hook_install()
             console.print("[green]   ✓[/green] Prompt hook installed")
@@ -184,7 +190,7 @@ def setup(
     _doctor()
 
     console.print("\n[bold green]→ Setup complete.[/bold green]")
-    console.print("Try: [cyan]longhand recall \"what was I working on\"[/cyan]")
+    console.print('Try: [cyan]longhand recall "what was I working on"[/cyan]')
     console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
     console.print(
         "\n[dim]If Longhand earns its keep, a star helps others find it: "
@@ -223,6 +229,7 @@ def demo(
 # -----------------------------------------------------------------------------
 # INGEST
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def ingest(
@@ -273,6 +280,7 @@ def ingest(
         claim_ingest_lock,
         release_ingest_lock,
     )
+
     if not claim_ingest_lock(store):
         console.print("[yellow]Another ingest is already running — skipping.[/yellow]")
         return
@@ -336,9 +344,7 @@ def ingest(
                         continue
 
                     session = parser.build_session(events)
-                    result = store.ingest_session(
-                        session, events, run_analysis=not skip_analysis
-                    )
+                    result = store.ingest_session(session, events, run_analysis=not skip_analysis)
                     events_total += result["events_stored"]
                     ingested += 1
                 except Exception as e:
@@ -402,9 +408,7 @@ def reconcile(
 
     console.print(f"[bold]On disk:[/bold] {report.files_on_disk} JSONL files")
     console.print(f"  [green]{report.fully_indexed}[/green] fully indexed")
-    console.print(
-        f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL"
-    )
+    console.print(f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL")
     console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
 
     if not fix:
@@ -433,6 +437,7 @@ def reconcile(
 # -----------------------------------------------------------------------------
 # SESSIONS
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def sessions(
@@ -473,15 +478,22 @@ def sessions(
 # SEARCH
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Semantic query text"),
     limit: int = typer.Option(10, "--limit", "-n"),
     event_type: str | None = typer.Option(
-        None, "--type", help="Filter: user_message, assistant_text, assistant_thinking, tool_call, tool_result"
+        None,
+        "--type",
+        help="Filter: user_message, assistant_text, assistant_thinking, tool_call, tool_result",
     ),
-    session: str | None = typer.Option(None, "--session", help="Filter by session id (prefix match)"),
-    tool: str | None = typer.Option(None, "--tool", help="Filter by tool name (Edit, Bash, Read, etc.)"),
+    session: str | None = typer.Option(
+        None, "--session", help="Filter by session id (prefix match)"
+    ),
+    tool: str | None = typer.Option(
+        None, "--tool", help="Filter by tool name (Edit, Bash, Read, etc.)"
+    ),
     file: str | None = typer.Option(None, "--file", help="Filter by file path substring"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
@@ -538,6 +550,7 @@ def search(
 # -----------------------------------------------------------------------------
 # TIMELINE
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def timeline(
@@ -621,11 +634,14 @@ def _event_marker(event_type: str) -> str:
 # REPLAY
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def replay(
     session_id: str = typer.Argument(..., help="Session ID (prefix match)"),
     file_path: str = typer.Argument(..., help="File path to reconstruct"),
-    at_event: str | None = typer.Option(None, "--at-event", help="Reconstruct state at this event id"),
+    at_event: str | None = typer.Option(
+        None, "--at-event", help="Reconstruct state at this event id"
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Reconstruct the state of a file at a point in a session."""
@@ -700,6 +716,7 @@ def _guess_language(file_path: str) -> str:
 # DIFF
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def diff(
     event_id: str = typer.Argument(..., help="Event ID of an edit"),
@@ -714,20 +731,25 @@ def diff(
         console.print(f"[red]No edit event found: {event_id}[/red]")
         raise typer.Exit(1)
 
-    console.print(Panel.fit(
-        f"[bold]{result['tool_name']}[/bold]  [dim]{result['file_path']}[/dim]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{result['tool_name']}[/bold]  [dim]{result['file_path']}[/dim]",
+            border_style="cyan",
+        )
+    )
 
     console.print("[red]--- old[/red]")
     console.print(Panel(result["old"] or "[dim](empty)[/dim]", border_style="red", padding=(0, 1)))
     console.print("[green]+++ new[/green]")
-    console.print(Panel(result["new"] or "[dim](empty)[/dim]", border_style="green", padding=(0, 1)))
+    console.print(
+        Panel(result["new"] or "[dim](empty)[/dim]", border_style="green", padding=(0, 1))
+    )
 
 
 # -----------------------------------------------------------------------------
 # STATS
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def stats(
@@ -761,6 +783,7 @@ def stats(
 # -----------------------------------------------------------------------------
 # RECALL (proactive memory)
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def recall(
@@ -814,7 +837,9 @@ def recall(
         pm_lines = []
         for pm in result.project_matches[:3]:
             reasons = ", ".join(pm.reasons[:3])
-            pm_lines.append(f"[cyan]{pm.display_name}[/cyan] [dim]({pm.category or '—'}) · {reasons} · {pm.score:.2f}[/dim]")
+            pm_lines.append(
+                f"[cyan]{pm.display_name}[/cyan] [dim]({pm.category or '—'}) · {reasons} · {pm.score:.2f}[/dim]"
+            )
         console.print(Panel("\n".join(pm_lines), title="Project matches", border_style="cyan"))
 
     # Show time window
@@ -830,19 +855,26 @@ def recall(
     # Raw
     if show_raw and result.episodes:
         console.print()
-        console.print(Panel.fit(f"[bold]{len(result.episodes)} episode(s)[/bold]", border_style="dim"))
+        console.print(
+            Panel.fit(f"[bold]{len(result.episodes)} episode(s)[/bold]", border_style="dim")
+        )
         for ep in result.episodes:
-            console.print(f"  [cyan]{ep['episode_id']}[/cyan]  [dim]{ep.get('ended_at', '')[:16]}[/dim]  confidence={ep.get('confidence', 0):.2f}  status={ep.get('status', '?')}")
+            console.print(
+                f"  [cyan]{ep['episode_id']}[/cyan]  [dim]{ep.get('ended_at', '')[:16]}[/dim]  confidence={ep.get('confidence', 0):.2f}  status={ep.get('status', '?')}"
+            )
 
 
 # -----------------------------------------------------------------------------
 # ANALYZE (backfill analysis on already-ingested sessions)
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def analyze(
     all_sessions: bool = typer.Option(False, "--all", help="Re-analyze every ingested session"),
-    session: str | None = typer.Option(None, "--session", help="Re-analyze a single session (prefix match)"),
+    session: str | None = typer.Option(
+        None, "--session", help="Re-analyze a single session (prefix match)"
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Re-run analysis (projects, outcomes, episodes) on already-ingested sessions."""
@@ -897,6 +929,7 @@ def analyze(
 # -----------------------------------------------------------------------------
 # PROJECTS
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def projects(
@@ -977,10 +1010,15 @@ def plans_list(
 # -----------------------------------------------------------------------------
 # GIT LOG — show git operations from sessions
 
+
 @app.command()
 def git_log(
-    session_id: str | None = typer.Argument(None, help="Session ID (prefix match). Shows recent across all sessions if omitted."),
-    operation: str | None = typer.Option(None, "--type", "-t", help="Filter by operation type (commit, push, etc.)"),
+    session_id: str | None = typer.Argument(
+        None, help="Session ID (prefix match). Shows recent across all sessions if omitted."
+    ),
+    operation: str | None = typer.Option(
+        None, "--type", "-t", help="Filter by operation type (commit, push, etc.)"
+    ),
     query: str | None = typer.Option(None, "--query", "-q", help="Search commit messages"),
     limit: int = typer.Option(50, "--limit"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
@@ -1005,9 +1043,7 @@ def git_log(
         )
     else:
         # Show recent git operations across all sessions
-        ops = store.sqlite.search_git_operations(
-            query="", operation_type=operation, limit=limit
-        )
+        ops = store.sqlite.search_git_operations(query="", operation_type=operation, limit=limit)
 
     if not ops:
         console.print("[yellow]No git operations found.[/yellow]")
@@ -1038,10 +1074,15 @@ def git_log(
 # CONFIG — view and edit hook configuration
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def config(
-    show: bool = typer.Option(True, "--show/--edit", help="Show current config (default) or open for editing"),
-    set_key: str | None = typer.Option(None, "--set", help="Set a config key, e.g. --set hook.min_relevance=3.0"),
+    show: bool = typer.Option(
+        True, "--show/--edit", help="Show current config (default) or open for editing"
+    ),
+    set_key: str | None = typer.Option(
+        None, "--set", help="Set a config key, e.g. --set hook.min_relevance=3.0"
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """View or edit Longhand hook configuration.
@@ -1064,7 +1105,9 @@ def config(
         key_path, value_str = set_key.split("=", 1)
         parts = key_path.split(".")
         if len(parts) != 2 or parts[0] != "hook":
-            console.print("[red]Only hook.* keys are supported. E.g. --set hook.min_relevance=3.0[/red]")
+            console.print(
+                "[red]Only hook.* keys are supported. E.g. --set hook.min_relevance=3.0[/red]"
+            )
             return
 
         # Load existing config
@@ -1097,6 +1140,7 @@ def config(
 
     # Show current config
     from longhand.setup_commands import _load_hook_config
+
     hook = _load_hook_config()
 
     table = Table(title="Longhand Hook Config", show_lines=False)
@@ -1123,6 +1167,7 @@ def config(
 # CONTEXT — output relevant past context for hook injection
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def context(
     query: str = typer.Argument(..., help="The user's prompt or query"),
@@ -1134,7 +1179,8 @@ def context(
         None, "--project", "-p", help="Restrict to a project name or id"
     ),
     silent_if_empty: bool = typer.Option(
-        True, "--silent/--always",
+        True,
+        "--silent/--always",
         help="Print nothing when nothing relevant is found (vs. print 'no context')",
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
@@ -1189,12 +1235,15 @@ def context(
 
     # Compute relevance: high confidence + matching keywords
     import re as _re
+
     query_words = set(_re.findall(r"[a-z]{4,}", query.lower()))
-    searchable = " ".join([
-        top.get("problem_description") or "",
-        top.get("diagnosis_summary") or "",
-        top.get("fix_summary") or "",
-    ]).lower()
+    searchable = " ".join(
+        [
+            top.get("problem_description") or "",
+            top.get("diagnosis_summary") or "",
+            top.get("fix_summary") or "",
+        ]
+    ).lower()
     keyword_overlap = sum(1 for w in query_words if w in searchable)
     relevance = keyword_overlap * 1.0 + confidence * 2.0
 
@@ -1266,6 +1315,7 @@ def context(
 # -----------------------------------------------------------------------------
 # EXPORT — episode or session as standalone markdown
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def export(
@@ -1342,7 +1392,9 @@ def _episode_to_markdown(store, ep: dict) -> str:
     if ep.get("project_id"):
         proj = store.sqlite.get_project(ep["project_id"])
         if proj:
-            lines.append(f"**Project:** {proj['display_name']} ({proj.get('category') or 'uncategorized'})")
+            lines.append(
+                f"**Project:** {proj['display_name']} ({proj.get('category') or 'uncategorized'})"
+            )
             lines.append(f"**Path:** `{proj['canonical_path']}`")
 
     lines.append(f"**Session:** `{ep['session_id'][:8]}`")
@@ -1390,6 +1442,7 @@ def _episode_to_markdown(store, ep: dict) -> str:
 
             # Reconstructed file state
             from longhand.replay import ReplayEngine
+
             engine = ReplayEngine(store.sqlite)
             try:
                 state = engine.file_state_at(
@@ -1473,7 +1526,11 @@ def _session_to_markdown(store, session_id: str) -> str:
 
     # Timeline (visible events only)
     all_events = store.sqlite.get_events(session_id=session_id, limit=10000)
-    visible = [e for e in all_events if e["event_type"] in ("user_message", "assistant_text", "tool_call", "tool_result")]
+    visible = [
+        e
+        for e in all_events
+        if e["event_type"] in ("user_message", "assistant_text", "tool_call", "tool_result")
+    ]
 
     lines.append(f"## Timeline ({len(visible)} events)")
     lines.append("")
@@ -1515,6 +1572,7 @@ def _session_to_markdown(store, session_id: str) -> str:
 # -----------------------------------------------------------------------------
 # PATTERNS — recurring fix patterns across episodes
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def patterns(
@@ -1558,9 +1616,25 @@ def patterns(
         words = _re.findall(r"[a-z][a-z0-9]{4,}", problem)
         # Remove common words
         common = {
-            "error", "type", "test", "tests", "module", "import", "imports", "fail",
-            "failed", "value", "result", "check", "found", "missing", "expected",
-            "received", "actual", "passed", "running",
+            "error",
+            "type",
+            "test",
+            "tests",
+            "module",
+            "import",
+            "imports",
+            "fail",
+            "failed",
+            "value",
+            "result",
+            "check",
+            "found",
+            "missing",
+            "expected",
+            "received",
+            "actual",
+            "passed",
+            "running",
         }
         meaningful = [w for w in words if w not in common]
         # Most distinctive token (the longest non-common one)
@@ -1627,11 +1701,14 @@ def patterns(
 # RECAP — what have I been working on recently
 # -----------------------------------------------------------------------------
 
+
 @app.command()
 def recap(
     days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
     limit: int = typer.Option(10, "--limit", "-n"),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project id or name"),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help="Filter by project id or name"
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Show what you've been working on recently — sessions + outcomes + latest context."""
@@ -1693,9 +1770,7 @@ def recap(
                 project_name = proj["display_name"]
 
         # Get the first real user message
-        user_events = store.sqlite.get_events(
-            session_id=sid, event_type="user_message", limit=3
-        )
+        user_events = store.sqlite.get_events(session_id=sid, event_type="user_message", limit=3)
         first_user_msg = ""
         for ue in user_events:
             content = (ue.get("content") or "").strip()
@@ -1722,6 +1797,7 @@ def recap(
 
         if outcome and outcome.get("topics_json"):
             import json as _json
+
             try:
                 topics = _json.loads(outcome["topics_json"])[:5]
                 if topics:
@@ -1749,7 +1825,10 @@ def status_cmd(
 
     store = _get_store(data_dir)
     result = recall_project_status(
-        store, project, max_commits=commits, max_episodes=episodes,
+        store,
+        project,
+        max_commits=commits,
+        max_episodes=episodes,
     )
     if not result:
         console.print(f"[red]No project matching: {project}[/red]")
@@ -1761,6 +1840,7 @@ def status_cmd(
 # -----------------------------------------------------------------------------
 # CONTINUE — pick up where you left off in a session
 # -----------------------------------------------------------------------------
+
 
 @app.command("continue")
 def continue_cmd(
@@ -1808,7 +1888,8 @@ def continue_cmd(
     # Grab all events then take the last n (excluding thinking for readability)
     all_events = store.sqlite.get_events(session_id=full_id, limit=10000)
     visible_events = [
-        e for e in all_events
+        e
+        for e in all_events
         if e["event_type"] not in ("assistant_thinking", "file_snapshot", "system")
     ]
     recent = visible_events[-n:]
@@ -1850,9 +1931,7 @@ def continue_cmd(
     console.print()
 
     # Last unresolved question or open episode
-    unresolved_eps = store.sqlite.query_episodes(
-        session_id=full_id, status="unresolved", limit=5
-    )
+    unresolved_eps = store.sqlite.query_episodes(session_id=full_id, status="unresolved", limit=5)
     if unresolved_eps:
         console.print(
             Panel.fit(
@@ -1869,6 +1948,7 @@ def continue_cmd(
 # -----------------------------------------------------------------------------
 # HISTORY — cross-session file history
 # -----------------------------------------------------------------------------
+
 
 @app.command()
 def history(
@@ -1888,7 +1968,8 @@ def history(
             file_path=file_path, event_type="tool_call", limit=limit * 4
         )
         edits = [
-            e for e in events
+            e
+            for e in events
             if e.get("file_operation") in ("edit", "write", "multi_edit", "notebook_edit")
         ]
 
@@ -2041,6 +2122,7 @@ def mcp_serve_cmd():
     import asyncio
 
     from longhand.mcp_server import main as mcp_main
+
     asyncio.run(mcp_main())
 
 
@@ -2051,12 +2133,15 @@ def mcp_server_cmd():
     import asyncio
 
     from longhand.mcp_server import main as mcp_main
+
     asyncio.run(mcp_main())
 
 
 @app.command("ingest-session")
 def ingest_session_cmd(
-    transcript: str | None = typer.Option(None, "--transcript", "-t", help="Path to a single session JSONL"),
+    transcript: str | None = typer.Option(
+        None, "--transcript", "-t", help="Path to a single session JSONL"
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Ingest a single session file.
@@ -2134,9 +2219,7 @@ def doctor():
 @app.command("reanalyze")
 def reanalyze(
     data_dir: str | None = typer.Option(None, "--data-dir"),
-    limit: int = typer.Option(
-        0, "--limit", help="Max number of sessions to reanalyze (0 = all)"
-    ),
+    limit: int = typer.Option(0, "--limit", help="Max number of sessions to reanalyze (0 = all)"),
 ):
     """Re-run analysis on every ingested session.
 
@@ -2211,8 +2294,7 @@ def reanalyze(
     embedded = store.backfill_episode_embeddings(progress=_progress)
 
     console.print(
-        f"\n[green]✓[/green] Reanalyzed {reanalyzed} session(s), "
-        f"embedded {embedded} episode(s)."
+        f"\n[green]✓[/green] Reanalyzed {reanalyzed} session(s), embedded {embedded} episode(s)."
     )
     if missing_transcript:
         console.print(
@@ -2243,14 +2325,11 @@ def backfill_episodes(
         return
 
     if vector_count >= sql_count:
-        console.print(
-            f"[green]✓[/green] All {sql_count} episodes already embedded."
-        )
+        console.print(f"[green]✓[/green] All {sql_count} episodes already embedded.")
         return
 
     console.print(
-        f"[cyan]Embedding {sql_count} episode(s)...[/cyan] "
-        f"[dim]({vector_count} already done)[/dim]"
+        f"[cyan]Embedding {sql_count} episode(s)...[/cyan] [dim]({vector_count} already done)[/dim]"
     )
 
     def _progress(done: int, total: int) -> None:

@@ -84,9 +84,7 @@ def test_ingest_live_silent_on_empty_stdin(tmp_path: Path) -> None:
     """Empty stdin → exit 0 silently (must not crash hook chain)."""
     runner = CliRunner()
     data_dir = tmp_path / "longhand"
-    result = runner.invoke(
-        app, ["ingest-live", "--data-dir", str(data_dir)], input=""
-    )
+    result = runner.invoke(app, ["ingest-live", "--data-dir", str(data_dir)], input="")
     assert result.exit_code == 0
 
 
@@ -292,9 +290,7 @@ def test_migration_v5_adds_last_offset_column(tmp_path: Path) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(ingestion_log)").fetchall()}
         views = {
             r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'view'"
-            ).fetchall()
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'view'").fetchall()
         }
 
     assert "last_offset" in cols
@@ -328,8 +324,7 @@ def test_live_then_session_end_composes(tmp_path: Path) -> None:
 
     with store.sqlite.connect() as conn:
         n_events = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE session_id = 'live-test' "
-            "AND event_id NOT LIKE '%#%'"
+            "SELECT COUNT(*) FROM events WHERE session_id = 'live-test' AND event_id NOT LIKE '%#%'"
         ).fetchone()[0]
         size_logged = conn.execute(
             "SELECT file_size FROM ingestion_log WHERE transcript_path = ?",

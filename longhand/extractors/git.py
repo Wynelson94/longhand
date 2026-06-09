@@ -288,6 +288,7 @@ def _parse_diff(command: str, output: str) -> GitSignal:
 
 # --- Generic fallback ---
 
+
 def _parse_generic(subcommand: str, command: str, output: str) -> GitSignal:
     return GitSignal(
         operation_type=subcommand,

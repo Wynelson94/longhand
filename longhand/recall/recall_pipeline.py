@@ -31,11 +31,28 @@ from longhand.storage.store import LonghandStore
 # fillers that don't help disambiguate; they would otherwise dominate scoring
 # on queries like "what did we do last week with X".
 _KEYWORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9]{3,}")
-_KEYWORD_STOPWORDS = frozenset({
-    "when", "what", "that", "this", "with", "from", "where",
-    "made", "done", "last", "couple", "months", "weeks", "days",
-    "time", "some", "thing", "about",
-})
+_KEYWORD_STOPWORDS = frozenset(
+    {
+        "when",
+        "what",
+        "that",
+        "this",
+        "with",
+        "from",
+        "where",
+        "made",
+        "done",
+        "last",
+        "couple",
+        "months",
+        "weeks",
+        "days",
+        "time",
+        "some",
+        "thing",
+        "about",
+    }
+)
 
 
 def _extract_query_keywords(query: str) -> list[str]:
@@ -66,6 +83,7 @@ class RecallResult:
 @dataclass
 class ProjectStatus:
     """Result of a git-aware project status query."""
+
     project_id: str
     display_name: str
     canonical_path: str
@@ -246,11 +264,13 @@ def recall(
         # model already agrees.
         keyword_hits = 0
         if query_words:
-            searchable = " ".join([
-                ep.get("problem_description") or "",
-                ep.get("diagnosis_summary") or "",
-                ep.get("fix_summary") or "",
-            ]).lower()
+            searchable = " ".join(
+                [
+                    ep.get("problem_description") or "",
+                    ep.get("diagnosis_summary") or "",
+                    ep.get("fix_summary") or "",
+                ]
+            ).lower()
             for word in query_words[:5]:
                 if word.lower() in searchable:
                     keyword_hits += 1
@@ -277,12 +297,7 @@ def recall(
             except Exception:
                 pass
 
-        return (
-            episode_semantic_boost
-            + keyword_hits * 10
-            + confidence
-            + recency_boost * 0.5
-        )
+        return episode_semantic_boost + keyword_hits * 10 + confidence + recency_boost * 0.5
 
     episodes = sorted(episodes, key=_rank_score, reverse=True)[:max_episodes]
 
@@ -339,10 +354,14 @@ def recall(
         # Run filtered searches to find actual conversations, not tool noise
         # user_message events are the strongest signal for topic recall
         user_hits = store.vectors.search(
-            query=cleaned_query, n_results=20, event_type="user_message",
+            query=cleaned_query,
+            n_results=20,
+            event_type="user_message",
         )
         asst_hits = store.vectors.search(
-            query=cleaned_query, n_results=10, event_type="assistant_text",
+            query=cleaned_query,
+            n_results=10,
+            event_type="assistant_text",
         )
         # Merge and dedupe by event_id
         seen_ids: set[str] = set()
@@ -364,13 +383,15 @@ def recall(
             key=lambda x: min(h.get("distance", 1.0) for h in x[1]),
         )[:3]:
             best_hit = min(hits, key=lambda h: h.get("distance", 1.0))
-            fallback_snippets.append({
-                "session_id": sid,
-                "content": best_hit.get("document", "")[:500],
-                "event_type": (best_hit.get("metadata") or {}).get("event_type", ""),
-                "timestamp": (best_hit.get("metadata") or {}).get("timestamp", ""),
-                "_distance": best_hit.get("distance", 1.0),
-            })
+            fallback_snippets.append(
+                {
+                    "session_id": sid,
+                    "content": best_hit.get("document", "")[:500],
+                    "event_type": (best_hit.get("metadata") or {}).get("event_type", ""),
+                    "timestamp": (best_hit.get("metadata") or {}).get("timestamp", ""),
+                    "_distance": best_hit.get("distance", 1.0),
+                }
+            )
 
     # 8. Decide what to present based on quality
     # If episodes are relevant (score >= 3.0), use them as primary
@@ -474,7 +495,8 @@ def recall_project_status(
     # 2. Get recent git operations for this project
     try:
         last_commits = store.sqlite.get_project_git_operations(
-            project_id=project_id, limit=max_commits,
+            project_id=project_id,
+            limit=max_commits,
         )
     except Exception:
         last_commits = []
@@ -487,7 +509,8 @@ def recall_project_status(
     # 3. Get recent sessions
     try:
         recent_sessions = store.sqlite.list_sessions(
-            project_id=project_id, limit=5,
+            project_id=project_id,
+            limit=5,
         )
     except Exception:
         recent_sessions = []
@@ -503,20 +526,22 @@ def recall_project_status(
     # 4. Get recent episodes — split resolved vs unresolved
     try:
         all_episodes = store.sqlite.query_episodes(
-            project_ids=[project_id], limit=max_episodes * 2,
+            project_ids=[project_id],
+            limit=max_episodes * 2,
         )
     except Exception:
         all_episodes = []
 
     recent_episodes = all_episodes[:max_episodes]
-    unresolved_episodes = [
-        ep for ep in all_episodes if ep.get("status") != "resolved"
-    ][:max_episodes]
+    unresolved_episodes = [ep for ep in all_episodes if ep.get("status") != "resolved"][
+        :max_episodes
+    ]
 
     # 5. Get recent conversation segments
     try:
         recent_segments = store.sqlite.query_segments(
-            project_ids=[project_id], limit=max_segments,
+            project_ids=[project_id],
+            limit=max_segments,
         )
     except Exception:
         recent_segments = []
@@ -539,9 +564,7 @@ def recall_project_status(
             }
 
     # 7. Detect disk↔DB drift (staleness) for this project
-    drift = _detect_project_drift(
-        store, project_id, project.get("canonical_path", "")
-    )
+    drift = _detect_project_drift(store, project_id, project.get("canonical_path", ""))
 
     # 8. Build narrative — prepend drift hint when stale so agents see it first
     latest_fix_summary = next(
@@ -616,10 +639,7 @@ def _detect_project_drift(
                 (project_id,),
             ).fetchall()
             all_ingested = {
-                r[0]
-                for r in conn.execute(
-                    "SELECT transcript_path FROM sessions"
-                ).fetchall()
+                r[0] for r in conn.execute("SELECT transcript_path FROM sessions").fetchall()
             }
     except Exception:
         indexed_rows = []
@@ -636,14 +656,12 @@ def _detect_project_drift(
     #    attributed to it.
     target_resolved: Path | None
     try:
-        target_resolved = (
-            Path(canonical_path).resolve() if canonical_path else None
-        )
+        target_resolved = Path(canonical_path).resolve() if canonical_path else None
     except (OSError, PermissionError):
         target_resolved = None
 
-    truly_missing: list[Path] = []       # not in any sessions row
-    cross_attributed: list[Path] = []    # ingested but mapped to a sibling
+    truly_missing: list[Path] = []  # not in any sessions row
+    cross_attributed: list[Path] = []  # ingested but mapped to a sibling
     max_mtime: float = 0.0
 
     if canonical_path:

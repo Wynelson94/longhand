@@ -70,7 +70,9 @@ def build_narrative(
         if project_matches:
             lines.append("**Projects I considered:**")
             for pm in project_matches[:3]:
-                lines.append(f"- **{pm.display_name}** ({pm.category or 'uncategorized'}) — {', '.join(pm.reasons)}")
+                lines.append(
+                    f"- **{pm.display_name}** ({pm.category or 'uncategorized'}) — {', '.join(pm.reasons)}"
+                )
         return "\n".join(lines)
 
     top = episodes[0]
@@ -188,7 +190,9 @@ def _build_segment_narrative(
     seg_type = top.get("segment_type", "discussion")
     keywords_raw = top.get("keywords_json") or top.get("keywords") or "[]"
     try:
-        keywords = json.loads(keywords_raw) if isinstance(keywords_raw, str) else (keywords_raw or [])
+        keywords = (
+            json.loads(keywords_raw) if isinstance(keywords_raw, str) else (keywords_raw or [])
+        )
     except Exception:
         keywords = []
     if keywords:
@@ -227,8 +231,7 @@ def _build_fallback_narrative(
 ) -> str:
     """Build a narrative from event-level fallback results."""
     lines.append(
-        "_No episodes or conversation segments matched directly. "
-        "Closest event-level matches:_\n"
+        "_No episodes or conversation segments matched directly. Closest event-level matches:_\n"
     )
 
     for snippet in fallback_snippets[:3]:
@@ -239,8 +242,7 @@ def _build_fallback_narrative(
         lines.append(f"### From session `{session_short}` ({when})")
         lines.append(f"> {content}\n")
         lines.append(
-            f'[Use `search_in_context("{session_short}", "{query[:50]}")` '
-            f"for full context.]\n"
+            f'[Use `search_in_context("{session_short}", "{query[:50]}")` for full context.]\n'
         )
 
     return "\n".join(lines)
@@ -290,9 +292,7 @@ def build_project_status_narrative(
 
     # Recent commits — skip rows with no parseable hash (legacy data) so the
     # narrative doesn't show blank backticks.
-    rendered_commits = [
-        c for c in last_commits[:10] if (c.get("commit_hash") or "").strip()
-    ]
+    rendered_commits = [c for c in last_commits[:10] if (c.get("commit_hash") or "").strip()]
     if rendered_commits:
         lines.append(f"### Recent commits ({len(rendered_commits)})")
         for commit in rendered_commits:

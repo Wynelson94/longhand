@@ -202,7 +202,5 @@ def _fallback_match(
 
     results = match_projects(store, query, top_k=top_k, now=now, _allow_fallback=False)
     for match in results:
-        match.reasons.append(
-            "on-the-fly inference (semantic index catching up in background)"
-        )
+        match.reasons.append("on-the-fly inference (semantic index catching up in background)")
     return results

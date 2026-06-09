@@ -156,9 +156,7 @@ def build_sessions(tmp_path: Path) -> list[tuple[str, list[dict]]]:
             "isSidechain": False,
             "message": {
                 "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "t-2", "content": "Updated."}
-                ],
+                "content": [{"type": "tool_result", "tool_use_id": "t-2", "content": "Updated."}],
             },
             "toolUseResult": {"success": True},
         },

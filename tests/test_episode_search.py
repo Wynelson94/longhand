@@ -81,7 +81,13 @@ def test_add_episode_embedding_upserts(temp_store: LonghandStore):
     temp_store.vectors.add_episode_embedding(
         episode_id="ep-1",
         text="Problem: X. Fix: Y.",
-        metadata={"session_id": "s", "project_id": "p", "ended_at": "", "status": "resolved", "has_fix": True},
+        metadata={
+            "session_id": "s",
+            "project_id": "p",
+            "ended_at": "",
+            "status": "resolved",
+            "has_fix": True,
+        },
     )
     assert temp_store.vectors.episode_count() == 1
 
@@ -89,7 +95,13 @@ def test_add_episode_embedding_upserts(temp_store: LonghandStore):
     temp_store.vectors.add_episode_embedding(
         episode_id="ep-1",
         text="Problem: X. Fix: Y (updated).",
-        metadata={"session_id": "s", "project_id": "p", "ended_at": "", "status": "resolved", "has_fix": True},
+        metadata={
+            "session_id": "s",
+            "project_id": "p",
+            "ended_at": "",
+            "status": "resolved",
+            "has_fix": True,
+        },
     )
     assert temp_store.vectors.episode_count() == 1
 
@@ -164,13 +176,15 @@ def test_find_episodes_falls_back_when_vectors_empty(temp_store: LonghandStore):
     caller still sees SOMETHING instead of a silent void.
     """
     # Insert into SQLite only — do NOT embed
-    temp_store.sqlite.insert_episodes([
-        _fixture_episode(
-            episode_id="ep-sql-only",
-            problem="Some problem text",
-            fix="Some fix text",
-        )
-    ])
+    temp_store.sqlite.insert_episodes(
+        [
+            _fixture_episode(
+                episode_id="ep-sql-only",
+                problem="Some problem text",
+                fix="Some fix text",
+            )
+        ]
+    )
 
     hits = find_episodes(temp_store, query="anything at all", limit=5)
     assert hits, "vector-empty path should fall back to SQL, not return []"
@@ -214,13 +228,15 @@ def test_backfill_embeds_existing_sqlite_rows(temp_store: LonghandStore):
     """backfill_episode_embeddings copies every SQLite episode row into vectors."""
     # Seed three episodes into SQLite only
     for i in range(3):
-        temp_store.sqlite.insert_episodes([
-            _fixture_episode(
-                episode_id=f"ep-back-{i}",
-                problem=f"Problem number {i}",
-                fix=f"Fix number {i}",
-            )
-        ])
+        temp_store.sqlite.insert_episodes(
+            [
+                _fixture_episode(
+                    episode_id=f"ep-back-{i}",
+                    problem=f"Problem number {i}",
+                    fix=f"Fix number {i}",
+                )
+            ]
+        )
 
     assert temp_store.vectors.episode_count() == 0
 
@@ -231,13 +247,15 @@ def test_backfill_embeds_existing_sqlite_rows(temp_store: LonghandStore):
 
 def test_backfill_is_idempotent(temp_store: LonghandStore):
     """Running backfill twice produces the same vector count (upsert, not duplicate)."""
-    temp_store.sqlite.insert_episodes([
-        _fixture_episode(
-            episode_id="ep-idem",
-            problem="Some problem",
-            fix="Some fix",
-        )
-    ])
+    temp_store.sqlite.insert_episodes(
+        [
+            _fixture_episode(
+                episode_id="ep-idem",
+                problem="Some problem",
+                fix="Some fix",
+            )
+        ]
+    )
     temp_store.backfill_episode_embeddings()
     temp_store.backfill_episode_embeddings()
     assert temp_store.vectors.episode_count() == 1
@@ -245,13 +263,15 @@ def test_backfill_is_idempotent(temp_store: LonghandStore):
 
 def test_ensure_episode_embeddings_triggers_on_empty_collection(temp_store: LonghandStore):
     """ensure_episode_embeddings auto-backfills when vectors are empty."""
-    temp_store.sqlite.insert_episodes([
-        _fixture_episode(
-            episode_id="ep-auto",
-            problem="Some problem",
-            fix="Some fix",
-        )
-    ])
+    temp_store.sqlite.insert_episodes(
+        [
+            _fixture_episode(
+                episode_id="ep-auto",
+                problem="Some problem",
+                fix="Some fix",
+            )
+        ]
+    )
 
     n = temp_store.ensure_episode_embeddings()
     assert n == 1

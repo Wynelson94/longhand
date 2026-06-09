@@ -49,7 +49,7 @@ def test_replay_reconstructs_file_after_multiple_edits(multi_edit_session_file, 
     assert state is not None
     assert state.edits_applied == 4  # 1 write + 3 edits
     assert "def greet():" in state.content
-    assert 'print(\'hello world\')' in state.content
+    assert "print('hello world')" in state.content
     assert '"""Say hello."""' in state.content
     # The original 'def hello():' should be gone
     assert "def hello():" not in state.content

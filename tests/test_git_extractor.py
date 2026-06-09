@@ -42,7 +42,9 @@ class TestExtractCommit:
         assert signal.success is True
 
     def test_commit_with_long_hash(self):
-        output = "[feature/auth abc1234567890abcdef1234567890abcdef12345678] Add auth\n 1 file changed"
+        output = (
+            "[feature/auth abc1234567890abcdef1234567890abcdef12345678] Add auth\n 1 file changed"
+        )
         signal = extract_git_signal("git commit -m 'Add auth'", output)
         assert signal is not None
         assert signal.commit_hash == "abc1234567890abcdef1234567890abcdef12345678"
@@ -57,10 +59,7 @@ class TestExtractCommit:
 
 class TestExtractPush:
     def test_standard_push(self):
-        output = (
-            "To https://github.com/user/repo.git\n"
-            "   abc1234..def5678  main -> main\n"
-        )
+        output = "To https://github.com/user/repo.git\n   abc1234..def5678  main -> main\n"
         signal = extract_git_signal("git push origin main", output)
         assert signal is not None
         assert signal.operation_type == "push"

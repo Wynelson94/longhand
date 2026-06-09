@@ -41,6 +41,7 @@ def _truncate_at_boundary(s: str, max_chars: int) -> str:
         return truncated[:last_ws].rstrip() + "…"
     return truncated.rstrip() + "…"
 
+
 # How many events to look back from a problem event for the anchoring user
 # message. Long Claude runs can emit hundreds of tool calls between user
 # turns, so the lookback needs to be generous. Capped to avoid scanning
@@ -188,33 +189,25 @@ def extract_episodes(
                     # (stem) — Claude usually refers to files by stem in
                     # prose (e.g. "the auth middleware") but may use the
                     # full basename when quoting paths.
-                    fname_full = (
-                        Path(cand.file_path).name.lower()
-                        if cand.file_path else ""
-                    )
-                    fname_stem = (
-                        Path(cand.file_path).stem.lower()
-                        if cand.file_path else ""
-                    )
+                    fname_full = Path(cand.file_path).name.lower() if cand.file_path else ""
+                    fname_stem = Path(cand.file_path).stem.lower() if cand.file_path else ""
                     error_file_match = bool(
-                        problem_files and cand.file_path and any(
-                            Path(ref).name == Path(cand.file_path).name
-                            for ref in problem_files
+                        problem_files
+                        and cand.file_path
+                        and any(
+                            Path(ref).name == Path(cand.file_path).name for ref in problem_files
                         )
                     )
                     reasoning_file_match = bool(
-                        (fname_full or fname_stem) and diagnosis_texts and any(
+                        (fname_full or fname_stem)
+                        and diagnosis_texts
+                        and any(
                             (fname_full and fname_full in text.lower())
-                            or (fname_stem and len(fname_stem) >= 4
-                                and fname_stem in text.lower())
+                            or (fname_stem and len(fname_stem) >= 4 and fname_stem in text.lower())
                             for text in diagnosis_texts
                         )
                     )
-                    if (
-                        error_file_match
-                        or diagnosis_event is not None
-                        or reasoning_file_match
-                    ):
+                    if error_file_match or diagnosis_event is not None or reasoning_file_match:
                         fix_event = cand
                         # Capture "intent" — the most recent substantive
                         # assistant_text before this fix. This is usually
@@ -267,24 +260,30 @@ def extract_episodes(
 
         ep_id = _episode_id(session_id, i)
 
-        episodes.append({
-            "episode_id": ep_id,
-            "session_id": session_id,
-            "project_id": project_id,
-            "started_at": problem_event.timestamp.isoformat(),
-            "ended_at": (verification_event or fix_event or problem_event).timestamp.isoformat(),
-            "problem_event_id": problem_event.event_id,
-            "diagnosis_event_id": diagnosis_event.event_id if diagnosis_event else None,
-            "fix_event_id": fix_event.event_id if fix_event else None,
-            "verification_event_id": verification_event.event_id if verification_event else None,
-            "problem_description": problem_description,
-            "diagnosis_summary": diagnosis_summary,
-            "fix_summary": fix_summary,
-            "touched_files": sorted(touched_files),
-            "tags": sorted(tags),
-            "confidence": confidence,
-            "status": status,
-        })
+        episodes.append(
+            {
+                "episode_id": ep_id,
+                "session_id": session_id,
+                "project_id": project_id,
+                "started_at": problem_event.timestamp.isoformat(),
+                "ended_at": (
+                    verification_event or fix_event or problem_event
+                ).timestamp.isoformat(),
+                "problem_event_id": problem_event.event_id,
+                "diagnosis_event_id": diagnosis_event.event_id if diagnosis_event else None,
+                "fix_event_id": fix_event.event_id if fix_event else None,
+                "verification_event_id": verification_event.event_id
+                if verification_event
+                else None,
+                "problem_description": problem_description,
+                "diagnosis_summary": diagnosis_summary,
+                "fix_summary": fix_summary,
+                "touched_files": sorted(touched_files),
+                "tags": sorted(tags),
+                "confidence": confidence,
+                "status": status,
+            }
+        )
 
         # Move past this episode — start scanning from after the verification
         # (or from the next event if we didn't find one)
@@ -303,7 +302,8 @@ def _link_commits_to_episodes(episodes: list[dict], events: list[Event]) -> None
 
     # Collect commit events
     commit_events = [
-        (idx, e) for idx, e in enumerate(events)
+        (idx, e)
+        for idx, e in enumerate(events)
         if e.git_operation == "commit" and e.git_commit_hash
     ]
 
@@ -323,6 +323,7 @@ def _link_commits_to_episodes(episodes: list[dict], events: list[Event]) -> None
 def _extract_keywords(text: str) -> list[str]:
     """Tiny keyword extractor for matching diagnosis thinking to error snippets."""
     import re
+
     tokens = re.findall(r"\w{4,}", text.lower())
     # Deduplicate, keep order
     seen: set[str] = set()
@@ -451,7 +452,7 @@ def _compose_fix_summary(
     if verification_event and budget > 40:
         vcontent = (verification_event.content or "").strip()
         if vcontent:
-            parts.append(f"Verified: {vcontent[:min(120, budget)]}")
+            parts.append(f"Verified: {vcontent[: min(120, budget)]}")
         else:
             parts.append("Verified: clean tool result")
 

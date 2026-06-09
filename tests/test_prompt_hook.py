@@ -46,9 +46,7 @@ def _run_hook(monkeypatch, tmp_path, prompt, recall_result):
 
     # The hook hardcodes data_dir=None, so redirect store acquisition to a temp store.
     store = LonghandStore(data_dir=tmp_path / "longhand")
-    monkeypatch.setattr(
-        "longhand.cli._commands._get_store", lambda data_dir=None: store
-    )
+    monkeypatch.setattr("longhand.cli._commands._get_store", lambda data_dir=None: store)
 
     # Stub the recall engine. `context` does `from longhand.recall import recall`
     # at call time, so patching the source attribute is sufficient.
@@ -97,7 +95,5 @@ def test_hook_injects_context_when_recall_matches(monkeypatch, tmp_path):
 def test_hook_emits_empty_object_when_no_context(monkeypatch, tmp_path):
     """With no relevant episodes the hook must still emit a valid, silent ``{}``."""
     recall_result = SimpleNamespace(episodes=[], artifacts=None)
-    out = _run_hook(
-        monkeypatch, tmp_path, "some unrelated prompt text here", recall_result
-    )
+    out = _run_hook(monkeypatch, tmp_path, "some unrelated prompt text here", recall_result)
     assert out == "{}"

@@ -149,9 +149,7 @@ def test_raw_is_preserved(sample_session_file):
             assert "type" in e.raw
 
 
-def _write_multi_cwd_jsonl(
-    path, cwds: list[str], session_id: str = "multi-cwd-session"
-) -> None:
+def _write_multi_cwd_jsonl(path, cwds: list[str], session_id: str = "multi-cwd-session") -> None:
     """Write a minimal JSONL where each entry uses a cwd from `cwds` in order."""
     entries = []
     for i, cwd in enumerate(cwds):

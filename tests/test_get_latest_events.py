@@ -35,9 +35,7 @@ def test_get_latest_events_respects_limit(sample_session_file, temp_store):
     assert len(top2) == 2
 
     # Top 2 should be the two highest-sequence events
-    expected_top_seqs = sorted(
-        (e["sequence"] for e in all_events), reverse=True
-    )[:2]
+    expected_top_seqs = sorted((e["sequence"] for e in all_events), reverse=True)[:2]
     actual_top_seqs = [e["sequence"] for e in top2]
     assert actual_top_seqs == expected_top_seqs
 

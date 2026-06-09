@@ -85,20 +85,15 @@ def find_episodes(
     # Phase 2: post-filter by project_ids (ChromaDB can't always $in efficiently)
     if project_ids:
         project_set = set(project_ids)
-        hits = [
-            h for h in hits
-            if (h.get("metadata") or {}).get("project_id") in project_set
-        ]
+        hits = [h for h in hits if (h.get("metadata") or {}).get("project_id") in project_set]
 
     # Phase 3: enrich from SQLite — preserve semantic ranking
     enriched: list[dict[str, Any]] = []
     distance_map = {
-        h.get("episode_id"): h.get("distance", 1.0)
-        for h in hits
-        if h.get("episode_id")
+        h.get("episode_id"): h.get("distance", 1.0) for h in hits if h.get("episode_id")
     }
 
-    for hit in hits[:limit * 2]:
+    for hit in hits[: limit * 2]:
         eid = hit.get("episode_id")
         if not eid:
             continue

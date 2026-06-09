@@ -51,7 +51,15 @@ def _insert_events_with_collisions(
             ("evt-5", session_id, "assistant_text", 5, "2026-04-01T00:00:05+00:00", "F", "{}"),
             # Collision-resolution duplicates (the parser's #N suffix behavior)
             ("evt-0#1", session_id, "user_message", 0, "2026-04-01T00:00:00+00:00", "A-dup", "{}"),
-            ("evt-3#1", session_id, "assistant_text", 3, "2026-04-01T00:00:03+00:00", "D-dup", "{}"),
+            (
+                "evt-3#1",
+                session_id,
+                "assistant_text",
+                3,
+                "2026-04-01T00:00:03+00:00",
+                "D-dup",
+                "{}",
+            ),
         ]
         conn.executemany(
             "INSERT OR REPLACE INTO events "
@@ -84,9 +92,7 @@ def test_sequence_range_narrow_bound(temp_store: LonghandStore):
 def test_sequence_range_opt_out_shows_suffixes(temp_store: LonghandStore):
     """dedup_suffixes=False surfaces the parser duplicates for forensic work."""
     _insert_events_with_collisions(temp_store)
-    events = temp_store.sqlite.get_events_by_sequence_range(
-        "test-sess", 0, 5, dedup_suffixes=False
-    )
+    events = temp_store.sqlite.get_events_by_sequence_range("test-sess", 0, 5, dedup_suffixes=False)
     # 6 primaries + 2 suffix duplicates at sequences 0 and 3
     assert len(events) == 8
     assert "evt-0#1" in {e["event_id"] for e in events}
@@ -178,7 +184,7 @@ def test_search_in_context_merge_is_strict_overlap():
 
     src = inspect.getsource(mcp_server._tool_search_in_context)
     # Old bug: `w["seq_start"] <= merged[-1]["seq_end"] + 1`
-    assert "seq_end\"] + 1" not in src, (
+    assert 'seq_end"] + 1' not in src, (
         "merge condition still uses adjacency (+ 1) — should be strict overlap"
     )
-    assert "seq_start\"] <= merged[-1][\"seq_end\"]" in src
+    assert 'seq_start"] <= merged[-1]["seq_end"]' in src

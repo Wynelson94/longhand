@@ -6,8 +6,10 @@ from longhand.extractors.git import GitSignal, extract_git_signal
 from longhand.extractors.topics import extract_keywords
 
 __all__ = [
-    "ErrorSignal", "detect_error",
+    "ErrorSignal",
+    "detect_error",
     "extract_file_references",
-    "GitSignal", "extract_git_signal",
+    "GitSignal",
+    "extract_git_signal",
     "extract_keywords",
 ]

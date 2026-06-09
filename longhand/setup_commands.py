@@ -54,6 +54,7 @@ def _save_json(path: Path, data: dict) -> None:
 
 # ─── Hook install ──────────────────────────────────────────────────────────
 
+
 def _wrap_hook_command(command: str, matcher: str = "") -> dict:
     """Build a hook entry in Claude Code's expected schema.
 
@@ -131,7 +132,9 @@ def hook_install() -> None:
             inner = entry.get("hooks")
             if isinstance(inner, list):
                 for h in inner:
-                    if isinstance(h, dict) and "$CLAUDE_TRANSCRIPT_PATH" in (h.get("command") or ""):
+                    if isinstance(h, dict) and "$CLAUDE_TRANSCRIPT_PATH" in (
+                        h.get("command") or ""
+                    ):
                         h["command"] = session_end_cmd
                         upgraded += 1
             elif "$CLAUDE_TRANSCRIPT_PATH" in (entry.get("command") or ""):
@@ -171,9 +174,7 @@ def hook_install() -> None:
 
     body = []
     if added:
-        body.append(
-            f"[green]✓[/green] Installed hook(s): [bold]{', '.join(added)}[/bold]"
-        )
+        body.append(f"[green]✓[/green] Installed hook(s): [bold]{', '.join(added)}[/bold]")
     if upgraded:
         body.append(f"[green]✓[/green] Upgraded {upgraded} stale SessionEnd hook(s)")
     body.append(f"[dim]Config:[/dim] {CLAUDE_SETTINGS_PATH}")
@@ -184,9 +185,7 @@ def hook_install() -> None:
         "assistant turn so in-progress sessions stay queryable."
     )
 
-    console.print(
-        Panel.fit("\n".join(body), title="Hook installed", border_style="green")
-    )
+    console.print(Panel.fit("\n".join(body), title="Hook installed", border_style="green"))
 
 
 def prompt_hook_install() -> None:
@@ -231,10 +230,7 @@ def prompt_hook_uninstall() -> None:
     hooks = settings.get("hooks", {})
     user_prompt = hooks.get("UserPromptSubmit", [])
 
-    filtered = [
-        h for h in user_prompt
-        if not _entry_contains_command(h, "__prompt-hook-run")
-    ]
+    filtered = [h for h in user_prompt if not _entry_contains_command(h, "__prompt-hook-run")]
 
     if len(filtered) == len(user_prompt):
         console.print("[yellow]Longhand prompt hook was not installed.[/yellow]")
@@ -251,20 +247,21 @@ def prompt_hook_uninstall() -> None:
 
 
 _HOOK_STDIN_MAX_BYTES = 256 * 1024  # 256KB — Claude Code prompts never exceed this
-_HOOK_PROMPT_MAX_LEN = 8000          # Cap the prompt we pass to the recall pipeline
+_HOOK_PROMPT_MAX_LEN = 8000  # Cap the prompt we pass to the recall pipeline
 
 # Configurable hook behavior — users can override via ~/.longhand/config.json
 _DEFAULT_HOOK_CONFIG = {
-    "min_relevance": 2.5,        # Minimum relevance score to inject (higher = less noise)
-    "max_inject_chars": 2000,    # Max characters injected into prompt
-    "max_episodes": 2,           # Max episodes to consider
-    "enabled": True,             # Set to false to disable without uninstalling
+    "min_relevance": 2.5,  # Minimum relevance score to inject (higher = less noise)
+    "max_inject_chars": 2000,  # Max characters injected into prompt
+    "max_episodes": 2,  # Max episodes to consider
+    "enabled": True,  # Set to false to disable without uninstalling
 }
 
 
 def _load_hook_config() -> dict:
     """Load hook configuration from ~/.longhand/config.json, falling back to defaults."""
     import json as _json
+
     config_path = Path.home() / ".longhand" / "config.json"
     config = dict(_DEFAULT_HOOK_CONFIG)
     try:
@@ -377,10 +374,7 @@ def hook_uninstall() -> None:
     removed: list[str] = []
 
     session_end = hooks.get("SessionEnd", [])
-    filtered = [
-        h for h in session_end
-        if not _entry_contains_command(h, "longhand ingest-session")
-    ]
+    filtered = [h for h in session_end if not _entry_contains_command(h, "longhand ingest-session")]
     if len(filtered) != len(session_end):
         if filtered:
             hooks["SessionEnd"] = filtered
@@ -389,9 +383,7 @@ def hook_uninstall() -> None:
         removed.append("SessionEnd")
 
     stop = hooks.get("Stop", [])
-    filtered_stop = [
-        h for h in stop if not _entry_contains_command(h, "longhand ingest-live")
-    ]
+    filtered_stop = [h for h in stop if not _entry_contains_command(h, "longhand ingest-live")]
     if len(filtered_stop) != len(stop):
         if filtered_stop:
             hooks["Stop"] = filtered_stop
@@ -411,9 +403,7 @@ def hook_uninstall() -> None:
 # ─── Reconciler launchd install ───────────────────────────────────────────
 
 RECONCILER_PLIST_LABEL = "com.longhand.reconcile"
-RECONCILER_PLIST_PATH = (
-    Path.home() / "Library" / "LaunchAgents" / f"{RECONCILER_PLIST_LABEL}.plist"
-)
+RECONCILER_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{RECONCILER_PLIST_LABEL}.plist"
 RECONCILER_INTERVAL_SECONDS = 30 * 60  # 30 minutes
 
 
@@ -496,20 +486,15 @@ def schedule_install_reconciler() -> None:
         load = None
 
     body = [
-        f"[green]✓[/green] Installed reconciler at "
-        f"[bold]{RECONCILER_PLIST_PATH}[/bold]",
+        f"[green]✓[/green] Installed reconciler at [bold]{RECONCILER_PLIST_PATH}[/bold]",
         f"[dim]Runs:[/dim] {longhand_bin} reconcile --fix",
         f"[dim]Interval:[/dim] every {RECONCILER_INTERVAL_SECONDS // 60} minutes",
         f"[dim]Log:[/dim] {log_path}",
     ]
     if load is not None and load.returncode != 0 and load.stderr:
-        body.append(
-            f"[yellow]⚠[/yellow] launchctl load: {load.stderr.strip()}"
-        )
+        body.append(f"[yellow]⚠[/yellow] launchctl load: {load.stderr.strip()}")
 
-    console.print(
-        Panel.fit("\n".join(body), title="Reconciler installed", border_style="green")
-    )
+    console.print(Panel.fit("\n".join(body), title="Reconciler installed", border_style="green"))
 
 
 def schedule_uninstall_reconciler() -> None:
@@ -539,6 +524,7 @@ def schedule_uninstall_reconciler() -> None:
 
 
 # ─── MCP install ───────────────────────────────────────────────────────────
+
 
 def mcp_install() -> None:
     """Install Longhand's MCP server into Claude Desktop config."""
@@ -590,6 +576,7 @@ def mcp_uninstall() -> None:
 
 # ─── Ingest single session (for hook) ──────────────────────────────────────
 
+
 def ingest_single_session(
     transcript: str,
     data_dir: str | None = None,
@@ -627,6 +614,7 @@ def ingest_single_session(
 
 
 # ─── Live ingest (for Stop hook) ──────────────────────────────────────────
+
 
 def ingest_live_tail(
     transcript: str,
@@ -691,9 +679,7 @@ def ingest_live_tail(
             summary["skipped"] = "parser-init-failed"
             return summary
 
-        new_events, safe_offset = parser.parse_tail_from_offset(
-            start_offset, base_sequence=0
-        )
+        new_events, safe_offset = parser.parse_tail_from_offset(start_offset, base_sequence=0)
 
         if safe_offset <= start_offset:
             # No complete line yet — leave offset unchanged.
@@ -787,9 +773,7 @@ def ingest_live_tail(
         started_at = (agg["started_at"] if agg and agg["started_at"] else None) or (
             existing_session["started_at"] if existing_session else _dt.now().isoformat()
         )
-        ended_at = (
-            agg["ended_at"] if agg and agg["ended_at"] else _dt.now().isoformat()
-        )
+        ended_at = agg["ended_at"] if agg and agg["ended_at"] else _dt.now().isoformat()
 
         with store.sqlite.connect() as conn:
             conn.execute(
@@ -814,7 +798,9 @@ def ingest_live_tail(
                 """,
                 (
                     session_id,
-                    existing_session["project_path"] if existing_session else (agg["cwd"] if agg else None),
+                    existing_session["project_path"]
+                    if existing_session
+                    else (agg["cwd"] if agg else None),
                     str(path),
                     started_at,
                     ended_at,
@@ -862,7 +848,6 @@ def _freshness_status(store: LonghandStore) -> str | None:
     """
     import time as _time
 
-
     try:
         jsonls = discover_sessions()
     except Exception:
@@ -900,8 +885,7 @@ def _freshness_status(store: LonghandStore) -> str | None:
         return f"[green]✓[/green] {summary}"
     if ratio >= 0.5:
         return (
-            f"[yellow]⚠[/yellow] {summary} — "
-            "run [bold]longhand reconcile --fix[/bold] to catch up"
+            f"[yellow]⚠[/yellow] {summary} — run [bold]longhand reconcile --fix[/bold] to catch up"
         )
     return (
         f"[red]✗[/red] {summary} — hook may be silently failing. "
@@ -1050,9 +1034,7 @@ def doctor() -> None:
     table.add_row("Projects inferred", f"{stats.get('projects', 0):,}")
     table.add_row("Episodes extracted", f"{stats.get('episodes', 0):,}")
 
-    sessions_needing_analysis = max(
-        0, stats.get("sessions", 0) - stats.get("outcomes", 0)
-    )
+    sessions_needing_analysis = max(0, stats.get("sessions", 0) - stats.get("outcomes", 0))
     if sessions_needing_analysis > 0:
         table.add_row(
             "Sessions needing analysis",

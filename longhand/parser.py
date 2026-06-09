@@ -22,7 +22,7 @@ from longhand.types import Event, EventType, FileOperation, Session
 # Hard limits — keep the parser bounded so a malicious or corrupted JSONL
 # can't crash or OOM the ingest pipeline.
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500MB per session file
-MAX_LINE_LENGTH = 50 * 1024 * 1024        # 50MB per JSONL line
+MAX_LINE_LENGTH = 50 * 1024 * 1024  # 50MB per JSONL line
 
 
 _MAX_UNIQUE_CWDS_SCANNED = 20
@@ -169,9 +169,19 @@ def _tool_input_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
         return parts[0]
 
     priority_keys = [
-        "file_path", "path", "command", "pattern", "query",
-        "url", "description", "prompt", "old_string", "new_string",
-        "content", "skill", "subagent_type",
+        "file_path",
+        "path",
+        "command",
+        "pattern",
+        "query",
+        "url",
+        "description",
+        "prompt",
+        "old_string",
+        "new_string",
+        "content",
+        "skill",
+        "subagent_type",
     ]
     for key in priority_keys:
         if key in tool_input and tool_input[key]:
@@ -406,23 +416,25 @@ class JSONLParser:
                 )
                 has_error = bool(error_signal) or (success_flag is False)
 
-                events.append(Event(
-                    event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
-                    event_type=EventType.TOOL_RESULT,
-                    sequence=base_sequence + offset,
-                    content=result_content,
-                    tool_use_id=tool_use_id,
-                    tool_output=result_content,
-                    tool_success=success_flag,
-                    error_detected=has_error,
-                    error_snippet=error_signal.snippet if error_signal else None,
-                    error_category=error_signal.category if error_signal else None,
-                    error_severity=error_signal.severity if error_signal else None,
-                    git_operation=git_signal.operation_type if git_signal else None,
-                    git_commit_hash=git_signal.commit_hash if git_signal else None,
-                    git_commit_message=git_signal.commit_message if git_signal else None,
-                    **common,
-                ))
+                events.append(
+                    Event(
+                        event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
+                        event_type=EventType.TOOL_RESULT,
+                        sequence=base_sequence + offset,
+                        content=result_content,
+                        tool_use_id=tool_use_id,
+                        tool_output=result_content,
+                        tool_success=success_flag,
+                        error_detected=has_error,
+                        error_snippet=error_signal.snippet if error_signal else None,
+                        error_category=error_signal.category if error_signal else None,
+                        error_severity=error_signal.severity if error_signal else None,
+                        git_operation=git_signal.operation_type if git_signal else None,
+                        git_commit_hash=git_signal.commit_hash if git_signal else None,
+                        git_commit_message=git_signal.commit_message if git_signal else None,
+                        **common,
+                    )
+                )
             else:
                 # Plain user text message. Non-text blocks (images, any future
                 # non-text type) are replaced with a semantic placeholder rather
@@ -436,24 +448,28 @@ class JSONLParser:
                     text = f"[image: {media_type}]"
                 else:
                     text = f"[{block_type}]" if block_type else ""
-                events.append(Event(
-                    event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
-                    event_type=EventType.USER_MESSAGE,
-                    sequence=base_sequence + offset,
-                    content=text,
-                    **common,
-                ))
+                events.append(
+                    Event(
+                        event_id=f"{event_id}:{offset}" if offset > 0 else event_id,
+                        event_type=EventType.USER_MESSAGE,
+                        sequence=base_sequence + offset,
+                        content=text,
+                        **common,
+                    )
+                )
             offset += 1
 
         if not events:
             # User entry with no content blocks — still record it
-            events.append(Event(
-                event_id=event_id,
-                event_type=EventType.USER_MESSAGE,
-                sequence=base_sequence,
-                content="",
-                **common,
-            ))
+            events.append(
+                Event(
+                    event_id=event_id,
+                    event_type=EventType.USER_MESSAGE,
+                    sequence=base_sequence,
+                    content="",
+                    **common,
+                )
+            )
 
         return events
 
@@ -476,27 +492,31 @@ class JSONLParser:
                 text = block.get("text", "")
                 if not text:
                     continue
-                events.append(Event(
-                    event_id=sub_event_id,
-                    event_type=EventType.ASSISTANT_TEXT,
-                    sequence=base_sequence + offset,
-                    content=text,
-                    model=model,
-                    **common,
-                ))
+                events.append(
+                    Event(
+                        event_id=sub_event_id,
+                        event_type=EventType.ASSISTANT_TEXT,
+                        sequence=base_sequence + offset,
+                        content=text,
+                        model=model,
+                        **common,
+                    )
+                )
 
             elif block_type == "thinking":
                 thinking = block.get("thinking", "")
                 if not thinking:
                     continue
-                events.append(Event(
-                    event_id=sub_event_id,
-                    event_type=EventType.ASSISTANT_THINKING,
-                    sequence=base_sequence + offset,
-                    content=thinking,
-                    model=model,
-                    **common,
-                ))
+                events.append(
+                    Event(
+                        event_id=sub_event_id,
+                        event_type=EventType.ASSISTANT_THINKING,
+                        sequence=base_sequence + offset,
+                        content=thinking,
+                        model=model,
+                        **common,
+                    )
+                )
 
             elif block_type == "tool_use":
                 tool_name = block.get("name", "")
@@ -529,21 +549,23 @@ class JSONLParser:
                     file_path = tool_input.get("file_path")
                     file_operation = FileOperation.READ
 
-                events.append(Event(
-                    event_id=sub_event_id,
-                    event_type=EventType.TOOL_CALL,
-                    sequence=base_sequence + offset,
-                    content=_tool_input_summary(tool_name, tool_input),
-                    model=model,
-                    tool_name=tool_name,
-                    tool_use_id=tool_use_id,
-                    tool_input=tool_input,
-                    file_path=file_path,
-                    file_operation=file_operation,
-                    old_content=old_content,
-                    new_content=new_content,
-                    **common,
-                ))
+                events.append(
+                    Event(
+                        event_id=sub_event_id,
+                        event_type=EventType.TOOL_CALL,
+                        sequence=base_sequence + offset,
+                        content=_tool_input_summary(tool_name, tool_input),
+                        model=model,
+                        tool_name=tool_name,
+                        tool_use_id=tool_use_id,
+                        tool_input=tool_input,
+                        file_path=file_path,
+                        file_operation=file_operation,
+                        old_content=old_content,
+                        new_content=new_content,
+                        **common,
+                    )
+                )
 
             offset += 1
 
@@ -618,11 +640,15 @@ class JSONLParser:
         asst_count = sum(1 for e in events if e.event_type == EventType.ASSISTANT_TEXT.value)
         tool_count = sum(1 for e in events if e.event_type == EventType.TOOL_CALL.value)
         edit_count = sum(
-            1 for e in events
+            1
+            for e in events
             if e.event_type == EventType.TOOL_CALL.value
-            and e.file_operation in {
-                FileOperation.EDIT.value, FileOperation.WRITE.value,
-                FileOperation.MULTI_EDIT.value, FileOperation.NOTEBOOK_EDIT.value,
+            and e.file_operation
+            in {
+                FileOperation.EDIT.value,
+                FileOperation.WRITE.value,
+                FileOperation.MULTI_EDIT.value,
+                FileOperation.NOTEBOOK_EDIT.value,
             }
         )
 

@@ -8,6 +8,7 @@ from longhand.extractors.topics import extract_extensions, extract_keywords
 
 # ─── Error detection ───────────────────────────────────────────────────────
 
+
 def test_detect_python_traceback():
     content = """Traceback (most recent call last):
   File "/tmp/app.py", line 42, in main
@@ -78,6 +79,7 @@ def test_empty_content_returns_none():
 
 # ─── File reference extraction ─────────────────────────────────────────────
 
+
 def test_extract_absolute_path():
     text = "Error at /Users/nate/Projects/game/src/main.ts:42:10"
     refs = extract_file_references(text)
@@ -108,6 +110,7 @@ def test_ignores_non_code_paths():
 
 
 # ─── Topic extraction ──────────────────────────────────────────────────────
+
 
 def test_extract_keywords_filters_stopwords():
     texts = [

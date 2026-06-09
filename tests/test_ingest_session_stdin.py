@@ -84,11 +84,7 @@ def test_hook_command_is_stale_detects_env_var_version() -> None:
     }
     assert _hook_command_is_stale(stale) is True
 
-    fresh = {
-        "hooks": [
-            {"type": "command", "command": "/usr/local/bin/longhand ingest-session"}
-        ]
-    }
+    fresh = {"hooks": [{"type": "command", "command": "/usr/local/bin/longhand ingest-session"}]}
     assert _hook_command_is_stale(fresh) is False
 
     unrelated = {"hooks": [{"type": "command", "command": "echo hello"}]}

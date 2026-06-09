@@ -123,9 +123,7 @@ def test_history_lists_file_edits(runner: CliRunner, seeded):
 
 def test_history_no_edits_is_friendly(runner: CliRunner, seeded):
     data_dir, _ = seeded
-    result = runner.invoke(
-        app, ["history", "does-not-exist.xyz", "--data-dir", str(data_dir)]
-    )
+    result = runner.invoke(app, ["history", "does-not-exist.xyz", "--data-dir", str(data_dir)])
     assert result.exit_code == 0, result.stdout
     assert "No edits found" in plain(result.stdout)
 

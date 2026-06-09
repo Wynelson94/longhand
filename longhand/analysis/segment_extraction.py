@@ -18,15 +18,43 @@ from typing import Any
 from longhand.types import Event
 
 # Segment type classification keywords
-_DESIGN_KEYWORDS = frozenset({
-    "design", "architecture", "structure", "schema", "layout", "component",
-    "approach", "pattern", "reasoning", "decision", "strategy", "plan",
-    "interface", "api", "endpoint", "model", "database",
-})
-_PLANNING_KEYWORDS = frozenset({
-    "plan", "todo", "roadmap", "next", "milestone", "sprint", "goal",
-    "timeline", "schedule", "priority", "backlog", "task",
-})
+_DESIGN_KEYWORDS = frozenset(
+    {
+        "design",
+        "architecture",
+        "structure",
+        "schema",
+        "layout",
+        "component",
+        "approach",
+        "pattern",
+        "reasoning",
+        "decision",
+        "strategy",
+        "plan",
+        "interface",
+        "api",
+        "endpoint",
+        "model",
+        "database",
+    }
+)
+_PLANNING_KEYWORDS = frozenset(
+    {
+        "plan",
+        "todo",
+        "roadmap",
+        "next",
+        "milestone",
+        "sprint",
+        "goal",
+        "timeline",
+        "schedule",
+        "priority",
+        "backlog",
+        "task",
+    }
+)
 _STORY_MIN_AVG_LENGTH = 120  # lowered from 200 — real stories avg ~150 chars/msg
 
 
@@ -44,11 +72,42 @@ def _extract_simple_keywords(text: str) -> set[str]:
     tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9]{3,}", text.lower())
     # Filter common stopwords
     stopwords = {
-        "this", "that", "with", "from", "have", "been", "were", "they",
-        "will", "would", "could", "should", "about", "there", "their",
-        "which", "other", "some", "what", "when", "where", "just",
-        "like", "also", "more", "than", "then", "into", "very",
-        "want", "need", "know", "think", "make", "going", "does",
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "been",
+        "were",
+        "they",
+        "will",
+        "would",
+        "could",
+        "should",
+        "about",
+        "there",
+        "their",
+        "which",
+        "other",
+        "some",
+        "what",
+        "when",
+        "where",
+        "just",
+        "like",
+        "also",
+        "more",
+        "than",
+        "then",
+        "into",
+        "very",
+        "want",
+        "need",
+        "know",
+        "think",
+        "make",
+        "going",
+        "does",
     }
     return {t for t in tokens if t not in stopwords}
 
@@ -76,9 +135,7 @@ def _classify_segment_type(
             return "debugging"
 
     # Check for tool calls (indicates work, not just conversation)
-    has_tool_calls = any(
-        _event_type_str(e) == "tool_call" for e in events
-    )
+    has_tool_calls = any(_event_type_str(e) == "tool_call" for e in events)
 
     # Check user message content for design/planning keywords
     combined_text = " ".join(user_texts).lower()
@@ -175,25 +232,28 @@ def extract_segments(
         all_text = " ".join(user_texts)
         keywords = sorted(_extract_simple_keywords(all_text))[:20]
 
-        seg_id = "seg_" + hashlib.sha256(
-            f"{session_id}:{seg_events[0].sequence}".encode()
-        ).hexdigest()[:16]
+        seg_id = (
+            "seg_"
+            + hashlib.sha256(f"{session_id}:{seg_events[0].sequence}".encode()).hexdigest()[:16]
+        )
 
-        segments.append({
-            "segment_id": seg_id,
-            "session_id": session_id,
-            "project_id": project_id,
-            "started_at": seg_events[0].timestamp.isoformat(),
-            "ended_at": seg_events[-1].timestamp.isoformat(),
-            "start_sequence": seg_events[0].sequence,
-            "end_sequence": seg_events[-1].sequence,
-            "segment_type": seg_type,
-            "topic": topic,
-            "summary": summary,
-            "event_count": len(seg_events),
-            "user_message_count": len(user_texts),
-            "keywords": keywords,
-        })
+        segments.append(
+            {
+                "segment_id": seg_id,
+                "session_id": session_id,
+                "project_id": project_id,
+                "started_at": seg_events[0].timestamp.isoformat(),
+                "ended_at": seg_events[-1].timestamp.isoformat(),
+                "start_sequence": seg_events[0].sequence,
+                "end_sequence": seg_events[-1].sequence,
+                "segment_type": seg_type,
+                "topic": topic,
+                "summary": summary,
+                "event_count": len(seg_events),
+                "user_message_count": len(user_texts),
+                "keywords": keywords,
+            }
+        )
 
     for i, event in enumerate(events):
         etype = _event_type_str(event)

@@ -18,9 +18,7 @@ def test_get_events_by_sequence_range(sample_session_file, temp_store):
     # Get a subset by sequence range
     seqs = [e["sequence"] for e in all_events]
     mid = seqs[len(seqs) // 2]
-    result = temp_store.sqlite.get_events_by_sequence_range(
-        session.session_id, mid - 1, mid + 1
-    )
+    result = temp_store.sqlite.get_events_by_sequence_range(session.session_id, mid - 1, mid + 1)
     # Should return at least 1 event, at most 3
     assert len(result) >= 1
     assert len(result) <= 3
@@ -39,9 +37,7 @@ def test_get_events_by_sequence_range_empty(sample_session_file, temp_store):
     session = parser.build_session(events)
     temp_store.ingest_session(session, events)
 
-    result = temp_store.sqlite.get_events_by_sequence_range(
-        session.session_id, 99999, 99999
-    )
+    result = temp_store.sqlite.get_events_by_sequence_range(session.session_id, 99999, 99999)
     assert result == []
 
 
@@ -52,9 +48,7 @@ def test_get_events_by_sequence_range_wrong_session(sample_session_file, temp_st
     session = parser.build_session(events)
     temp_store.ingest_session(session, events)
 
-    result = temp_store.sqlite.get_events_by_sequence_range(
-        "nonexistent-session", 0, 100
-    )
+    result = temp_store.sqlite.get_events_by_sequence_range("nonexistent-session", 0, 100)
     assert result == []
 
 
@@ -66,7 +60,5 @@ def test_get_events_by_sequence_range_full_span(sample_session_file, temp_store)
     temp_store.ingest_session(session, events)
 
     all_events = temp_store.sqlite.get_events(session_id=session.session_id)
-    result = temp_store.sqlite.get_events_by_sequence_range(
-        session.session_id, 0, 99999
-    )
+    result = temp_store.sqlite.get_events_by_sequence_range(session.session_id, 0, 99999)
     assert len(result) == len(all_events)

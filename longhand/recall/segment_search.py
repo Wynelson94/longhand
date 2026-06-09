@@ -45,10 +45,7 @@ def find_segments(
     # Phase 2: post-filter by project_ids if specified
     if project_ids:
         project_set = set(project_ids)
-        hits = [
-            h for h in hits
-            if (h.get("metadata") or {}).get("project_id") in project_set
-        ]
+        hits = [h for h in hits if (h.get("metadata") or {}).get("project_id") in project_set]
 
     # Phase 3: enrich from SQLite — single connection for all lookups
     enriched: list[dict[str, Any]] = []
@@ -58,9 +55,7 @@ def find_segments(
 
     # Build a distance map for later attachment
     distance_map = {
-        h.get("segment_id"): h.get("distance", 1.0)
-        for h in hits[:limit]
-        if h.get("segment_id")
+        h.get("segment_id"): h.get("distance", 1.0) for h in hits[:limit] if h.get("segment_id")
     }
 
     try:
@@ -81,13 +76,15 @@ def find_segments(
             seg_id = hit.get("segment_id")
             if not seg_id:
                 continue
-            enriched.append({
-                "segment_id": seg_id,
-                "session_id": (hit.get("metadata") or {}).get("session_id", ""),
-                "segment_type": (hit.get("metadata") or {}).get("segment_type", "discussion"),
-                "summary": hit.get("document", ""),
-                "_distance": hit.get("distance", 1.0),
-            })
+            enriched.append(
+                {
+                    "segment_id": seg_id,
+                    "session_id": (hit.get("metadata") or {}).get("session_id", ""),
+                    "segment_type": (hit.get("metadata") or {}).get("segment_type", "discussion"),
+                    "summary": hit.get("document", ""),
+                    "_distance": hit.get("distance", 1.0),
+                }
+            )
 
     # Sort by distance (best match first) to preserve semantic ranking
     enriched.sort(key=lambda s: s.get("_distance", 1.0))

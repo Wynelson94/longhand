@@ -48,6 +48,8 @@ jobs:
         run: pip install "ruff>=0.5.0"
       - name: Run ruff
         run: ruff check longhand tests
+      - name: Check formatting
+        run: ruff format --check longhand tests
 
   version-sync:
     name: Version sync

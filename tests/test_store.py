@@ -63,9 +63,7 @@ def test_already_ingested_detection(sample_session_file, temp_store):
     )
 
 
-def test_skip_analysis_populates_sqlite_without_vectors(
-    sample_session_file, temp_store
-):
+def test_skip_analysis_populates_sqlite_without_vectors(sample_session_file, temp_store):
     """`run_analysis=False` populates SQLite but leaves episode/segment vectors empty.
 
     This is the fast path powered by the CLI `--skip-analysis` flag: users
@@ -259,7 +257,11 @@ def test_batched_methods_return_upserted_count(temp_store):
     assert temp_store.vectors.add_episode_embeddings_batch([]) == 0
 
     seg_items = [
-        {"segment_id": "s-1", "text": "topic discussion", "metadata": {"segment_type": "discussion"}},
+        {
+            "segment_id": "s-1",
+            "text": "topic discussion",
+            "metadata": {"segment_type": "discussion"},
+        },
         {"segment_id": "s-2", "text": "", "metadata": {"segment_type": "discussion"}},
     ]
     assert temp_store.vectors.add_segment_embeddings_batch(seg_items) == 1

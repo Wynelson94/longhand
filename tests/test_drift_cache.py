@@ -64,9 +64,7 @@ def test_warm_hit_skips_scan(tmp_path, monkeypatch):
         call_count["n"] += 1
         return _scan_jsonl(*args, **kwargs)
 
-    monkeypatch.setattr(
-        "longhand.recall.drift_cache._scan_jsonl", fake_scan
-    )
+    monkeypatch.setattr("longhand.recall.drift_cache._scan_jsonl", fake_scan)
     entry = cache2.get_or_compute(jsonl)
     assert entry is not None
     assert call_count["n"] == 0, "warm cache must not re-scan the JSONL"

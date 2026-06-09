@@ -242,8 +242,7 @@ def _no_intent_label_in_fix_summary(store):
         return True, ""
     samples = "\n".join(f"  {r['episode_id']}: {r['preview'][:120]}..." for r in bad[:3])
     return False, (
-        f"{len(bad)} of {len(rows)} fix_summaries leak the 'Intent:' label. "
-        f"Samples:\n{samples}"
+        f"{len(bad)} of {len(rows)} fix_summaries leak the 'Intent:' label. Samples:\n{samples}"
     )
 
 

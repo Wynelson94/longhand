@@ -183,21 +183,27 @@ def multi_edit_session_file(tmp_path: Path) -> Path:
         },
         # Edit 1: rename function
         edit_entry(
-            "edit-1", "write-1", "2026-04-09T12:00:01.000Z",
+            "edit-1",
+            "write-1",
+            "2026-04-09T12:00:01.000Z",
             old="def hello():",
             new="def greet():",
         ),
         # Edit 2: update print statement
         edit_entry(
-            "edit-2", "edit-1", "2026-04-09T12:00:02.000Z",
+            "edit-2",
+            "edit-1",
+            "2026-04-09T12:00:02.000Z",
             old="print('hi')",
             new="print('hello world')",
         ),
         # Edit 3: add docstring
         edit_entry(
-            "edit-3", "edit-2", "2026-04-09T12:00:03.000Z",
+            "edit-3",
+            "edit-2",
+            "2026-04-09T12:00:03.000Z",
             old="def greet():\n    print('hello world')",
-            new="def greet():\n    \"\"\"Say hello.\"\"\"\n    print('hello world')",
+            new='def greet():\n    """Say hello."""\n    print(\'hello world\')',
         ),
     ]
 
