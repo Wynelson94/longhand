@@ -78,9 +78,7 @@ def test_tool_search_returns_hits(sample_session_file, temp_store):
     assert isinstance(payload, list)
 
 
-def test_tool_search_auto_scopes_on_project_name_match(
-    sample_session_file, temp_store
-):
+def test_tool_search_auto_scopes_on_project_name_match(sample_session_file, temp_store):
     """A query that names a known project should auto-filter to that project's
     events, and the response should advertise the auto-scoping so agents can
     override it."""
@@ -100,9 +98,7 @@ def test_tool_search_auto_scopes_on_project_name_match(
     assert isinstance(payload["hits"], list)
 
 
-def test_tool_search_honors_explicit_project_name(
-    sample_session_file, temp_store
-):
+def test_tool_search_honors_explicit_project_name(sample_session_file, temp_store):
     """Explicit project_name in arguments is never overridden by auto-scoping."""
     _ingest(sample_session_file, temp_store)
     result = _call(
@@ -345,7 +341,11 @@ def test_narrative_drops_commits_with_blank_hash():
     from longhand.recall.narrative import build_project_status_narrative
 
     last_commits = [
-        {"commit_hash": "abc1234", "commit_message": "fix thing", "timestamp": "2026-04-23T00:00:00+00:00"},
+        {
+            "commit_hash": "abc1234",
+            "commit_message": "fix thing",
+            "timestamp": "2026-04-23T00:00:00+00:00",
+        },
         {"commit_hash": None, "commit_message": None, "timestamp": "2026-04-23T00:00:00+00:00"},
         {"commit_hash": "", "commit_message": "ghost", "timestamp": "2026-04-23T00:00:00+00:00"},
     ]
@@ -354,7 +354,9 @@ def test_narrative_drops_commits_with_blank_hash():
         canonical_path="/tmp/foo",
         last_commits=last_commits,
         active_branch=None,
-        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_sessions=[
+            {"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}
+        ],
         recent_episodes=[],
         unresolved_episodes=[],
         recent_segments=[],
@@ -378,7 +380,9 @@ def test_narrative_uses_episode_fix_summary_not_user_message():
         canonical_path="/tmp/foo",
         last_commits=[],
         active_branch=None,
-        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_sessions=[
+            {"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}
+        ],
         recent_episodes=[{"fix_summary": "refactored the auth middleware to scope tokens"}],
         unresolved_episodes=[],
         recent_segments=[],
@@ -403,7 +407,9 @@ def test_narrative_outcome_only_when_no_episode_summary():
         canonical_path="/tmp/foo",
         last_commits=[],
         active_branch=None,
-        recent_sessions=[{"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}],
+        recent_sessions=[
+            {"session_id": "s1", "started_at": "2026-04-23T00:00:00+00:00", "event_count": 1}
+        ],
         recent_episodes=[],
         unresolved_episodes=[],
         recent_segments=[],
@@ -464,12 +470,14 @@ def test_recall_narrative_omits_secondary_when_none():
     narrative = build_narrative(
         query="anything",
         project_matches=[],
-        episodes=[{
-            "session_id": "abc12345",
-            "started_at": "2026-04-20T18:00:00+00:00",
-            "problem_description": "p",
-            "fix_summary": "f",
-        }],
+        episodes=[
+            {
+                "session_id": "abc12345",
+                "started_at": "2026-04-20T18:00:00+00:00",
+                "problem_description": "p",
+                "fix_summary": "f",
+            }
+        ],
         artifacts={},
         secondary_segments=None,
     )
@@ -636,9 +644,7 @@ def test_tool_list_sessions_surfaces_staleness_when_filtered(
     assert isinstance(payload["sessions"], list)
 
 
-def test_tool_list_sessions_unfiltered_returns_bare_list(
-    sample_session_file, temp_store
-):
+def test_tool_list_sessions_unfiltered_returns_bare_list(sample_session_file, temp_store):
     """No filter → bare list, preserving backward-compat for global callers."""
     _ingest(sample_session_file, temp_store)
     result = _call(mcp_server._tool_list_sessions, temp_store, {"limit": 10})
@@ -668,9 +674,7 @@ def test_tool_reconcile_dry_run(sample_session_file, temp_store, monkeypatch):
     assert payload["ingested"] == 0
 
 
-def test_tool_reconcile_fix_ingests_missing(
-    sample_session_file, temp_store, tmp_path, monkeypatch
-):
+def test_tool_reconcile_fix_ingests_missing(sample_session_file, temp_store, tmp_path, monkeypatch):
     """fix=True re-ingests missing transcripts and a follow-up search returns hits."""
     import shutil
 

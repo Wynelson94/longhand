@@ -48,7 +48,9 @@ class Event(BaseModel):
 
     event_id: str = Field(..., description="Unique event identifier (uuid from JSONL)")
     session_id: str = Field(..., description="Parent session identifier")
-    parent_event_id: str | None = Field(None, description="Parent event (for tool result → tool call)")
+    parent_event_id: str | None = Field(
+        None, description="Parent event (for tool result → tool call)"
+    )
     event_type: EventType
     sequence: int = Field(..., description="Order within the session")
     timestamp: datetime

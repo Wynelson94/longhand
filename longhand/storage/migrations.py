@@ -199,9 +199,7 @@ def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
             conn.execute(
                 "ALTER TABLE ingestion_log ADD COLUMN last_offset INTEGER NOT NULL DEFAULT 0"
             )
-            conn.execute(
-                "UPDATE ingestion_log SET last_offset = file_size WHERE last_offset = 0"
-            )
+            conn.execute("UPDATE ingestion_log SET last_offset = file_size WHERE last_offset = 0")
 
 
 def _ensure_version_table(conn: sqlite3.Connection) -> None:

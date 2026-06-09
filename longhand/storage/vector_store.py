@@ -59,12 +59,16 @@ class VectorStore:
 
         self.segments_collection = self.client.get_or_create_collection(
             name="segments",
-            metadata={"description": "One embedding per conversation segment for topic-level recall"},
+            metadata={
+                "description": "One embedding per conversation segment for topic-level recall"
+            },
         )
 
         self.episodes_collection = self.client.get_or_create_collection(
             name="episodes",
-            metadata={"description": "One embedding per problem→fix episode for intent-framed recall"},
+            metadata={
+                "description": "One embedding per problem→fix episode for intent-framed recall"
+            },
         )
 
     def add_events(self, events: list[Event]) -> int:
@@ -161,17 +165,20 @@ class VectorStore:
 
         hits: list[dict[str, Any]] = []
         for i, event_id in enumerate(ids):
-            hits.append({
-                "event_id": event_id,
-                "document": documents[i] if i < len(documents) else "",
-                "metadata": metadatas[i] if i < len(metadatas) else {},
-                "distance": distances[i] if i < len(distances) else 1.0,
-            })
+            hits.append(
+                {
+                    "event_id": event_id,
+                    "document": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "distance": distances[i] if i < len(distances) else 1.0,
+                }
+            )
 
         # Apply file_path_contains as post-filter (Chroma doesn't do LIKE)
         if file_path_contains:
             hits = [
-                h for h in hits
+                h
+                for h in hits
                 if file_path_contains.lower() in (h["metadata"].get("file_path") or "").lower()
             ]
 
@@ -236,12 +243,14 @@ class VectorStore:
 
         hits: list[dict[str, Any]] = []
         for i, sid in enumerate(ids):
-            hits.append({
-                "session_id": sid,
-                "document": documents[i] if i < len(documents) else "",
-                "metadata": metadatas[i] if i < len(metadatas) else {},
-                "distance": distances[i] if i < len(distances) else 1.0,
-            })
+            hits.append(
+                {
+                    "session_id": sid,
+                    "document": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "distance": distances[i] if i < len(distances) else 1.0,
+                }
+            )
         return hits
 
     # ─── Projects collection ───────────────────────────────────────────────
@@ -286,12 +295,14 @@ class VectorStore:
 
         hits: list[dict[str, Any]] = []
         for i, pid in enumerate(ids):
-            hits.append({
-                "project_id": pid,
-                "document": documents[i] if i < len(documents) else "",
-                "metadata": metadatas[i] if i < len(metadatas) else {},
-                "distance": distances[i] if i < len(distances) else 1.0,
-            })
+            hits.append(
+                {
+                    "project_id": pid,
+                    "document": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "distance": distances[i] if i < len(distances) else 1.0,
+                }
+            )
         return hits
 
     # ─── Segments collection ─────────────────────────────────────────────
@@ -388,12 +399,14 @@ class VectorStore:
 
         hits: list[dict[str, Any]] = []
         for i, sid in enumerate(ids):
-            hits.append({
-                "segment_id": sid,
-                "document": documents[i] if i < len(documents) else "",
-                "metadata": metadatas[i] if i < len(metadatas) else {},
-                "distance": distances[i] if i < len(distances) else 1.0,
-            })
+            hits.append(
+                {
+                    "segment_id": sid,
+                    "document": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "distance": distances[i] if i < len(distances) else 1.0,
+                }
+            )
         return hits
 
     def segment_count(self) -> int:
@@ -497,12 +510,14 @@ class VectorStore:
 
         hits: list[dict[str, Any]] = []
         for i, eid in enumerate(ids):
-            hits.append({
-                "episode_id": eid,
-                "document": documents[i] if i < len(documents) else "",
-                "metadata": metadatas[i] if i < len(metadatas) else {},
-                "distance": distances[i] if i < len(distances) else 1.0,
-            })
+            hits.append(
+                {
+                    "episode_id": eid,
+                    "document": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "distance": distances[i] if i < len(distances) else 1.0,
+                }
+            )
         return hits
 
     def episode_count(self) -> int:

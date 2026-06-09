@@ -116,7 +116,8 @@ class DriftCache:
         }
         # Write to a temp file in the same dir so rename is atomic on POSIX.
         fd, tmp_name = tempfile.mkstemp(
-            prefix=".jsonl_project_map-", suffix=".json.tmp",
+            prefix=".jsonl_project_map-",
+            suffix=".json.tmp",
             dir=str(self.cache_path.parent),
         )
         try:

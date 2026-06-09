@@ -70,11 +70,19 @@ def test_segment_boundary_on_topic_shift():
         _make_event(4, "user_message", "Definitely one of the best live performances ever seen"),
         _make_event(5, "assistant_text", "Who was opening for them?"),
         # Topic 2: completely different - code/database/architecture
-        _make_event(6, "user_message", "Anyway can you help me with the database schema migration for postgres"),
+        _make_event(
+            6,
+            "user_message",
+            "Anyway can you help me with the database schema migration for postgres",
+        ),
         _make_event(7, "assistant_text", "Sure, what tables need to change?"),
-        _make_event(8, "user_message", "The users table needs a new column for authentication tokens"),
+        _make_event(
+            8, "user_message", "The users table needs a new column for authentication tokens"
+        ),
         _make_event(9, "assistant_text", "Got it, I'll add an ALTER TABLE migration"),
-        _make_event(10, "user_message", "Also add an index on the tokens column for faster lookups"),
+        _make_event(
+            10, "user_message", "Also add an index on the tokens column for faster lookups"
+        ),
         _make_event(11, "assistant_text", "Done, migration is ready to go"),
     ]
 
@@ -88,23 +96,46 @@ def test_segment_boundary_on_time_gap():
     """A 15-minute gap between events splits segments."""
     base = datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
     events = [
-        _make_event(0, "user_message", "Working on the frontend component for the dashboard",
-                    timestamp=base),
-        _make_event(1, "assistant_text", "Let me help with that",
-                    timestamp=base + timedelta(minutes=1)),
-        _make_event(2, "user_message", "Add a chart component to show user analytics data",
-                    timestamp=base + timedelta(minutes=2)),
-        _make_event(3, "assistant_text", "Done, chart component is ready",
-                    timestamp=base + timedelta(minutes=3)),
+        _make_event(
+            0, "user_message", "Working on the frontend component for the dashboard", timestamp=base
+        ),
+        _make_event(
+            1, "assistant_text", "Let me help with that", timestamp=base + timedelta(minutes=1)
+        ),
+        _make_event(
+            2,
+            "user_message",
+            "Add a chart component to show user analytics data",
+            timestamp=base + timedelta(minutes=2),
+        ),
+        _make_event(
+            3,
+            "assistant_text",
+            "Done, chart component is ready",
+            timestamp=base + timedelta(minutes=3),
+        ),
         # 15-minute gap
-        _make_event(4, "user_message", "Ok back, now lets work on the backend deployment pipeline",
-                    timestamp=base + timedelta(minutes=18)),
-        _make_event(5, "assistant_text", "Sure, what deployment target?",
-                    timestamp=base + timedelta(minutes=19)),
-        _make_event(6, "user_message", "Deploy to vercel with the production environment variables",
-                    timestamp=base + timedelta(minutes=20)),
-        _make_event(7, "assistant_text", "Setting that up now",
-                    timestamp=base + timedelta(minutes=21)),
+        _make_event(
+            4,
+            "user_message",
+            "Ok back, now lets work on the backend deployment pipeline",
+            timestamp=base + timedelta(minutes=18),
+        ),
+        _make_event(
+            5,
+            "assistant_text",
+            "Sure, what deployment target?",
+            timestamp=base + timedelta(minutes=19),
+        ),
+        _make_event(
+            6,
+            "user_message",
+            "Deploy to vercel with the production environment variables",
+            timestamp=base + timedelta(minutes=20),
+        ),
+        _make_event(
+            7, "assistant_text", "Setting that up now", timestamp=base + timedelta(minutes=21)
+        ),
     ]
 
     segments = extract_segments("test-session", "p_test", events)
@@ -173,7 +204,9 @@ def test_segment_type_classification_design():
     events = [
         _make_event(0, "user_message", "Lets discuss the architecture for the new microservice"),
         _make_event(1, "assistant_text", "What approach are you considering?"),
-        _make_event(2, "user_message", "I want to design the component structure and interface patterns"),
+        _make_event(
+            2, "user_message", "I want to design the component structure and interface patterns"
+        ),
         _make_event(3, "assistant_text", "Here's what I'd recommend for the architecture"),
         _make_event(4, "user_message", "What about the database schema design decisions"),
         _make_event(5, "assistant_text", "For the schema, I'd suggest this approach"),

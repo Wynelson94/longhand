@@ -88,8 +88,12 @@ def build_sessions(tmp_path: Path) -> list[tuple[str, list[dict]]]:
                 "role": "assistant",
                 "content": [
                     {"type": "text", "text": "Reading the current types."},
-                    {"type": "tool_use", "id": "t-r-1", "name": "Read",
-                     "input": {"file_path": file_path}},
+                    {
+                        "type": "tool_use",
+                        "id": "t-r-1",
+                        "name": "Read",
+                        "input": {"file_path": file_path},
+                    },
                 ],
             },
         },
@@ -122,8 +126,12 @@ def build_sessions(tmp_path: Path) -> list[tuple[str, list[dict]]]:
                 "model": "claude-sonnet-4-6",
                 "role": "assistant",
                 "content": [
-                    {"type": "tool_use", "id": "t-b-1", "name": "Bash",
-                     "input": {"command": "tsc --noEmit types.ts"}},
+                    {
+                        "type": "tool_use",
+                        "id": "t-b-1",
+                        "name": "Bash",
+                        "input": {"command": "tsc --noEmit types.ts"},
+                    },
                 ],
             },
         },
@@ -138,12 +146,15 @@ def build_sessions(tmp_path: Path) -> list[tuple[str, list[dict]]]:
             "message": {
                 "role": "user",
                 "content": [
-                    {"type": "tool_result", "tool_use_id": "t-b-1",
-                     "content": (
-                         f"Error compiling {file_path}\n"
-                         "  Cannot find name 'string'\n"
-                         "  at line 3, column 28\n"
-                     )},
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t-b-1",
+                        "content": (
+                            f"Error compiling {file_path}\n"
+                            "  Cannot find name 'string'\n"
+                            "  at line 3, column 28\n"
+                        ),
+                    },
                 ],
             },
             "toolUseResult": {"success": False},
@@ -250,8 +261,7 @@ def _no_midword_truncation(store):
 ASSERTIONS = [
     OutputAssertion(
         description=(
-            "Truncated fix_summary diff content must end at whitespace + "
-            "ellipsis, not mid-word"
+            "Truncated fix_summary diff content must end at whitespace + ellipsis, not mid-word"
         ),
         predicate=_no_midword_truncation,
     ),

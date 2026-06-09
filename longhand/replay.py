@@ -126,6 +126,7 @@ class ReplayEngine:
 
             if tool_name == "Edit":
                 import json as _json
+
                 tool_input_raw = edit.get("tool_input_json")
                 replace_all = False
                 if tool_input_raw:
@@ -148,6 +149,7 @@ class ReplayEngine:
 
             elif tool_name == "MultiEdit":
                 import json as _json
+
                 tool_input_raw = edit.get("tool_input_json")
                 if tool_input_raw:
                     try:

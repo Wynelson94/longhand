@@ -24,9 +24,7 @@ def test_match_happy_path_no_fallback(sample_session_file, temp_store, tmp_path)
     _ingest(sample_session_file, temp_store)
 
     # Query for 'test-project' which should hit the ingested session's cwd.
-    with patch(
-        "longhand.recall.project_fallback.trigger_background_ingest"
-    ) as mock_trigger:
+    with patch("longhand.recall.project_fallback.trigger_background_ingest") as mock_trigger:
         results = match_projects(temp_store, "test-project")
         # Fallback should NOT fire on a successful match.
         mock_trigger.assert_not_called()
@@ -68,9 +66,7 @@ def test_match_miss_fallback_rebuilds_projects(sample_session_file, temp_store):
 
 def test_infer_missing_projects_nothing_to_do(temp_store):
     """When everything on disk is already ingested, returns empty list."""
-    with patch(
-        "longhand.recall.project_fallback.discover_sessions", return_value=[]
-    ):
+    with patch("longhand.recall.project_fallback.discover_sessions", return_value=[]):
         result = project_fallback.infer_missing_projects(temp_store)
     assert result == []
 

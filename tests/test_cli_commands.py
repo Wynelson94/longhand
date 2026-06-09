@@ -186,9 +186,7 @@ def test_cli_reconcile_reports_missing_and_fixes(
     # Point discover_sessions at exactly our sample file. The reconcile core
     # was factored into longhand.recall.reconcile in v0.8.1 so the patch lives
     # there now (the CLI is a thin display wrapper).
-    monkeypatch.setattr(
-        reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file]
-    )
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file])
 
     # First pass: sample session is on disk but never ingested → "missing".
     result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
@@ -243,9 +241,7 @@ def test_cli_reconcile_detects_null_project_rows(
         ).fetchone()[0]
     assert pid is None, "session should be ingested without project_id"
 
-    monkeypatch.setattr(
-        reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file]
-    )
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [sample_session_file])
 
     result = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
     assert result.exit_code == 0, result.stdout
@@ -317,9 +313,7 @@ def test_freshness_status_red_when_most_recent_missing(
     assert "0/4" in status
 
 
-def test_freshness_status_no_recent_activity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_freshness_status_no_recent_activity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """When no JSONLs are recent, freshness returns green with a neutral hint."""
     import os
 

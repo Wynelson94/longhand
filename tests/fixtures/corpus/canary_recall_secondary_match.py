@@ -201,7 +201,10 @@ SESSION_A_EVENTS = [
                     "type": "tool_use",
                     "id": "a-tool-3",
                     "name": "Bash",
-                    "input": {"command": "npm test ColorPicker", "description": "Run color picker tests"},
+                    "input": {
+                        "command": "npm test ColorPicker",
+                        "description": "Run color picker tests",
+                    },
                 },
             ],
         },

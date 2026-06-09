@@ -19,43 +19,95 @@ from longhand.types import Event, Session
 
 # Map file extensions → language names
 _EXT_TO_LANGUAGE = {
-    "py": "python", "pyi": "python",
-    "ts": "typescript", "tsx": "typescript",
-    "js": "javascript", "jsx": "javascript", "mjs": "javascript", "cjs": "javascript",
+    "py": "python",
+    "pyi": "python",
+    "ts": "typescript",
+    "tsx": "typescript",
+    "js": "javascript",
+    "jsx": "javascript",
+    "mjs": "javascript",
+    "cjs": "javascript",
     "go": "go",
     "rs": "rust",
     "java": "java",
-    "kt": "kotlin", "kts": "kotlin",
+    "kt": "kotlin",
+    "kts": "kotlin",
     "rb": "ruby",
     "php": "php",
     "cs": "csharp",
-    "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp",
-    "c": "c", "h": "c",
+    "cpp": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+    "hpp": "cpp",
+    "c": "c",
+    "h": "c",
     "swift": "swift",
     "scala": "scala",
     "sql": "sql",
     "html": "html",
-    "css": "css", "scss": "css", "sass": "css",
-    "sh": "shell", "bash": "shell", "zsh": "shell",
+    "css": "css",
+    "scss": "css",
+    "sass": "css",
+    "sh": "shell",
+    "bash": "shell",
+    "zsh": "shell",
 }
 
 
 # Category inference from touched files / dependencies / project names
 _CATEGORY_SIGNALS: list[tuple[str, list[str]]] = [
-    ("game", [
-        "phaser", "three.js", "threejs", "babylon", "babylonjs", "godot",
-        "unity", "pixi", "kaboom", "love2d", "pygame", "macroquad",
-        "game.ts", "game.js", "game.py", "gameloop", "sprite",
-    ]),
-    ("nextjs web app", [
-        "next.config", "next.js", "nextjs", "app/layout.tsx", "pages/_app",
-    ]),
-    ("react web app", [
-        "react-dom", "create-react-app", "vite.config", "react.config",
-    ]),
-    ("python web", [
-        "flask", "fastapi", "django", "wsgi.py", "asgi.py", "manage.py",
-    ]),
+    (
+        "game",
+        [
+            "phaser",
+            "three.js",
+            "threejs",
+            "babylon",
+            "babylonjs",
+            "godot",
+            "unity",
+            "pixi",
+            "kaboom",
+            "love2d",
+            "pygame",
+            "macroquad",
+            "game.ts",
+            "game.js",
+            "game.py",
+            "gameloop",
+            "sprite",
+        ],
+    ),
+    (
+        "nextjs web app",
+        [
+            "next.config",
+            "next.js",
+            "nextjs",
+            "app/layout.tsx",
+            "pages/_app",
+        ],
+    ),
+    (
+        "react web app",
+        [
+            "react-dom",
+            "create-react-app",
+            "vite.config",
+            "react.config",
+        ],
+    ),
+    (
+        "python web",
+        [
+            "flask",
+            "fastapi",
+            "django",
+            "wsgi.py",
+            "asgi.py",
+            "manage.py",
+        ],
+    ),
     ("rust cli", ["cargo.toml", "main.rs"]),
     ("go service", ["go.mod", "main.go"]),
     ("cli tool", ["pyproject.toml", "setup.py", "package.json"]),
@@ -67,18 +119,18 @@ _CATEGORY_SIGNALS: list[tuple[str, list[str]]] = [
 
 # Files/directories that indicate a project root
 _PROJECT_ROOT_MARKERS = (
-    ".git",           # git repo
-    "package.json",   # node
-    "pyproject.toml", # python (modern)
-    "setup.py",       # python (legacy)
-    "Cargo.toml",     # rust
-    "go.mod",         # go
-    "pom.xml",        # java maven
-    "build.gradle",   # java gradle
-    "Gemfile",        # ruby
+    ".git",  # git repo
+    "package.json",  # node
+    "pyproject.toml",  # python (modern)
+    "setup.py",  # python (legacy)
+    "Cargo.toml",  # rust
+    "go.mod",  # go
+    "pom.xml",  # java maven
+    "build.gradle",  # java gradle
+    "Gemfile",  # ruby
     "composer.json",  # php
-    "mix.exs",        # elixir
-    "pubspec.yaml",   # dart/flutter
+    "mix.exs",  # elixir
+    "pubspec.yaml",  # dart/flutter
 )
 
 
@@ -175,7 +227,9 @@ def _infer_category(
     keywords: list[str],
     display_name: str,
 ) -> str | None:
-    haystack_parts = [display_name.lower(), " ".join(keywords).lower()] + [p.lower() for p in file_paths]
+    haystack_parts = [display_name.lower(), " ".join(keywords).lower()] + [
+        p.lower() for p in file_paths
+    ]
     haystack = " ".join(haystack_parts)
 
     for category, signals in _CATEGORY_SIGNALS:
@@ -212,7 +266,9 @@ def infer_project(session: Session, events: list[Event]) -> dict[str, Any]:
 
     # Extract extensions → languages
     extensions = extract_extensions(touched_files)
-    languages = sorted({_EXT_TO_LANGUAGE.get(e, "") for e in extensions if e in _EXT_TO_LANGUAGE} - {""})
+    languages = sorted(
+        {_EXT_TO_LANGUAGE.get(e, "") for e in extensions if e in _EXT_TO_LANGUAGE} - {""}
+    )
 
     # Extract keywords from user messages + thinking + file basenames
     file_basenames = [Path(p).name for p in touched_files]

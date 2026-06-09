@@ -19,17 +19,47 @@ _PATH_PATTERNS = [
     # Relative paths with an extension
     re.compile(r"(?<![\w/])[\w./-]+/[\w./-]+\.[a-zA-Z0-9]{1,6}"),
     # src/foo/bar.ts style (starts with a known code folder)
-    re.compile(r"(?<![\w/])(?:src|lib|app|pages|components|tests?|spec|cmd|pkg|internal)/[\w./-]+\.[a-zA-Z0-9]{1,6}"),
+    re.compile(
+        r"(?<![\w/])(?:src|lib|app|pages|components|tests?|spec|cmd|pkg|internal)/[\w./-]+\.[a-zA-Z0-9]{1,6}"
+    ),
 ]
 
 # Common extensions we care about for code
 _CODE_EXTENSIONS = {
-    "py", "ts", "tsx", "js", "jsx", "mjs", "cjs",
-    "go", "rs", "java", "kt", "scala", "swift",
-    "rb", "php", "cs", "cpp", "c", "h", "hpp",
-    "sql", "md", "yaml", "yml", "json", "toml",
-    "html", "css", "scss", "sass",
-    "sh", "bash", "zsh", "fish",
+    "py",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mjs",
+    "cjs",
+    "go",
+    "rs",
+    "java",
+    "kt",
+    "scala",
+    "swift",
+    "rb",
+    "php",
+    "cs",
+    "cpp",
+    "c",
+    "h",
+    "hpp",
+    "sql",
+    "md",
+    "yaml",
+    "yml",
+    "json",
+    "toml",
+    "html",
+    "css",
+    "scss",
+    "sass",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
 }
 
 

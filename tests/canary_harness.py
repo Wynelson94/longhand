@@ -110,9 +110,7 @@ class RecallAssertion:
             )
         elif self.must_appear_in == "any_data":
             assert (
-                _in_episodes(result, sid)
-                or _in_segments(result, sid)
-                or _in_narrative(result, sid)
+                _in_episodes(result, sid) or _in_segments(result, sid) or _in_narrative(result, sid)
             ), (
                 f"{label!r}: session {sid} not surfaced anywhere. "
                 f"Episodes: {[e.get('session_id') for e in result.episodes]}, "
@@ -154,7 +152,9 @@ def _in_narrative(result: RecallResult, session_id: str) -> bool:
     return session_id[:8] in result.narrative
 
 
-def write_and_ingest(store: LonghandStore, dir_: Path, sessions: list[tuple[str, list[dict[str, Any]]]]) -> None:
+def write_and_ingest(
+    store: LonghandStore, dir_: Path, sessions: list[tuple[str, list[dict[str, Any]]]]
+) -> None:
     """Write each session to disk under dir_ and ingest into store."""
     for filename, events in sessions:
         path = dir_ / filename

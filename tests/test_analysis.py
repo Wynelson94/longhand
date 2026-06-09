@@ -59,11 +59,19 @@ def _event(
 
 # ─── Project inference ─────────────────────────────────────────────────────
 
+
 def test_infer_project_basic():
     session = _session("/tmp/cosmic-game")
     events = [
         _event("e1", EventType.USER_MESSAGE, 1, "I'm building a game with phaser"),
-        _event("e2", EventType.TOOL_CALL, 2, tool_name="Edit", file_path="/tmp/cosmic-game/src/main.ts", file_operation=FileOperation.EDIT),
+        _event(
+            "e2",
+            EventType.TOOL_CALL,
+            2,
+            tool_name="Edit",
+            file_path="/tmp/cosmic-game/src/main.ts",
+            file_operation=FileOperation.EDIT,
+        ),
     ]
     project = infer_project(session, events)
     assert project["display_name"] == "cosmic game"
@@ -76,7 +84,14 @@ def test_infer_project_category_from_keywords():
     session = _session("/tmp/my-thing")
     events = [
         _event("e1", EventType.USER_MESSAGE, 1, "Fix the phaser sprite rendering bug"),
-        _event("e2", EventType.TOOL_CALL, 2, tool_name="Edit", file_path="/tmp/my-thing/game.ts", file_operation=FileOperation.EDIT),
+        _event(
+            "e2",
+            EventType.TOOL_CALL,
+            2,
+            tool_name="Edit",
+            file_path="/tmp/my-thing/game.ts",
+            file_operation=FileOperation.EDIT,
+        ),
     ]
     project = infer_project(session, events)
     assert project["category"] == "game"
@@ -84,14 +99,29 @@ def test_infer_project_category_from_keywords():
 
 # ─── Outcome classification ────────────────────────────────────────────────
 
+
 def test_classify_fixed_session():
     session = _session()
     events = [
         _event("u1", EventType.USER_MESSAGE, 1, "Run the tests"),
         _event("c1", EventType.TOOL_CALL, 2, tool_name="Bash"),
-        _event("r1", EventType.TOOL_RESULT, 3, content="FAIL tests/test_foo.py", error_detected=True, error_category="test"),
+        _event(
+            "r1",
+            EventType.TOOL_RESULT,
+            3,
+            content="FAIL tests/test_foo.py",
+            error_detected=True,
+            error_category="test",
+        ),
         _event("t1", EventType.ASSISTANT_THINKING, 4, "The test failed because of a null check"),
-        _event("c2", EventType.TOOL_CALL, 5, tool_name="Edit", file_path="/tmp/foo.py", file_operation=FileOperation.EDIT),
+        _event(
+            "c2",
+            EventType.TOOL_CALL,
+            5,
+            tool_name="Edit",
+            file_path="/tmp/foo.py",
+            file_operation=FileOperation.EDIT,
+        ),
         _event("r2", EventType.TOOL_RESULT, 6, content="All tests passed"),
     ]
     outcome = classify_session(session, events)
@@ -106,7 +136,9 @@ def test_classify_stuck_session():
     events = [
         _event("u1", EventType.USER_MESSAGE, 1, "Debug this"),
         _event("c1", EventType.TOOL_CALL, 2, tool_name="Bash"),
-        _event("r1", EventType.TOOL_RESULT, 3, content="error: something broke", error_detected=True),
+        _event(
+            "r1", EventType.TOOL_RESULT, 3, content="error: something broke", error_detected=True
+        ),
         _event("c2", EventType.TOOL_CALL, 4, tool_name="Bash"),
         _event("r2", EventType.TOOL_RESULT, 5, content="error: still broken", error_detected=True),
     ]
@@ -118,9 +150,30 @@ def test_classify_shipped_session():
     session = _session()
     events = [
         _event("u1", EventType.USER_MESSAGE, 1, "Add the feature"),
-        _event("c1", EventType.TOOL_CALL, 2, tool_name="Edit", file_path="/tmp/a.ts", file_operation=FileOperation.EDIT),
-        _event("c2", EventType.TOOL_CALL, 3, tool_name="Edit", file_path="/tmp/b.ts", file_operation=FileOperation.EDIT),
-        _event("c3", EventType.TOOL_CALL, 4, tool_name="Edit", file_path="/tmp/c.ts", file_operation=FileOperation.EDIT),
+        _event(
+            "c1",
+            EventType.TOOL_CALL,
+            2,
+            tool_name="Edit",
+            file_path="/tmp/a.ts",
+            file_operation=FileOperation.EDIT,
+        ),
+        _event(
+            "c2",
+            EventType.TOOL_CALL,
+            3,
+            tool_name="Edit",
+            file_path="/tmp/b.ts",
+            file_operation=FileOperation.EDIT,
+        ),
+        _event(
+            "c3",
+            EventType.TOOL_CALL,
+            4,
+            tool_name="Edit",
+            file_path="/tmp/c.ts",
+            file_operation=FileOperation.EDIT,
+        ),
         _event("r1", EventType.TOOL_RESULT, 5, content="ok"),
     ]
     outcome = classify_session(session, events)
@@ -129,13 +182,32 @@ def test_classify_shipped_session():
 
 # ─── Episode extraction ────────────────────────────────────────────────────
 
+
 def test_extract_episode_with_full_chain():
     events = [
         _event("u1", EventType.USER_MESSAGE, 1, "Why are the tests failing?"),
         _event("c1", EventType.TOOL_CALL, 2, tool_name="Bash"),
-        _event("r1", EventType.TOOL_RESULT, 3, content="FAIL /tmp/game/src/main.ts: TypeError", error_detected=True, error_category="test"),
-        _event("t1", EventType.ASSISTANT_THINKING, 4, "Looking at main.ts there's a null check missing"),
-        _event("c2", EventType.TOOL_CALL, 5, tool_name="Edit", file_path="/tmp/game/src/main.ts", file_operation=FileOperation.EDIT, old_content="x.foo()", new_content="x?.foo()"),
+        _event(
+            "r1",
+            EventType.TOOL_RESULT,
+            3,
+            content="FAIL /tmp/game/src/main.ts: TypeError",
+            error_detected=True,
+            error_category="test",
+        ),
+        _event(
+            "t1", EventType.ASSISTANT_THINKING, 4, "Looking at main.ts there's a null check missing"
+        ),
+        _event(
+            "c2",
+            EventType.TOOL_CALL,
+            5,
+            tool_name="Edit",
+            file_path="/tmp/game/src/main.ts",
+            file_operation=FileOperation.EDIT,
+            old_content="x.foo()",
+            new_content="x?.foo()",
+        ),
         _event("r2", EventType.TOOL_RESULT, 6, content="All tests passed"),
     ]
     episodes = extract_episodes("sess1", "proj1", events)
@@ -151,7 +223,9 @@ def test_extract_episode_with_full_chain():
 def test_extract_episode_unresolved():
     events = [
         _event("c1", EventType.TOOL_CALL, 1, tool_name="Bash"),
-        _event("r1", EventType.TOOL_RESULT, 2, content="panic: something awful", error_detected=True),
+        _event(
+            "r1", EventType.TOOL_RESULT, 2, content="panic: something awful", error_detected=True
+        ),
     ]
     episodes = extract_episodes("sess1", "proj1", events)
     assert len(episodes) == 1
@@ -162,7 +236,14 @@ def test_extract_episode_unresolved():
 def test_no_episodes_for_clean_session():
     events = [
         _event("u1", EventType.USER_MESSAGE, 1, "Build it"),
-        _event("c1", EventType.TOOL_CALL, 2, tool_name="Edit", file_path="/tmp/a.ts", file_operation=FileOperation.EDIT),
+        _event(
+            "c1",
+            EventType.TOOL_CALL,
+            2,
+            tool_name="Edit",
+            file_path="/tmp/a.ts",
+            file_operation=FileOperation.EDIT,
+        ),
         _event("r1", EventType.TOOL_RESULT, 3, content="ok"),
     ]
     episodes = extract_episodes("sess1", "proj1", events)

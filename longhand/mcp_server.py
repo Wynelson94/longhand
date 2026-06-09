@@ -63,9 +63,7 @@ def _truncate_output(text: str, max_chars: int, hint: str | None = None) -> str:
     if max_chars <= 0 or len(text) <= max_chars:
         return text
     hint_text = hint or "narrow your query"
-    return text[:max_chars] + (
-        f"\n\n[... truncated at {max_chars} chars. {hint_text}]"
-    )
+    return text[:max_chars] + (f"\n\n[... truncated at {max_chars} chars. {hint_text}]")
 
 
 # Tool-specific pagination hints — each names the params that actually exist
@@ -238,17 +236,40 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language query"},
-                    "limit": {"type": "integer", "default": 10, "description": "Max results (default 10, capped at 1000)"},
-                    "session_id": {"type": "string", "description": "Scope search to a single session (prefix match — first 8 chars usually enough)"},
-                    "project_id": {"type": "string", "description": "Scope search to a project by project_id"},
-                    "project_name": {"type": "string", "description": "Scope search to a project by name substring (e.g. 'gonzo')"},
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Max results (default 10, capped at 1000)",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Scope search to a single session (prefix match — first 8 chars usually enough)",
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Scope search to a project by project_id",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "Scope search to a project by name substring (e.g. 'gonzo')",
+                    },
                     "event_type": {
                         "type": "string",
                         "description": "Filter: user_message, assistant_text, assistant_thinking, tool_call, tool_result",
                     },
-                    "tool_name": {"type": "string", "description": "Filter by tool name (Edit, Bash, Read, etc.)"},
-                    "file_path_contains": {"type": "string", "description": "Filter to events with an explicit file_path containing this string (tool_call/tool_result events only — user messages won't have file_path metadata)"},
-                    "max_chars": {"type": "integer", "default": 12000, "description": "Max total output characters (default 12000). Set higher if you need full content."},
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Filter by tool name (Edit, Bash, Read, etc.)",
+                    },
+                    "file_path_contains": {
+                        "type": "string",
+                        "description": "Filter to events with an explicit file_path containing this string (tool_call/tool_result events only — user messages won't have file_path metadata)",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 12000,
+                        "description": "Max total output characters (default 12000). Set higher if you need full content.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -273,12 +294,33 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
-                    "query": {"type": "string", "description": "Natural language query to find within the session"},
-                    "context_events": {"type": "integer", "default": 5, "description": "Number of events to include before AND after each match (default 5)"},
-                    "limit": {"type": "integer", "default": 3, "description": "Max number of matches to return with context (default 3)"},
-                    "event_type": {"type": "string", "description": "Optional: filter matches to a single event type"},
-                    "max_chars": {"type": "integer", "default": 20000, "description": "Max total output characters (default 20000)"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (prefix match — first 8 chars usually enough)",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query to find within the session",
+                    },
+                    "context_events": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Number of events to include before AND after each match (default 5)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Max number of matches to return with context (default 3)",
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "description": "Optional: filter matches to a single event type",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 20000,
+                        "description": "Max total output characters (default 20000)",
+                    },
                 },
                 "required": ["session_id", "query"],
             },
@@ -315,8 +357,15 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project": {"type": "string", "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')"},
-                    "limit": {"type": "integer", "default": 50, "description": "Max results (default 50, capped at 1000)"},
+                    "project": {
+                        "type": "string",
+                        "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Max results (default 50, capped at 1000)",
+                    },
                 },
             },
             outputSchema={
@@ -353,17 +402,35 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 100, "description": "Max events to return (default 100, capped at 1000)"},
-                    "offset": {"type": "integer", "default": 0, "description": "Skip first N events (for pagination)"},
-                    "tail": {"type": "integer", "description": "Return only the last N events of the session"},
+                    "limit": {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Max events to return (default 100, capped at 1000)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Skip first N events (for pagination)",
+                    },
+                    "tail": {
+                        "type": "integer",
+                        "description": "Return only the last N events of the session",
+                    },
                     "include_thinking": {"type": "boolean", "default": True},
-                    "event_type": {"type": "string", "description": "Filter to a single event type"},
+                    "event_type": {
+                        "type": "string",
+                        "description": "Filter to a single event type",
+                    },
                     "summary_only": {
                         "type": "boolean",
                         "default": False,
                         "description": "Return only event_type, timestamp, tool_name, file_path — no content. Great for scanning long sessions.",
                     },
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 16000,
+                        "description": "Max total output characters",
+                    },
                 },
                 "required": ["session_id"],
             },
@@ -394,12 +461,20 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 10, "description": "Max events to return (default 10, capped at 1000)"},
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Max events to return (default 10, capped at 1000)",
+                    },
                     "event_type": {
                         "type": "string",
                         "description": "Optional: filter to a single event type (user_message, assistant_text, tool_call, etc.)",
                     },
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 16000,
+                        "description": "Max total output characters",
+                    },
                 },
                 "required": ["session_id"],
             },
@@ -428,9 +503,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
-                    "file_path": {"type": "string", "description": "Exact file path to reconstruct (must match the path the session used)"},
-                    "at_event_id": {"type": "string", "description": "Optional: stop replay at this event ID to get mid-session state. Omit for final state at session end."},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (prefix match — first 8 chars usually enough)",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Exact file path to reconstruct (must match the path the session used)",
+                    },
+                    "at_event_id": {
+                        "type": "string",
+                        "description": "Optional: stop replay at this event ID to get mid-session state. Omit for final state at session end.",
+                    },
                 },
                 "required": ["session_id", "file_path"],
             },
@@ -442,9 +526,15 @@ async def list_tools() -> list[Tool]:
                     "session_id": {"type": "string"},
                     "at_event_id": {"type": ["string", "null"]},
                     "at_timestamp": {"type": "string"},
-                    "source": {"type": "string", "description": "Origin of the base content (write, initial_read, etc.)"},
+                    "source": {
+                        "type": "string",
+                        "description": "Origin of the base content (write, initial_read, etc.)",
+                    },
                     "edits_applied": {"type": "integer"},
-                    "content": {"type": "string", "description": "Full reconstructed file content at the requested point in time."},
+                    "content": {
+                        "type": "string",
+                        "description": "Full reconstructed file content at the requested point in time.",
+                    },
                 },
             },
             annotations=_READ_ONLY,
@@ -466,7 +556,10 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "Exact file path to look up"},
-                    "session_id": {"type": "string", "description": "Optional: limit to a single session (prefix match)"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional: limit to a single session (prefix match)",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -526,8 +619,16 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language question"},
-                    "max_episodes": {"type": "integer", "default": 5, "description": "Max episodes to return"},
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max total output characters"},
+                    "max_episodes": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max episodes to return",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 16000,
+                        "description": "Max total output characters",
+                    },
                 },
                 "required": ["query"],
             },
@@ -551,9 +652,21 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Project name, alias, or ID (fuzzy match)",
                     },
-                    "max_commits": {"type": "integer", "default": 10, "description": "Max recent commits to show"},
-                    "max_episodes": {"type": "integer", "default": 5, "description": "Max recent episodes"},
-                    "max_chars": {"type": "integer", "default": 16000, "description": "Max output characters"},
+                    "max_commits": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Max recent commits to show",
+                    },
+                    "max_episodes": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max recent episodes",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 16000,
+                        "description": "Max output characters",
+                    },
                 },
                 "required": ["project"],
             },
@@ -610,7 +723,11 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 5, "description": "Max project matches to return"},
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max project matches to return",
+                    },
                 },
                 "required": ["query"],
             },
@@ -644,12 +761,33 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional: filter to one or more project_ids"},
-                    "since": {"type": "string", "description": "ISO timestamp — only episodes after this date"},
-                    "until": {"type": "string", "description": "ISO timestamp — only episodes before this date"},
-                    "keyword": {"type": "string", "description": "Substring match against episode summary text"},
-                    "has_fix": {"type": "boolean", "default": True, "description": "If True, return only episodes that have a resolved fix"},
-                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
+                    "project_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional: filter to one or more project_ids",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "ISO timestamp — only episodes after this date",
+                    },
+                    "until": {
+                        "type": "string",
+                        "description": "ISO timestamp — only episodes before this date",
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "Substring match against episode summary text",
+                    },
+                    "has_fix": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "If True, return only episodes that have a resolved fix",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Max results (default 20, capped at 1000)",
+                    },
                 },
             },
             outputSchema={
@@ -683,7 +821,12 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"episode_id": {"type": "string", "description": "Exact episode_id from find_episodes or recall"}},
+                "properties": {
+                    "episode_id": {
+                        "type": "string",
+                        "description": "Exact episode_id from find_episodes or recall",
+                    }
+                },
                 "required": ["episode_id"],
             },
             outputSchema={
@@ -717,10 +860,24 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Session ID (prefix match — first 8 chars usually enough)"},
-                    "operation_type": {"type": "string", "description": "Filter by operation: commit, push, pull, checkout, merge, fetch, rebase, etc."},
-                    "limit": {"type": "integer", "default": 100, "description": "Max results (default 100, capped at 1000)"},
-                    "max_chars": {"type": "integer", "default": 12000, "description": "Max output characters (default 12000); response truncates with a hint past this size"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID (prefix match — first 8 chars usually enough)",
+                    },
+                    "operation_type": {
+                        "type": "string",
+                        "description": "Filter by operation: commit, push, pull, checkout, merge, fetch, rebase, etc.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Max results (default 100, capped at 1000)",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 12000,
+                        "description": "Max output characters (default 12000); response truncates with a hint past this size",
+                    },
                 },
                 "required": ["session_id"],
             },
@@ -743,11 +900,28 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Commit message substring, hash prefix, or branch name"},
-                    "session_id": {"type": "string", "description": "Optional: scope to a single session (prefix match)"},
-                    "operation_type": {"type": "string", "description": "Filter by operation type (default: all)"},
-                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
-                    "max_chars": {"type": "integer", "default": 12000, "description": "Max output characters"},
+                    "query": {
+                        "type": "string",
+                        "description": "Commit message substring, hash prefix, or branch name",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional: scope to a single session (prefix match)",
+                    },
+                    "operation_type": {
+                        "type": "string",
+                        "description": "Filter by operation type (default: all)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Max results (default 20, capped at 1000)",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": 12000,
+                        "description": "Max output characters",
+                    },
                 },
                 "required": ["query"],
             },
@@ -774,9 +948,19 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "Filter: matches project name, path, or aliases"},
-                    "category": {"type": "string", "description": "Filter: e.g. 'cli tool', 'web app', 'library'"},
-                    "limit": {"type": "integer", "default": 20, "description": "Max results (default 20, capped at 1000)"},
+                    "keyword": {
+                        "type": "string",
+                        "description": "Filter: matches project name, path, or aliases",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filter: e.g. 'cli tool', 'web app', 'library'",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Max results (default 20, capped at 1000)",
+                    },
                     "verbose": {
                         "type": "boolean",
                         "default": False,
@@ -818,10 +1002,23 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "Project ID from list_projects or match_project"},
-                    "since": {"type": "string", "description": "ISO date — only sessions after this date"},
-                    "until": {"type": "string", "description": "ISO date — only sessions before this date"},
-                    "limit": {"type": "integer", "default": 50, "description": "Max results (default 50, capped at 1000)"},
+                    "project_id": {
+                        "type": "string",
+                        "description": "Project ID from list_projects or match_project",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "ISO date — only sessions after this date",
+                    },
+                    "until": {
+                        "type": "string",
+                        "description": "ISO date — only sessions before this date",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Max results (default 50, capped at 1000)",
+                    },
                 },
                 "required": ["project_id"],
             },
@@ -845,7 +1042,11 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "default": 50, "description": "Max plans to return (default 50, capped at 1000)"},
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Max plans to return (default 50, capped at 1000)",
+                    },
                 },
             },
             outputSchema={
@@ -933,8 +1134,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     # Post-filter by project if needed
     if project_session_ids is not None:
         hits = [
-            h for h in hits
-            if (h.get("metadata") or {}).get("session_id") in project_session_ids
+            h for h in hits if (h.get("metadata") or {}).get("session_id") in project_session_ids
         ]
 
     hits = hits[:limit]
@@ -976,7 +1176,9 @@ async def _tool_search_in_context(
 ) -> list[TextContent]:
     full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
-        return [TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")]
+        return [
+            TextContent(type="text", text=f"No session matching prefix: {arguments['session_id']}")
+        ]
 
     context_n = _int(arguments.get("context_events"), 5)
     limit = _limit(arguments.get("limit"), 3)
@@ -1001,12 +1203,14 @@ async def _tool_search_in_context(
         if seq is None:
             continue
         seq = int(seq)
-        windows.append({
-            "match_event_id": hit["event_id"],
-            "match_distance": hit.get("distance", 1.0),
-            "seq_start": max(0, seq - context_n),
-            "seq_end": seq + context_n,
-        })
+        windows.append(
+            {
+                "match_event_id": hit["event_id"],
+                "match_distance": hit.get("distance", 1.0),
+                "seq_start": max(0, seq - context_n),
+                "seq_end": seq + context_n,
+            }
+        )
 
     if not windows:
         return [TextContent(type="text", text="Matches found but no sequence metadata available.")]
@@ -1023,11 +1227,13 @@ async def _tool_search_in_context(
             merged[-1]["seq_end"] = max(merged[-1]["seq_end"], w["seq_end"])
             merged[-1]["match_event_ids"].append(w["match_event_id"])
         else:
-            merged.append({
-                "seq_start": w["seq_start"],
-                "seq_end": w["seq_end"],
-                "match_event_ids": [w["match_event_id"]],
-            })
+            merged.append(
+                {
+                    "seq_start": w["seq_start"],
+                    "seq_end": w["seq_end"],
+                    "match_event_ids": [w["match_event_id"]],
+                }
+            )
 
     # Deduplicate: keep only the first `limit` unique matches
     all_match_ids: list[str] = []
@@ -1049,18 +1255,18 @@ async def _tool_search_in_context(
     # Fetch events for each window
     results = []
     for mw in final_windows:
-        events = store.sqlite.get_events_by_sequence_range(
-            full_id, mw["seq_start"], mw["seq_end"]
-        )
+        events = store.sqlite.get_events_by_sequence_range(full_id, mw["seq_start"], mw["seq_end"])
         formatted = []
         for e in events:
             fe = _format_event(e)
             fe["is_match"] = e["event_id"] in match_id_set
             formatted.append(fe)
-        results.append({
-            "sequence_range": [mw["seq_start"], mw["seq_end"]],
-            "events": formatted,
-        })
+        results.append(
+            {
+                "sequence_range": [mw["seq_start"], mw["seq_end"]],
+                "events": formatted,
+            }
+        )
 
     payload = {
         "session_id": full_id,
@@ -1070,12 +1276,12 @@ async def _tool_search_in_context(
         "context_windows": results,
     }
     output = json.dumps(payload, indent=2, default=str)
-    return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_SEARCH_IN_CONTEXT))]
+    return [
+        TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_SEARCH_IN_CONTEXT))
+    ]
 
 
-async def _tool_list_sessions(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_list_sessions(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     project_filter = arguments.get("project")
     rows = store.sqlite.list_sessions(
         project_path=project_filter,
@@ -1210,9 +1416,7 @@ async def _tool_get_latest_events(
     return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_LATEST))]
 
 
-async def _tool_replay_file(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_replay_file(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     full_id = _resolve_prefix(store, arguments["session_id"])
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
@@ -1226,18 +1430,24 @@ async def _tool_replay_file(
     if not state:
         return [TextContent(type="text", text=f"No edits found for {arguments['file_path']}")]
 
-    return [TextContent(
-        type="text",
-        text=json.dumps({
-            "file_path": state.file_path,
-            "session_id": state.session_id,
-            "at_event_id": state.at_event_id,
-            "at_timestamp": state.at_timestamp.isoformat(),
-            "source": state.source,
-            "edits_applied": state.edits_applied,
-            "content": state.content,
-        }, indent=2, default=str),
-    )]
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(
+                {
+                    "file_path": state.file_path,
+                    "session_id": state.session_id,
+                    "at_event_id": state.at_event_id,
+                    "at_timestamp": state.at_timestamp.isoformat(),
+                    "source": state.source,
+                    "edits_applied": state.edits_applied,
+                    "content": state.content,
+                },
+                indent=2,
+                default=str,
+            ),
+        )
+    ]
 
 
 async def _tool_get_file_history(
@@ -1262,9 +1472,7 @@ async def _tool_get_file_history(
     return [TextContent(type="text", text=json.dumps(formatted, indent=2, default=str))]
 
 
-async def _tool_get_stats(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_get_stats(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     stats = store.stats()
     return [TextContent(type="text", text=json.dumps(stats, indent=2, default=str))]
 
@@ -1272,9 +1480,7 @@ async def _tool_get_stats(
 # ─── Proactive memory tools (v0.2) ─────────────────────────────────────
 
 
-async def _tool_recall(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_recall(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     result = recall_pipeline(
         store=store,
         query=_query(arguments.get("query")),
@@ -1378,9 +1584,7 @@ async def _tool_recall_project_status(
     return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_RECALL))]
 
 
-async def _tool_match_project(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_match_project(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     matches = match_projects(
         store=store,
         query=_query(arguments.get("query")),
@@ -1400,9 +1604,7 @@ async def _tool_match_project(
     return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
 
 
-async def _tool_find_episodes(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_find_episodes(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     episodes = store.sqlite.query_episodes(
         project_ids=arguments.get("project_ids"),
         since=arguments.get("since"),
@@ -1415,9 +1617,7 @@ async def _tool_find_episodes(
     return [TextContent(type="text", text=json.dumps(episodes, indent=2, default=str))]
 
 
-async def _tool_get_episode(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_get_episode(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     ep = store.sqlite.get_episode(arguments["episode_id"])
     if not ep:
         return [TextContent(type="text", text=f"No episode: {arguments['episode_id']}")]
@@ -1476,9 +1676,7 @@ async def _tool_get_session_commits(
     return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_GIT))]
 
 
-async def _tool_find_commits(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_find_commits(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     search_session_id = None
     if arguments.get("session_id"):
         search_session_id = _resolve_prefix(store, arguments["session_id"])
@@ -1493,9 +1691,7 @@ async def _tool_find_commits(
     return [TextContent(type="text", text=_truncate_output(output, max_chars, _HINT_GIT))]
 
 
-async def _tool_list_projects(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_list_projects(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     rows = store.sqlite.list_projects(
         keyword=arguments.get("keyword"),
         category=arguments.get("category"),
@@ -1504,9 +1700,7 @@ async def _tool_list_projects(
     if _bool(arguments.get("verbose"), False):
         output = json.dumps(rows, indent=2, default=str)
     else:
-        output = json.dumps(
-            [_format_project_compact(r) for r in rows], indent=2, default=str
-        )
+        output = json.dumps([_format_project_compact(r) for r in rows], indent=2, default=str)
     return [TextContent(type="text", text=_truncate_output(output, 16000, _HINT_PROJECTS))]
 
 
@@ -1523,17 +1717,17 @@ async def _tool_get_project_timeline(
     enriched = []
     for r in rows:
         outcome = store.sqlite.get_outcome(r["session_id"])
-        enriched.append({
-            **r,
-            "outcome": outcome["outcome"] if outcome else None,
-            "outcome_summary": outcome["summary"] if outcome else None,
-        })
+        enriched.append(
+            {
+                **r,
+                "outcome": outcome["outcome"] if outcome else None,
+                "outcome_summary": outcome["summary"] if outcome else None,
+            }
+        )
     return [TextContent(type="text", text=json.dumps(enriched, indent=2, default=str))]
 
 
-async def _tool_reconcile(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_reconcile(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     """Bridge disk↔DB drift from inside an MCP session.
 
     With `fix=True` (the default for MCP callers): re-ingests any on-disk
@@ -1547,9 +1741,7 @@ async def _tool_reconcile(
     return [TextContent(type="text", text=output)]
 
 
-async def _tool_list_plans(
-    store: LonghandStore, arguments: dict[str, Any]
-) -> list[TextContent]:
+async def _tool_list_plans(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     rows = store.sqlite.list_plans(limit=_limit(arguments.get("limit"), 50))
     return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
 

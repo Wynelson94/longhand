@@ -45,7 +45,11 @@ def classify_session(session: Session, events: list[Event]) -> dict[str, Any]:
             thinking_texts.append(e.content or "")
 
         if etype == "tool_call":
-            fop = e.file_operation if isinstance(e.file_operation, str) or e.file_operation is None else e.file_operation.value
+            fop = (
+                e.file_operation
+                if isinstance(e.file_operation, str) or e.file_operation is None
+                else e.file_operation.value
+            )
             if fop in ("edit", "write", "multi_edit", "notebook_edit"):
                 edit_count += 1
                 fix_candidates += 1

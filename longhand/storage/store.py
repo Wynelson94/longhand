@@ -151,17 +151,19 @@ class LonghandStore:
             text = _build_episode_text(ep)
             if not text:
                 continue
-            episode_items.append({
-                "episode_id": ep["episode_id"],
-                "text": text,
-                "metadata": {
-                    "session_id": session.session_id,
-                    "project_id": project["project_id"] or "",
-                    "ended_at": ep["ended_at"],
-                    "status": ep.get("status", "unresolved"),
-                    "has_fix": True,
-                },
-            })
+            episode_items.append(
+                {
+                    "episode_id": ep["episode_id"],
+                    "text": text,
+                    "metadata": {
+                        "session_id": session.session_id,
+                        "project_id": project["project_id"] or "",
+                        "ended_at": ep["ended_at"],
+                        "status": ep.get("status", "unresolved"),
+                        "has_fix": True,
+                    },
+                }
+            )
         episodes_embedded = self.vectors.add_episode_embeddings_batch(episode_items)
 
         # 3b. Conversation segment extraction
@@ -235,22 +237,24 @@ class LonghandStore:
                 command = paired_input.get("command", "")
             signal = extract_git_signal(command, e.tool_output or "")
 
-            op_id = "gitop_" + hashlib.sha256(
-                f"{session_id}:{e.event_id}".encode()
-            ).hexdigest()[:16]
-            ops.append({
-                "git_op_id": op_id,
-                "session_id": session_id,
-                "event_id": e.event_id,
-                "operation_type": e.git_operation,
-                "commit_hash": e.git_commit_hash,
-                "commit_message": e.git_commit_message,
-                "branch": signal.branch if signal else e.git_branch,
-                "remote": signal.remote if signal else None,
-                "files_changed_count": signal.files_changed_count if signal else None,
-                "timestamp": e.timestamp.isoformat(),
-                "success": signal.success if signal else True,
-            })
+            op_id = (
+                "gitop_" + hashlib.sha256(f"{session_id}:{e.event_id}".encode()).hexdigest()[:16]
+            )
+            ops.append(
+                {
+                    "git_op_id": op_id,
+                    "session_id": session_id,
+                    "event_id": e.event_id,
+                    "operation_type": e.git_operation,
+                    "commit_hash": e.git_commit_hash,
+                    "commit_message": e.git_commit_message,
+                    "branch": signal.branch if signal else e.git_branch,
+                    "remote": signal.remote if signal else None,
+                    "files_changed_count": signal.files_changed_count if signal else None,
+                    "timestamp": e.timestamp.isoformat(),
+                    "success": signal.success if signal else True,
+                }
+            )
         return ops
 
     def stats(self) -> dict:
@@ -258,7 +262,9 @@ class LonghandStore:
         sql_stats["vectors_indexed"] = self.vectors.count()
         return sql_stats
 
-    def backfill_episode_embeddings(self, progress: Callable[[int, int], None] | None = None) -> int:
+    def backfill_episode_embeddings(
+        self, progress: Callable[[int, int], None] | None = None
+    ) -> int:
         """Embed every episode row from SQLite into the vector store.
 
         Idempotent — upserts by episode_id. Needed once after upgrading from
@@ -284,17 +290,19 @@ class LonghandStore:
             text = _build_episode_text(ep)
             if not text:
                 continue
-            items.append({
-                "episode_id": ep["episode_id"],
-                "text": text,
-                "metadata": {
-                    "session_id": ep.get("session_id") or "",
-                    "project_id": ep.get("project_id") or "",
-                    "ended_at": ep.get("ended_at") or "",
-                    "status": ep.get("status", "unresolved"),
-                    "has_fix": True,
-                },
-            })
+            items.append(
+                {
+                    "episode_id": ep["episode_id"],
+                    "text": text,
+                    "metadata": {
+                        "session_id": ep.get("session_id") or "",
+                        "project_id": ep.get("project_id") or "",
+                        "ended_at": ep.get("ended_at") or "",
+                        "status": ep.get("status", "unresolved"),
+                        "has_fix": True,
+                    },
+                }
+            )
 
         if not items:
             if progress:
@@ -307,9 +315,7 @@ class LonghandStore:
         # size Chroma upserts at, so each progress tick corresponds to one
         # real flush of embeddings.
         for i in range(0, len(items), CHROMA_BATCH_SIZE):
-            embedded += self.vectors.add_episode_embeddings_batch(
-                items[i : i + CHROMA_BATCH_SIZE]
-            )
+            embedded += self.vectors.add_episode_embeddings_batch(items[i : i + CHROMA_BATCH_SIZE])
             if progress:
                 progress(embedded, total)
 

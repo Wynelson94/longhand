@@ -84,7 +84,7 @@ def parse_time_phrase(
         target = now - timedelta(days=days)
         since = _day_start(target - timedelta(days=window))
         until = target + timedelta(days=window)
-        cleaned = query[: match.start()] + query[match.end():]
+        cleaned = query[: match.start()] + query[match.end() :]
         return since, until, cleaned.strip()
 
     # Fixed phrases
@@ -93,7 +93,7 @@ def parse_time_phrase(
         if match:
             since = _day_start(now - timedelta(days=days_start))
             until = now - timedelta(days=days_end) if days_end > 0 else now
-            cleaned = query[: match.start()] + query[match.end():]
+            cleaned = query[: match.start()] + query[match.end() :]
             return since, until, cleaned.strip()
 
     return None, None, query

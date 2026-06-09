@@ -333,9 +333,9 @@ def test_diagnosis_summary_captures_reasoning(login_bug_store: LonghandStore):
 
 def test_fix_summary_contains_intent_diff_and_verification(login_bug_store: LonghandStore):
     """fix_summary should include:
-      - Intent (Claude's assistant_text preceding the fix)
-      - Mechanical diff (tool + file + old → new)
-      - Verification signal (clean tool result after fix)
+    - Intent (Claude's assistant_text preceding the fix)
+    - Mechanical diff (tool + file + old → new)
+    - Verification signal (clean tool result after fix)
     """
     ep = login_bug_store.sqlite.query_episodes(limit=10)[0]
     fs = ep.get("fix_summary", "").lower()
@@ -346,9 +346,7 @@ def test_fix_summary_contains_intent_diff_and_verification(login_bug_store: Long
     assert "middleware" in fs, f"fix_summary missing file reference: {fs!r}"
     assert "samesite" in fs, f"fix_summary missing diff content: {fs!r}"
     # Verification happened in the fixture — summary should reflect it
-    assert "verified" in fs or "passed" in fs, (
-        f"fix_summary missing verification signal: {fs!r}"
-    )
+    assert "verified" in fs or "passed" in fs, f"fix_summary missing verification signal: {fs!r}"
 
 
 # ─── Acceptance: semantic recall actually works on paraphrased queries ──────

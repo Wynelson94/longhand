@@ -57,9 +57,7 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
         return ReconcileReport(files_on_disk=0, fully_indexed=0)
 
     with store.sqlite.connect() as conn:
-        rows = conn.execute(
-            "SELECT transcript_path, project_id FROM sessions"
-        ).fetchall()
+        rows = conn.execute("SELECT transcript_path, project_id FROM sessions").fetchall()
     indexed: dict[str, str | None] = {r[0]: r[1] for r in rows}
 
     missing: list[Path] = []

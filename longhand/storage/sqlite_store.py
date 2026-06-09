@@ -98,12 +98,7 @@ def _escape_like(value: str) -> str:
     if not value:
         return ""
     truncated = value[:MAX_FILTER_LENGTH]
-    return (
-        truncated
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-    )
+    return truncated.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class SQLiteStore:
@@ -199,7 +194,9 @@ class SQLiteStore:
                     e.tool_output,
                     int(e.tool_success) if e.tool_success is not None else None,
                     e.file_path,
-                    e.file_operation if isinstance(e.file_operation, str) or e.file_operation is None else e.file_operation.value,
+                    e.file_operation
+                    if isinstance(e.file_operation, str) or e.file_operation is None
+                    else e.file_operation.value,
                     e.old_content,
                     e.new_content,
                     json.dumps(e.raw),
@@ -239,17 +236,21 @@ class SQLiteStore:
         pairs: list[dict[str, Any]] = []
         for tool_use_id, call in calls.items():
             result = results.get(tool_use_id)
-            pairs.append({
-                "tool_use_id": tool_use_id,
-                "call_event_id": call.event_id,
-                "result_event_id": result.event_id if result else None,
-                "success": result.tool_success if result else None,
-                "error_detected": bool(result.error_detected) if result else False,
-                "error_snippet": result.error_snippet if result else None,
-            })
+            pairs.append(
+                {
+                    "tool_use_id": tool_use_id,
+                    "call_event_id": call.event_id,
+                    "result_event_id": result.event_id if result else None,
+                    "success": result.tool_success if result else None,
+                    "error_detected": bool(result.error_detected) if result else False,
+                    "error_snippet": result.error_snippet if result else None,
+                }
+            )
         return pairs
 
-    def log_ingestion(self, transcript_path: str, session_id: str, file_size: int, event_count: int) -> None:
+    def log_ingestion(
+        self, transcript_path: str, session_id: str, file_size: int, event_count: int
+    ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
@@ -484,9 +485,7 @@ class SQLiteStore:
         when streaming-chunk collisions exist.
         """
         with self.connect() as conn:
-            query = (
-                "SELECT * FROM events WHERE session_id = ? AND sequence BETWEEN ? AND ? "
-            )
+            query = "SELECT * FROM events WHERE session_id = ? AND sequence BETWEEN ? AND ? "
             if dedup_suffixes:
                 query += "AND event_id NOT LIKE '%#%' "
             query += "ORDER BY sequence ASC"
@@ -547,11 +546,15 @@ class SQLiteStore:
                 stats["resolved_episodes"] = conn.execute(
                     "SELECT COUNT(*) FROM episodes WHERE status = 'resolved'"
                 ).fetchone()[0]
-                stats["outcomes"] = conn.execute("SELECT COUNT(*) FROM session_outcomes").fetchone()[0]
+                stats["outcomes"] = conn.execute(
+                    "SELECT COUNT(*) FROM session_outcomes"
+                ).fetchone()[0]
             except sqlite3.OperationalError:
                 pass
             try:
-                stats["git_operations"] = conn.execute("SELECT COUNT(*) FROM git_operations").fetchone()[0]
+                stats["git_operations"] = conn.execute(
+                    "SELECT COUNT(*) FROM git_operations"
+                ).fetchone()[0]
                 stats["git_commits"] = conn.execute(
                     "SELECT COUNT(*) FROM git_operations WHERE operation_type = 'commit'"
                 ).fetchone()[0]
@@ -959,8 +962,7 @@ class SQLiteStore:
             sql = (
                 "SELECT g.* FROM git_operations g "
                 "INNER JOIN sessions s ON g.session_id = s.session_id "
-                "WHERE " + " AND ".join(conditions) +
-                " ORDER BY g.timestamp DESC LIMIT ?"
+                "WHERE " + " AND ".join(conditions) + " ORDER BY g.timestamp DESC LIMIT ?"
             )
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
@@ -1036,9 +1038,7 @@ class SQLiteStore:
                 params.append(segment_type)
             if keyword:
                 escaped = _escape_like(keyword)
-                conditions.append(
-                    "(topic LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')"
-                )
+                conditions.append("(topic LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')")
                 like = f"%{escaped}%"
                 params.extend([like, like])
 
