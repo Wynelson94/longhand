@@ -473,8 +473,7 @@ def test_fixless_episode_is_in_sqlite_but_not_vectors(tmp_path: Path):
 
     # SQLite has the episode (forensic preservation)
     eps = store.sqlite.query_episodes(limit=10)
-    if not eps:
-        pytest.skip("extraction didn't produce a fixless episode — skip coverage check")
+    assert eps, "extraction must produce a fixless episode for this fixture"
     assert any(not e.get("fix_event_id") for e in eps), (
         "expected at least one fixless episode in the fixture"
     )

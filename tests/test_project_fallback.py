@@ -177,3 +177,35 @@ def test_fallback_recursion_guard(temp_store):
 
     # Should return [] — and importantly, shouldn't have recursed infinitely.
     assert results == []
+
+
+def test_claim_lock_reclaims_stale_pid(temp_store):
+    """A lockfile left by a dead PID is removed and reclaimed."""
+    lock = temp_store.data_dir / ".ingest.lock"
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    # PID 0 is treated as invalid/dead by _read_lock_pid/_lock_holder_alive.
+    lock.write_text("0")
+
+    assert project_fallback.claim_ingest_lock(temp_store) is True
+    assert lock.read_text().strip() == str(os.getpid())
+
+    project_fallback.release_ingest_lock(temp_store)
+    assert not lock.exists()
+
+
+def test_claim_lock_atomic_create_loses_race(temp_store):
+    """If another process creates the lockfile between the exists() check and
+    the create, O_CREAT|O_EXCL must lose cleanly instead of overwriting."""
+    lock = temp_store.data_dir / ".ingest.lock"
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    other_pid = os.getppid()
+    lock.write_text(str(other_pid))
+
+    # Force the pre-check to say "no lockfile" so claim falls through to the
+    # atomic create against a file that actually exists — simulating the race.
+    with patch.object(Path, "exists", return_value=False):
+        assert project_fallback.claim_ingest_lock(temp_store) is False
+
+    # The racing winner's PID must be untouched.
+    assert lock.read_text().strip() == str(other_pid)
+    lock.unlink()

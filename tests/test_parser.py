@@ -301,3 +301,49 @@ def test_user_image_block_is_replaced_with_placeholder(tmp_path):
     joined = " ".join(contents)
     assert fake_base64 not in joined
     assert "base64" not in joined
+
+
+def test_non_dict_json_lines_are_skipped(tmp_path):
+    """Valid-JSON-but-non-dict lines (a bare list, string, or number) must be
+    skipped, not crash the whole session parse with AttributeError."""
+    path = tmp_path / "mixed.jsonl"
+    valid_entry = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "timestamp": "2026-04-01T10:00:00.000Z",
+        "cwd": "/tmp/x",
+        "message": {"role": "user", "content": "hello world"},
+    }
+    lines = [
+        "[1, 2, 3]",
+        '"just a string"',
+        "42",
+        json.dumps(valid_entry),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+    parser = JSONLParser(path)
+    events = list(parser.parse_events())
+    assert len(events) == 1
+    assert events[0].event_type == EventType.USER_MESSAGE
+
+
+def test_tail_parse_skips_non_dict_json_lines(tmp_path):
+    """The live-ingest tail path needs the same non-dict guard as the full parse."""
+    path = tmp_path / "mixed_tail.jsonl"
+    valid_entry = {
+        "type": "user",
+        "uuid": "u2",
+        "sessionId": "s2",
+        "timestamp": "2026-04-01T10:00:01.000Z",
+        "cwd": "/tmp/x",
+        "message": {"role": "user", "content": "tail hello"},
+    }
+    content = "[1, 2, 3]\n" + json.dumps(valid_entry) + "\n"
+    path.write_text(content)
+
+    parser = JSONLParser(path)
+    events, safe_offset = parser.parse_tail_from_offset(0)
+    assert len(events) == 1
+    assert safe_offset == len(content.encode("utf-8"))

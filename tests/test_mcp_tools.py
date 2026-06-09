@@ -736,5 +736,30 @@ def test_dispatch_unknown_tool(temp_store):
     assert mcp_server._DISPATCH.get("not-a-real-tool") is None
 
 
+def test_limit_floors_negative_values():
+    """A negative limit must clamp to 1, not flow through to SQLite LIMIT -1
+    (which means unbounded)."""
+    assert mcp_server._limit(-1, 10) == 1
+    assert mcp_server._limit(-500, 10) == 1
+    assert mcp_server._limit(0, 10) == 1
+    assert mcp_server._limit(None, 10) == 10
+    assert mcp_server._limit(999999, 10) == mcp_server.MAX_LIMIT
+
+
+def test_offset_floors_negative_values():
+    assert mcp_server._offset(-3) == 0
+    assert mcp_server._offset(None) == 0
+    assert mcp_server._offset("7") == 7
+
+
+def test_query_is_bounded_and_coerced():
+    """Semantic queries are capped before reaching the ONNX encoder."""
+    huge = "x" * (mcp_server.MAX_QUERY_CHARS * 10)
+    assert len(mcp_server._query(huge)) == mcp_server.MAX_QUERY_CHARS
+    assert mcp_server._query(None) == ""
+    assert mcp_server._query(123) == "123"
+    assert mcp_server._query("hello") == "hello"
+
+
 # ensure pytest doesn't collect the Any import as a test
 _ = pytest, Any

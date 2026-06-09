@@ -82,6 +82,7 @@ _HINT_PROJECTS = "Use a smaller `limit`, a `keyword`, or a `category` filter."
 
 MAX_LIMIT = 1000
 MAX_OUTPUT_CHARS = 200000
+MAX_QUERY_CHARS = 2000
 
 
 # All tools except `reconcile` are pure read-over-local-storage:
@@ -151,8 +152,27 @@ def _int(value: Any, default: int) -> int:
 
 
 def _limit(value: Any, default: int) -> int:
-    """Coerce to int and cap at MAX_LIMIT to prevent OOM on huge result sets."""
-    return min(_int(value, default), MAX_LIMIT)
+    """Coerce to int and clamp to [1, MAX_LIMIT].
+
+    The floor matters: a negative value would otherwise pass straight
+    through min() and become SQLite's LIMIT -1, i.e. unbounded.
+    """
+    return max(1, min(_int(value, default), MAX_LIMIT))
+
+
+def _offset(value: Any) -> int:
+    """Coerce to int and floor at 0 so negative offsets can't reach SQL."""
+    return max(0, _int(value, 0))
+
+
+def _query(value: Any) -> str:
+    """Coerce the semantic query to a bounded string.
+
+    Caps length before the text reaches the ChromaDB ONNX encoder so a
+    multi-megabyte query can't pin the CPU embedding it.
+    """
+    text = value if isinstance(value, str) else str(value or "")
+    return text[:MAX_QUERY_CHARS]
 
 
 def _max_chars(value: Any, default: int) -> int:
@@ -848,6 +868,7 @@ async def list_tools() -> list[Tool]:
 async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     limit = _limit(arguments.get("limit"), 10)
     max_chars = _max_chars(arguments.get("max_chars"), 12000)
+    query = _query(arguments.get("query"))
 
     # Resolve session_id prefix if provided
     search_session_id = None
@@ -866,7 +887,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     auto_scoped_to: str | None = None
     if not project_id and not project_name:
         try:
-            matches = match_projects(store, arguments.get("query", ""), top_k=1)
+            matches = match_projects(store, query, top_k=1)
             if matches and matches[0].score >= 0.8:
                 project_name = matches[0].display_name
                 auto_scoped_to = matches[0].display_name
@@ -901,7 +922,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     fetch_multiplier = 5 if has_post_filter else 1
 
     hits = store.vectors.search(
-        query=arguments["query"],
+        query=query,
         n_results=limit * fetch_multiplier,
         event_type=arguments.get("event_type"),
         session_id=search_session_id,
@@ -960,10 +981,11 @@ async def _tool_search_in_context(
     context_n = _int(arguments.get("context_events"), 5)
     limit = _limit(arguments.get("limit"), 3)
     max_chars = _max_chars(arguments.get("max_chars"), 20000)
+    query = _query(arguments.get("query"))
 
     # Semantic search scoped to this session
     hits = store.vectors.search(
-        query=arguments["query"],
+        query=query,
         n_results=limit * 3,  # fetch extra for dedup
         session_id=full_id,
         event_type=arguments.get("event_type"),
@@ -1042,7 +1064,7 @@ async def _tool_search_in_context(
 
     payload = {
         "session_id": full_id,
-        "query": arguments["query"],
+        "query": query,
         "total_matches": len(hits),
         "showing": len(all_match_ids),
         "context_windows": results,
@@ -1098,7 +1120,7 @@ async def _tool_get_session_timeline(
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
     tail = _limit(arguments.get("tail"), 0)
-    offset = _int(arguments.get("offset"), 0)
+    offset = _offset(arguments.get("offset"))
     limit = _limit(arguments.get("limit"), 100)
     max_chars = _max_chars(arguments.get("max_chars"), 16000)
     include_thinking = _bool(arguments.get("include_thinking"), True)
@@ -1255,7 +1277,7 @@ async def _tool_recall(
 ) -> list[TextContent]:
     result = recall_pipeline(
         store=store,
-        query=arguments["query"],
+        query=_query(arguments.get("query")),
         max_episodes=_limit(arguments.get("max_episodes"), 5),
     )
     payload = {
@@ -1361,7 +1383,7 @@ async def _tool_match_project(
 ) -> list[TextContent]:
     matches = match_projects(
         store=store,
-        query=arguments["query"],
+        query=_query(arguments.get("query")),
         top_k=_limit(arguments.get("top_k"), 5),
     )
     payload = [
@@ -1461,7 +1483,7 @@ async def _tool_find_commits(
     if arguments.get("session_id"):
         search_session_id = _resolve_prefix(store, arguments["session_id"])
     ops = store.sqlite.search_git_operations(
-        query=arguments["query"],
+        query=_query(arguments.get("query")),
         session_id=search_session_id,
         operation_type=arguments.get("operation_type"),
         limit=_limit(arguments.get("limit"), 20),
