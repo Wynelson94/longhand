@@ -9,6 +9,29 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.10.0] — 2026-06-09
+
+Feature release: opt-in secret redaction, plus recall-quality and toolchain hardening.
+
+### Added
+
+- **Secret redaction at ingest (opt-in).** `longhand config --set redact.enabled=true` masks secret-shaped strings — Anthropic/OpenAI/AWS/GitHub/Google/Slack/Stripe keys, SSH key headers, JWTs, database URLs with passwords, SSNs, and Luhn-validated card numbers — at parse time, before they reach SQLite, the raw JSON blobs, or the vector index. Masks keep only the first/last 4 characters and the length (`sk-a…wxyz (len=50)`). Default is off: Longhand stays forensic unless you opt in. (#26)
+- **`longhand redact`** — retroactive scan of an existing store. Reports pattern names and counts only (never the matched values); `--apply` masks matches in place across events, episodes, segments, and outcomes, and re-embeds changed vector documents. (#26)
+
+### Fixed
+
+- **Benign noise no longer counts as errors.** The error detector now skips known-noise lines — Next.js streaming-SSR `data-dgst`/`<!--$!-->` markers, "0 failing"/"Tests: 0 failed" summaries, empty `error:` fields, `Error: Task not found` tool churn, and missing-GNU-`timeout` probes — while continuing to scan, so real errors in the same output still register. This was the main inflator of the unresolved-episode rate. Run `longhand analyze --all` to re-extract episodes with the cleaner detector. (#25)
+
+### Security
+
+- chromadb is now capped `<1.0` for **all** Python versions (previously unbounded below 3.14) — a chromadb 1.x release can no longer break fresh installs. (#25)
+
+### Internal
+
+- mypy is clean (21 → 0 errors) and the CI typecheck job is now blocking. (#25)
+- `ruff format` adopted repo-wide and gated in CI. (#24)
+- 311 tests (280 → 311). The May 2026 audit report is archived under `docs/audits/`. (#24–#26)
+
 ## [0.9.4] — 2026-06-09
 
 Hardening release: closes the six findings left open after the v0.9.3 security audit (AUDIT-2026-05-28). No new features, no API changes.
