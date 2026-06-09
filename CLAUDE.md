@@ -46,3 +46,7 @@ When a user asks about past work:
 - `search` and `search_in_context` accept: `session_id`, `event_type`, `tool_name`, `file_path_contains`, `project_name`
 - Always use the most specific filter available to reduce noise
 - `session_id` supports prefix matching (first 8 chars is usually enough)
+
+## Deeper Tools (less common starting points)
+
+Beyond the decision tree above: `get_latest_events` (last N events, reverse-chron), `find_episodes`/`get_episode` (structured episode queries when you already know project/time bounds), `get_session_commits` (commits within one session), `match_project` (fuzzy project-name confirmation with reasons), `list_projects`/`list_plans` (browse), `get_stats` (store health), `reconcile` (re-ingest drift, `fix=true`). Valid tools — just rarely the right first call.
