@@ -592,6 +592,7 @@ class JSONLParser:
             cwd=None,
             git_branch=None,
             is_sidechain=False,
+            model=None,
             raw=entry,
         )
 

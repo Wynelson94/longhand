@@ -43,3 +43,7 @@ credentials.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Local working docs (not for the public repo)
+outreach/
+plans/
