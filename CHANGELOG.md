@@ -9,6 +9,22 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.11.0] — 2026-06-09
+
+UX release: the CLI gets organized, the stats get honest, and first-run gets smarter. No breaking changes — every existing command and flag still works.
+
+### Changed
+
+- **`longhand --help` is now grouped.** Commands render in six panels — Recall, Archaeology, Browse & insights, Data, Setup & health, Plumbing — instead of a 40-command alphabetical list. (#28)
+- **Plumbing commands are hidden** (still fully callable, exact names unchanged): `ingest-session`, `ingest-live`, `context`, `backfill-episodes`, `mcp-server`. These are hook/desktop-config entry points, not user commands. (#28)
+- **`analyze --all` now also rebuilds episode embeddings**, absorbing what `reanalyze` did. `reanalyze` remains as a hidden deprecated alias that warns and delegates — it will be removed in v1.0. (#28)
+- **Honest episode stats.** `longhand stats` and the `get_stats` MCP tool now split out `low_confidence_episodes` (fixless extractions below 0.5 confidence — probes and tool churn, not real problems) and report `resolved_rate_pct` over substantive episodes only. Your resolved rate was never as bad as the old denominator made it look. (#28)
+- **First-run output teaches with your own data.** `setup` ends with an indexed-summary line (sessions · projects · episodes) and suggests `longhand status "<your top project>"` instead of a placeholder. (#28)
+
+### Deprecated
+
+- `longhand reanalyze` → use `longhand analyze --all`. Alias removed in v1.0.
+
 ## [0.10.0] — 2026-06-09
 
 Feature release: opt-in secret redaction, plus recall-quality and toolchain hardening.
