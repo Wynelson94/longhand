@@ -14,7 +14,7 @@
 
 > **Claude Code quietly rotates your session files after a few weeks.** Longhand captures them into SQLite before they're gone. Once ingested, your history stays forever — even after the source JSONL files are deleted. Install early; the past you don't capture is unrecoverable.
 
-> **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can find any fix, decision, or conversation you've had in ~126ms — without a single API call.**
+> **If you have 20+ Claude Code sessions in `~/.claude/projects/`, Longhand can search across every fix, decision, and conversation you've had in ~56ms — without a single API call.**
 
 > **Does it use a lot of tokens? No — every tool is capped by design.** A full `recall` across 100+ sessions returns ~4K tokens. Reading one raw session JSONL costs 10–50× more. See [Token budget](#token-budget).
 
@@ -67,7 +67,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.11.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 131+ real Claude Code sessions across 40+ inferred projects. 316 unit tests passing.*
+> *Status: v0.11.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 246 real Claude Code sessions across 54 inferred projects. 316 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -86,7 +86,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 | **Where it lives**   | Rented from a model provider                 | A SQLite file + ChromaDB on your laptop |
 | **Cost per query**   | Tokens × dollars                             | Zero                              |
 | **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
-| **Speed**            | Seconds to minutes for large contexts        | ~126ms                            |
+| **Speed**            | Seconds to minutes for large contexts        | ~56ms search · ~1.4s full recall  |
 | **Loss**             | Attention degrades in the middle of long contexts | Every event from the source file, nothing dropped |
 | **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |
 | **Across model versions** | Doesn't transfer                        | Same data, any model              |
@@ -97,7 +97,7 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Local. Complete. Yours.**
 
-> **Storage footprint:** ~1GB for a heavy power user (120+ sessions, 60k events, months of daily Opus usage across 14 repos). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
+> **Storage footprint:** ~2GB for a heavy power user (240+ sessions, 125k events, months of daily Opus usage across 14 repos). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
 
 ---
 
@@ -422,7 +422,7 @@ longhand/
 
 **Analysis layer:** Runs at ingest time, not query time. Pre-computes projects, session outcomes, and episodes so recall queries are fast. Fully deterministic, no LLM.
 
-**Recall pipeline:** `query → time parse → project match → episode search → rank → load artifacts → narrative`. Target latency under 200ms on a warm database.
+**Recall pipeline:** `query → time parse → project match → episode search → rank → load artifacts → narrative`. A single vector search is ~56ms; full recall runs ~7 of them (events, projects, episodes, segments, plus relaxation retries) and then loads artifacts and composes the narrative — landing around ~1.4s on a warm 246-session corpus.
 
 ---
 
@@ -449,19 +449,20 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 ## Stats
 
 Tested end-to-end on a real Claude Code history:
-- 107 unique sessions
-- 53,668 events
-- 19,252 tool calls
-- 3,200 file edits
+- 246 unique sessions
+- 125,745 events
+- 40,937 tool calls
+- 8,333 file edits
 - 224 thinking blocks
-- 37 projects inferred automatically
-- 376 problem→fix episodes extracted (76 resolved)
-- 299 conversation segments (design, story, debugging, discussion, planning)
-- 665 git operations extracted (22 commits linked)
-- 49,637 vectors indexed
-- Vector search: ~126ms
-- SQL queries: <30ms
-- Storage footprint: ~1.3MB per session file (SQLite + Chroma combined)
+- 54 projects inferred automatically
+- 905 problem→fix episodes extracted (303 resolved)
+- 4,090 conversation segments (design, story, debugging, discussion, planning)
+- 1,561 git operations extracted (90 commits linked)
+- 77,711 vectors indexed
+- Vector search: ~56ms median (p90 ~62ms)
+- SQL queries (`get_events`): ~2ms median (p90 ~13ms)
+- Full recall pipeline: ~1.4s median, warm (~7 vector queries + artifact load + narrative)
+- Storage footprint: 2.0 GB total (1.4 GB SQLite + 618 MB ChromaDB) across 246 sessions — ~8 MB per session
 
 ---
 
