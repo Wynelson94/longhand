@@ -150,14 +150,14 @@ def match_projects(
                 scored[pid].score += semantic_score
                 scored[pid].reasons.append(f"semantic: {semantic_score:.2f}")
             else:
-                proj = store.sqlite.get_project(pid)
-                if proj:
-                    recency = _recency_boost(proj["last_seen"], now)
+                proj_row = store.sqlite.get_project(pid)
+                if proj_row:
+                    recency = _recency_boost(proj_row["last_seen"], now)
                     scored[pid] = ProjectMatch(
                         project_id=pid,
-                        display_name=proj["display_name"],
-                        category=proj.get("category"),
-                        canonical_path=proj["canonical_path"],
+                        display_name=proj_row["display_name"],
+                        category=proj_row.get("category"),
+                        canonical_path=proj_row["canonical_path"],
                         score=semantic_score * recency,
                         reasons=[f"semantic: {semantic_score:.2f}", f"recency: {recency:.2f}"],
                     )

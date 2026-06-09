@@ -27,6 +27,11 @@ MAX_EMBED_CHARS = 2000
 CHROMA_BATCH_SIZE = 500
 
 
+def _first_batch(rows: Any) -> list[Any]:
+    """Unwrap Chroma's per-query result lists, which may be None or empty."""
+    return rows[0] if rows else []
+
+
 class VectorStore:
     """ChromaDB wrapper for semantic search over Longhand events."""
 
@@ -81,7 +86,7 @@ class VectorStore:
 
         ids: list[str] = []
         documents: list[str] = []
-        metadatas: list[dict[str, Any]] = []
+        metadatas: list[Any] = []
 
         for e in events:
             if not e.content or not e.content.strip():
@@ -158,10 +163,10 @@ class VectorStore:
             # Empty collection or query failure — return no results gracefully
             return []
 
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
+        ids = _first_batch(results.get("ids"))
+        documents = _first_batch(results.get("documents"))
+        metadatas = _first_batch(results.get("metadatas"))
+        distances = _first_batch(results.get("distances"))
 
         hits: list[dict[str, Any]] = []
         for i, event_id in enumerate(ids):
@@ -236,10 +241,10 @@ class VectorStore:
         except Exception:
             return []
 
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
+        ids = _first_batch(results.get("ids"))
+        documents = _first_batch(results.get("documents"))
+        metadatas = _first_batch(results.get("metadatas"))
+        distances = _first_batch(results.get("distances"))
 
         hits: list[dict[str, Any]] = []
         for i, sid in enumerate(ids):
@@ -277,7 +282,7 @@ class VectorStore:
         category: str | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic search over project descriptions."""
-        where = {"category": category} if category else None
+        where: dict[str, Any] | None = {"category": category} if category else None
 
         try:
             results = self.projects_collection.query(
@@ -288,10 +293,10 @@ class VectorStore:
         except Exception:
             return []
 
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
+        ids = _first_batch(results.get("ids"))
+        documents = _first_batch(results.get("documents"))
+        metadatas = _first_batch(results.get("metadatas"))
+        distances = _first_batch(results.get("distances"))
 
         hits: list[dict[str, Any]] = []
         for i, pid in enumerate(ids):
@@ -335,7 +340,7 @@ class VectorStore:
 
         ids: list[str] = []
         documents: list[str] = []
-        metadatas: list[dict[str, Any]] = []
+        metadatas: list[Any] = []
         for item in items:
             text = item.get("text") or ""
             if not text.strip():
@@ -392,10 +397,10 @@ class VectorStore:
         except Exception:
             return []
 
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
+        ids = _first_batch(results.get("ids"))
+        documents = _first_batch(results.get("documents"))
+        metadatas = _first_batch(results.get("metadatas"))
+        distances = _first_batch(results.get("distances"))
 
         hits: list[dict[str, Any]] = []
         for i, sid in enumerate(ids):
@@ -446,7 +451,7 @@ class VectorStore:
 
         ids: list[str] = []
         documents: list[str] = []
-        metadatas: list[dict[str, Any]] = []
+        metadatas: list[Any] = []
         for item in items:
             text = item.get("text") or ""
             if not text.strip():
@@ -503,10 +508,10 @@ class VectorStore:
         except Exception:
             return []
 
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
+        ids = _first_batch(results.get("ids"))
+        documents = _first_batch(results.get("documents"))
+        metadatas = _first_batch(results.get("metadatas"))
+        distances = _first_batch(results.get("distances"))
 
         hits: list[dict[str, Any]] = []
         for i, eid in enumerate(ids):

@@ -109,6 +109,28 @@ _PATTERNS: list[tuple[re.Pattern[str], Severity, Category, str]] = [
     (re.compile(r"ENOENT|EACCES|EPERM"), "error", "bash", "bash_errno"),
 ]
 
+# Lines that match an error pattern above but are known benign noise.
+# Checked against the matched LINE, not the whole output — a benign hit
+# skips that one match and keeps scanning, so a real error later in the
+# same output still registers.
+_BENIGN_LINE_PATTERNS: list[re.Pattern[str]] = [
+    # Next.js streaming-SSR / hydration artifacts from dynamic({ssr:false})
+    re.compile(r"<!--\s*/?\$!?\s*-->"),
+    re.compile(r"data-dgst="),
+    # Zero-count test summaries ("0 failing", "Tests: 0 failed")
+    re.compile(r"\b0 (?:failing|failed)\b", re.IGNORECASE),
+    # Structured payloads reporting an empty/absent error field
+    re.compile(r"[\"']?error[\"']?\s*:\s*(?:null|none|\[\]|\{\}|[\"']{2})\s*,?\s*$", re.IGNORECASE),
+    # Claude Code Task/TodoWrite tool churn — not a user-code error
+    re.compile(r"^Error: Task .* not found|^Error: Task not found", re.IGNORECASE),
+    # macOS lacks GNU timeout; harness probes for it constantly
+    re.compile(r"command not found: timeout\b|timeout: command not found", re.IGNORECASE),
+]
+
+
+def _is_benign_line(line: str) -> bool:
+    return any(p.search(line) for p in _BENIGN_LINE_PATTERNS)
+
 
 def detect_error(content: str | None) -> ErrorSignal | None:
     """Detect if a tool_result content string indicates an error.
@@ -124,14 +146,15 @@ def detect_error(content: str | None) -> ErrorSignal | None:
 
     # Scan against patterns in priority order
     for pattern, severity, category, name in _PATTERNS:
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
             # Extract the line containing the match
             start = text.rfind("\n", 0, match.start()) + 1
             end = text.find("\n", match.end())
             if end == -1:
                 end = len(text)
             snippet = text[start:end].strip()
+            if _is_benign_line(snippet):
+                continue
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
             return ErrorSignal(

@@ -63,7 +63,7 @@ jobs:
         run: python scripts/check_version_sync.py
 
   typecheck:
-    name: mypy (non-blocking)
+    name: mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -76,7 +76,4 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Run mypy
-        # Type debt (see AUDIT) is paid down incrementally — surfaced here, not
-        # gated, so the job stays green. Remove continue-on-error once clean.
-        continue-on-error: true
         run: mypy longhand

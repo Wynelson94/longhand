@@ -143,3 +143,52 @@ def test_extract_extensions():
     assert "ts" in exts
     assert "tsx" in exts
     assert "toml" in exts
+
+
+def test_benign_nextjs_streaming_markers_not_errors():
+    """Next.js dynamic({ssr:false}) streaming-SSR artifacts are benign noise,
+    not real errors — they were inflating the unresolved-rate stat."""
+    assert detect_error('<!--$!--><template data-dgst="BAILOUT_TO_CSR"></template>') is None
+    assert detect_error("<!--/$!-->") is None
+    assert detect_error('Error: <template data-dgst="x9"> hydration marker') is None
+
+
+def test_benign_zero_count_test_summaries_not_errors():
+    assert detect_error("  0 failing") is None
+    assert detect_error("Tests: 0 failed, 12 passed") is None
+
+
+def test_benign_empty_error_fields_not_errors():
+    assert detect_error("error: null") is None
+    assert detect_error('"error": ""') is None
+
+
+def test_real_error_still_detected_past_benign_noise():
+    """A benign line must be skipped, not end the scan — real errors after it
+    still register."""
+    content = '<!--$!--><template data-dgst="x"></template>\nError: connection refused'
+    sig = detect_error(content)
+    assert sig is not None
+    assert "connection refused" in sig.snippet
+
+
+def test_nonzero_test_summary_still_detected():
+    sig = detect_error("Tests: 3 failed, 9 passed")
+    assert sig is not None
+    assert sig.pattern == "test_summary_fail"
+
+
+def test_benign_task_tool_churn_not_error():
+    assert detect_error("Error: Task not found") is None
+    assert detect_error('Error: Task "3" not found') is None
+
+
+def test_benign_missing_timeout_binary_not_error():
+    assert detect_error("(eval):1: command not found: timeout") is None
+    assert detect_error("bash: timeout: command not found") is None
+
+
+def test_other_command_not_found_still_detected():
+    sig = detect_error("(eval):1: command not found: python")
+    assert sig is not None
+    assert sig.pattern == "bash_common"
