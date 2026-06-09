@@ -9,6 +9,7 @@ for search (event_id, truncated content, filter metadata).
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +192,52 @@ class VectorStore:
 
     def count(self) -> int:
         return self.events_collection.count()
+
+    def redact_documents(self, redactor: Callable[[str], tuple[str, int]]) -> int:
+        """Apply a text redactor to every stored document, re-embedding changed ones.
+
+        Used by `longhand redact --apply` to retroactively mask secrets in
+        documents embedded before redaction was enabled. Returns the number
+        of documents updated. The redactor must never log raw values.
+        """
+        changed = 0
+        collections = (
+            self.events_collection,
+            self.sessions_collection,
+            self.projects_collection,
+            self.segments_collection,
+            self.episodes_collection,
+        )
+        for collection in collections:
+            try:
+                total = collection.count()
+            except Exception:
+                continue
+            offset = 0
+            while offset < total:
+                batch = collection.get(
+                    limit=CHROMA_BATCH_SIZE,
+                    offset=offset,
+                    # Chroma accepts plain strings at runtime; the stubs in
+                    # some versions want IncludeEnum, which 0.5.x lacks.
+                    include=["documents"],  # type: ignore[list-item]
+                )
+                ids = batch.get("ids") or []
+                docs = batch.get("documents") or []
+                upd_ids: list[str] = []
+                upd_docs: list[str] = []
+                for doc_id, doc in zip(ids, docs, strict=False):
+                    if not doc:
+                        continue
+                    new_doc, n = redactor(doc)
+                    if n:
+                        upd_ids.append(doc_id)
+                        upd_docs.append(new_doc)
+                if upd_ids:
+                    collection.update(ids=upd_ids, documents=upd_docs)
+                    changed += len(upd_ids)
+                offset += CHROMA_BATCH_SIZE
+        return changed
 
     # ─── Sessions collection (v0.2 proactive memory) ───────────────────────
 
