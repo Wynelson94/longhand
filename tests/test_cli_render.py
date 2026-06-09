@@ -179,11 +179,23 @@ def test_config_set_then_show(runner: CliRunner, tmp_path: Path, monkeypatch):
     assert "hook.min_relevance" in plain(show_result.stdout)
 
 
-def test_config_rejects_non_hook_key(runner: CliRunner, tmp_path: Path, monkeypatch):
+def test_config_rejects_unknown_namespace(runner: CliRunner, tmp_path: Path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     result = runner.invoke(app, ["config", "--set", "bogus.key=1"])
     assert result.exit_code == 0
-    assert "Only hook.* keys" in plain(result.stdout)
+    assert "Only hook.* and redact.* keys" in plain(result.stdout)
+
+
+def test_config_accepts_redact_namespace(runner: CliRunner, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = runner.invoke(app, ["config", "--set", "redact.enabled=true"])
+    assert result.exit_code == 0
+    assert "Set redact.enabled = True" in plain(result.stdout)
+
+    import json as _json
+
+    saved = _json.loads((tmp_path / ".longhand" / "config.json").read_text())
+    assert saved["redact"]["enabled"] is True
 
 
 # ─── doctor ───────────────────────────────────────────────────────────────────

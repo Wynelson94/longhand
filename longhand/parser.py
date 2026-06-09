@@ -17,6 +17,7 @@ from typing import Any
 
 from longhand.extractors.errors import detect_error
 from longhand.extractors.git import extract_git_signal
+from longhand.redaction import redact_event, redaction_enabled
 from longhand.types import Event, EventType, FileOperation, Session
 
 # Hard limits — keep the parser bounded so a malicious or corrupted JSONL
@@ -213,6 +214,10 @@ class JSONLParser:
         # error detection and git extraction on tool_result events.
         self._tool_name_by_id: dict[str, str] = {}
         self._tool_input_by_id: dict[str, dict[str, Any]] = {}
+        # Opt-in secret masking, resolved once per parser so every event in
+        # the file sees the same setting (covers full, tail, and re-ingest
+        # paths — they all construct events through this class).
+        self._redact = redaction_enabled()
 
     def parse_events(self) -> Iterator[Event]:
         """Yield Event objects from the session file, in file order.
@@ -242,6 +247,8 @@ class JSONLParser:
                     continue
 
                 for event in self._entry_to_events(entry, sequence):
+                    if self._redact:
+                        redact_event(event)
                     base_id = event.event_id
                     if base_id in seen_ids:
                         seen_ids[base_id] += 1
@@ -320,6 +327,8 @@ class JSONLParser:
                 continue
 
             for event in self._entry_to_events(entry, sequence):
+                if self._redact:
+                    redact_event(event)
                 base_id = event.event_id
                 if base_id in seen_ids:
                     seen_ids[base_id] += 1

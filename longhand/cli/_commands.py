@@ -1085,13 +1085,14 @@ def config(
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
-    """View or edit Longhand hook configuration.
+    """View or edit Longhand configuration.
 
-    Config lives at ~/.longhand/config.json. Controls prompt hook behavior:
+    Config lives at ~/.longhand/config.json. Supported keys:
     - hook.min_relevance: minimum score to inject context (default 2.5, higher = less noise)
     - hook.max_inject_chars: max characters injected per prompt (default 2000)
     - hook.max_episodes: max episodes to consider (default 2)
     - hook.enabled: true/false to enable/disable without uninstalling
+    - redact.enabled: true/false — mask secret-shaped strings at ingest (default false)
     """
     import json as _json
 
@@ -1104,9 +1105,10 @@ def config(
             return
         key_path, value_str = set_key.split("=", 1)
         parts = key_path.split(".")
-        if len(parts) != 2 or parts[0] != "hook":
+        if len(parts) != 2 or parts[0] not in ("hook", "redact"):
             console.print(
-                "[red]Only hook.* keys are supported. E.g. --set hook.min_relevance=3.0[/red]"
+                "[red]Only hook.* and redact.* keys are supported. "
+                "E.g. --set hook.min_relevance=3.0 or --set redact.enabled=true[/red]"
             )
             return
 
@@ -1118,24 +1120,24 @@ def config(
             except Exception:
                 current = {}
 
-        if "hook" not in current:
-            current["hook"] = {}
+        namespace, key = parts
+        if namespace not in current:
+            current[namespace] = {}
 
         # Parse value type
-        key = parts[1]
         if value_str.lower() in ("true", "false"):
-            current["hook"][key] = value_str.lower() == "true"
+            current[namespace][key] = value_str.lower() == "true"
         else:
             try:
-                current["hook"][key] = float(value_str)
-                if current["hook"][key] == int(current["hook"][key]):
-                    current["hook"][key] = int(current["hook"][key])
+                current[namespace][key] = float(value_str)
+                if current[namespace][key] == int(current[namespace][key]):
+                    current[namespace][key] = int(current[namespace][key])
             except ValueError:
-                current["hook"][key] = value_str
+                current[namespace][key] = value_str
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(_json.dumps(current, indent=2) + "\n")
-        console.print(f"[green]Set {key_path} = {current['hook'][key]}[/green]")
+        console.print(f"[green]Set {key_path} = {current[namespace][key]}[/green]")
         return
 
     # Show current config
@@ -1158,9 +1160,132 @@ def config(
     for k, v in hook.items():
         table.add_row(f"hook.{k}", str(v), descriptions.get(k, ""))
 
+    from longhand.redaction import redaction_enabled
+
+    table.add_row(
+        "redact.enabled",
+        str(redaction_enabled()),
+        "Mask secret-shaped strings (API keys, tokens) at ingest",
+    )
+
     console.print(table)
     console.print(f"\n[dim]Config file: {config_path}[/dim]")
     console.print("[dim]Edit with: longhand config --set hook.min_relevance=3.0[/dim]")
+
+
+# -----------------------------------------------------------------------------
+# REDACT — scan/mask secret-shaped strings in already-ingested data
+# -----------------------------------------------------------------------------
+
+
+# Tables and text columns scanned/redacted by `longhand redact`.
+_REDACT_TABLES: dict[str, tuple[str, list[str]]] = {
+    "events": (
+        "event_id",
+        [
+            "content",
+            "tool_input_json",
+            "tool_output",
+            "old_content",
+            "new_content",
+            "error_snippet",
+            "raw_json",
+        ],
+    ),
+    "episodes": ("episode_id", ["problem_description", "diagnosis_summary", "fix_summary"]),
+    "segments": ("segment_id", ["summary", "keywords_json"]),
+    "session_outcomes": ("session_id", ["summary", "topics_json"]),
+}
+
+
+@app.command()
+def redact(
+    apply: bool = typer.Option(
+        False, "--apply", help="Mask matches in place (irreversible). Default: scan-only report."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt with --apply"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Scan the local store for secret-shaped strings; optionally mask them.
+
+    Covers data ingested BEFORE `redact.enabled` was turned on. Scan mode
+    reports pattern names and counts only — never the matched values. With
+    --apply, matches are masked in SQLite and changed vector documents are
+    re-embedded.
+    """
+    from longhand.redaction import redact_text, scan_text
+
+    store = _get_store(data_dir)
+
+    if apply and not yes:
+        confirmed = typer.confirm(
+            "Masking is irreversible (originals are NOT kept). Continue?", default=False
+        )
+        if not confirmed:
+            console.print("[yellow]Aborted — nothing changed.[/yellow]")
+            return
+
+    pattern_counts: dict[str, int] = {}
+    rows_touched: dict[str, int] = {}
+
+    with store.sqlite.connect() as conn:
+        for table, (pk, columns) in _REDACT_TABLES.items():
+            try:
+                rows = conn.execute(f"SELECT {pk}, {', '.join(columns)} FROM {table}").fetchall()  # noqa: S608 — identifiers are from the hardcoded _REDACT_TABLES map
+            except Exception:
+                continue  # table may not exist on older schemas
+            touched = 0
+            for row in rows:
+                updates: dict[str, str] = {}
+                row_matched = False
+                for col in columns:
+                    val = row[col]
+                    if not val:
+                        continue
+                    found = scan_text(val)
+                    if not found:
+                        continue
+                    row_matched = True
+                    for name, n in found.items():
+                        pattern_counts[name] = pattern_counts.get(name, 0) + n
+                    if apply:
+                        new_val, _ = redact_text(val)
+                        updates[col] = new_val
+                if updates:
+                    set_clause = ", ".join(f"{c} = ?" for c in updates)
+                    conn.execute(
+                        f"UPDATE {table} SET {set_clause} WHERE {pk} = ?",  # noqa: S608
+                        (*updates.values(), row[pk]),
+                    )
+                if row_matched:
+                    touched += 1
+            if touched:
+                rows_touched[table] = touched
+
+    if not pattern_counts:
+        console.print("[green]No secret-shaped strings found. Store is clean.[/green]")
+        return
+
+    table_out = Table(
+        title="Secrets masked" if apply else "Secrets found (scan only — nothing changed)"
+    )
+    table_out.add_column("Pattern", style="cyan")
+    table_out.add_column("Matches", style="yellow", justify="right")
+    for name in sorted(pattern_counts):
+        table_out.add_row(name, str(pattern_counts[name]))
+    console.print(table_out)
+    for tbl, n in rows_touched.items():
+        console.print(f"[dim]{tbl}: {n} row(s) affected[/dim]")
+
+    if apply:
+        embedded = store.vectors.redact_documents(redact_text)
+        console.print(f"[green]Re-embedded {embedded} vector document(s).[/green]")
+        console.print("[green]Done. Matched values were masked in place.[/green]")
+    else:
+        console.print(
+            "\n[dim]Run `longhand redact --apply` to mask these, and "
+            "`longhand config --set redact.enabled=true` to mask future ingests.[/dim]"
+        )
 
 
 # -----------------------------------------------------------------------------
