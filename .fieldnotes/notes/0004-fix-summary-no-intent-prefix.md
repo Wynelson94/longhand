@@ -2,11 +2,13 @@
 confidence: high
 id: '0004'
 references:
-- lines:
-  - 405
-  - 458
+- advisory: false
+  lines:
+  - 406
+  - 459
   path: longhand/analysis/episode_extraction.py
-  sha: 5aeb69c605a667efd9e4f06908442492706cd629e097bd226af88a67e5101a30
+  pinned_at: '2026-06-11T17:58:33.908312Z'
+  sha: 5a6d3255796d264515fe0583df4722723184bc87006293d8943dab92a5333162
   symbol: _compose_fix_summary
 session_id: null
 superseded_by: null

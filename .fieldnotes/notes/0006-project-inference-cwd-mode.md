@@ -2,11 +2,13 @@
 confidence: high
 id: '0006'
 references:
-- lines:
-  - 501
-  - 563
+- advisory: false
+  lines:
+  - 617
+  - 683
   path: longhand/parser.py
-  sha: a008ae34c0665ddbf558fc103344028e53430f9ceb8f8b14263dd7c8d1621e23
+  pinned_at: '2026-06-11T17:58:33.908597Z'
+  sha: b8b583658f110c8b62314e57d7b127ca88b40e9631bd32f96644a589055f18e2
   symbol: JSONLParser.build_session
 session_id: null
 superseded_by: null
