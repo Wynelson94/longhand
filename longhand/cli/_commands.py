@@ -983,6 +983,27 @@ def analyze(
         console.print(f"[green]✓[/green] Embedded {embedded} episode(s).")
 
 
+@app.command(rich_help_panel="Data")
+def reattribute(
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Repair project misattribution.
+
+    Re-derives each session's project from its events in the database (not the
+    transcript file, which may have been rotated away) and re-attaches it. Fixes
+    sessions that drifted to the wrong project — e.g. work filed under the home
+    catch-all because cwd and project_id desynced. Idempotent.
+    """
+    store = _get_store(data_dir)
+    console.print("[cyan]Re-attributing sessions from the events table...[/cyan]")
+    result = store.reattribute_sessions()
+    console.print(
+        f"[bold]Scanned {result['scanned']}[/bold] sessions, "
+        f"[bold]{result['reattributed']}[/bold] re-attributed "
+        f"([dim]{result['skipped']} skipped — no events[/dim])"
+    )
+
+
 def _deprecated(old: str, new: str) -> None:
     """Print a deprecation warning for an aliased command.
 
