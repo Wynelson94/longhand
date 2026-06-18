@@ -158,6 +158,14 @@ MIGRATIONS: dict[int, str] = {
     WHERE file_path LIKE '%/.claude/plans/%.md'
       AND file_operation IN ('write', 'edit', 'multi_edit');
     """,
+    6: """
+    -- v6: repair inflated projects.session_count / total_edits.
+    -- upsert_project() previously incremented both columns on every (re-)ingest
+    -- of a session, so they counted ingest events rather than distinct sessions
+    -- (e.g. the home-dir project showed 2,068 "sessions" against 264 real ones).
+    -- The recompute UPDATE runs in _apply_alters with table-existence guards,
+    -- since migrations may be applied before the base schema in standalone paths.
+    """,
 }
 
 
@@ -200,6 +208,24 @@ def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
                 "ALTER TABLE ingestion_log ADD COLUMN last_offset INTEGER NOT NULL DEFAULT 0"
             )
             conn.execute("UPDATE ingestion_log SET last_offset = file_size WHERE last_offset = 0")
+    if version == 6:
+        # One-time backfill: recompute the project rollups from the authoritative
+        # sessions table. Guarded on table existence because migrations may run
+        # before the base schema in standalone test paths.
+        if _table_exists(conn, "projects") and _table_exists(conn, "sessions"):
+            conn.execute(
+                """
+                UPDATE projects
+                SET session_count = (
+                        SELECT COUNT(*) FROM sessions
+                        WHERE sessions.project_id = projects.project_id
+                    ),
+                    total_edits = (
+                        SELECT COALESCE(SUM(file_edit_count), 0) FROM sessions
+                        WHERE sessions.project_id = projects.project_id
+                    )
+                """
+            )
 
 
 def _ensure_version_table(conn: sqlite3.Connection) -> None:

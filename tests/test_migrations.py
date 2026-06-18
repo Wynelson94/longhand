@@ -98,7 +98,11 @@ def test_new_crud_roundtrip(tmp_path: Path):
     assert "cosmic" in json.loads(p2["aliases_json"])
     assert "cosmic-defender" in json.loads(p2["aliases_json"])
     assert "webgl" in json.loads(p2["keywords_json"])
-    assert p2["session_count"] == 2
+    # upsert_project no longer increments session_count per call — the count is
+    # recomputed from the sessions table (recompute_project_stats). With no
+    # sessions attached to this project, it stays 0 no matter how many times the
+    # project metadata is upserted.
+    assert p2["session_count"] == 0
 
     # Outcomes
     store.upsert_outcome(
@@ -232,3 +236,85 @@ def test_migration_v4_strips_intent_prefix_from_fix_summary(tmp_path: Path):
     assert dirty2["fix_summary"].startswith("Let me fix")
     assert not dirty2["fix_summary"].startswith("Intent:")
     assert clean["fix_summary"].startswith("I'll fix")
+
+
+def _insert_session(conn, session_id: str, project_id: str | None, file_edits: int) -> None:
+    """Insert a minimal sessions row for project-rollup tests."""
+    conn.execute(
+        "INSERT INTO sessions (session_id, transcript_path, started_at, ended_at, "
+        "ingested_at, file_edit_count, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            f"/tmp/{session_id}.jsonl",
+            "2026-04-01T00:00:00Z",
+            "2026-04-01T00:00:00Z",
+            "2026-04-01T00:00:00Z",
+            file_edits,
+            project_id,
+        ),
+    )
+
+
+def _make_project(store: SQLiteStore, project_id: str = "proj1") -> None:
+    store.upsert_project(
+        {
+            "project_id": project_id,
+            "canonical_path": f"/tmp/{project_id}",
+            "display_name": project_id,
+            "aliases": [],
+            "keywords": [],
+            "languages": [],
+            "category": None,
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+        }
+    )
+
+
+def test_recompute_project_stats_counts_distinct_sessions(tmp_path: Path):
+    """session_count / total_edits are recomputed from the sessions table:
+    distinct attached sessions and the SUM of their file_edit_count."""
+    store = SQLiteStore(tmp_path / "recompute.db")
+    _make_project(store)
+    _make_project(store, "other")
+    with store.connect() as conn:
+        _insert_session(conn, "s1", "proj1", file_edits=3)
+        _insert_session(conn, "s2", "proj1", file_edits=2)
+        # A session attached to a different project must not leak into proj1.
+        _insert_session(conn, "s3", "other", file_edits=10)
+        conn.commit()
+
+    store.recompute_project_stats("proj1")
+    p = store.get_project("proj1")
+    assert p["session_count"] == 2
+    assert p["total_edits"] == 5
+
+    # Idempotent — recomputing again does not change the authoritative counts.
+    store.recompute_project_stats("proj1")
+    p = store.get_project("proj1")
+    assert p["session_count"] == 2
+    assert p["total_edits"] == 5
+
+
+def test_v6_migration_repairs_inflated_project_counts(tmp_path: Path):
+    """The v6 backfill recomputes inflated session_count / total_edits from the
+    sessions table for existing databases.
+
+    Regression for the counter-inflation bug: upsert_project() incremented both
+    columns on every (re-)ingest, so they counted ingest events, not sessions.
+    """
+    store = SQLiteStore(tmp_path / "repair.db")
+    _make_project(store)
+    with store.connect() as conn:
+        _insert_session(conn, "s1", "proj1", file_edits=4)
+        _insert_session(conn, "s2", "proj1", file_edits=1)
+        # Simulate the old inflation, and pretend v6 has not run yet.
+        conn.execute("UPDATE projects SET session_count = 99, total_edits = 999")
+        conn.execute("DELETE FROM schema_version WHERE version = 6")
+        conn.commit()
+        applied = apply_migrations(conn)
+
+    assert 6 in applied
+    p = store.get_project("proj1")
+    assert p["session_count"] == 2
+    assert p["total_edits"] == 5
