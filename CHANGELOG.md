@@ -9,13 +9,25 @@ commits and tag annotations of those releases.
 
 ---
 
-## [0.11.1] — Unreleased
+## [0.11.1] — 2026-06-18
 
-Bugfix release: the per-project rollup counters were inflated. No schema-breaking
-changes; a one-time migration repairs existing databases automatically on first open.
+Bugfix release: per-project rollup counters were inflated, and sessions could be
+filed under the wrong project. No schema-breaking changes; a one-time migration
+repairs existing databases automatically on first open.
 
 ### Fixed
 
+- **Project misattribution: sessions no longer drift to the wrong project.**
+  `session.cwd` (set by the Stop-hook live tail via `MAX(cwd)`, a meaningless
+  lexicographic pick) and `project_id` (set only by the full analysis pass) were
+  written by independent paths and could desync — so work launched from `$HOME`
+  ended up filed under the home catch-all project, invisible to per-project
+  recall. On a real 265-session corpus, 35 sessions (13%) were affected. Now
+  project attribution and cwd are always derived together from the same events
+  (`attribute_session_project()`), and the live tail derives cwd the same way
+  `build_session` does instead of `MAX(cwd)`. New `longhand reattribute` command
+  re-derives every session's project from the **events table** (not the
+  transcript, which may have rotated away) to repair existing databases.
 - **`projects.session_count` and `projects.total_edits` no longer double-count.**
   `upsert_project()` incremented both columns on *every* (re-)ingest of a session
   — SessionEnd, the live-tail Stop hook's analysis path, and `reconcile`

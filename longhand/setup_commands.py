@@ -616,6 +616,45 @@ def ingest_single_session(
 # ─── Live ingest (for Stop hook) ──────────────────────────────────────────
 
 
+def _live_best_project_cwd(store: LonghandStore, session_id: str) -> str | None:
+    """Most-common event cwd for a session that resolves to a real project root
+    ($HOME and marker-less dirs excluded) — the same signal `build_session` uses.
+
+    SQL-driven and bounded so it stays cheap in the per-turn Stop hook, and never
+    raises. Returns None when no project cwd is found, in which case the caller
+    preserves the existing cwd rather than overwriting it. Replaces the old
+    `MAX(cwd)` pick, which chose a meaningless lexicographic max and drifted cwd
+    out of sync with project_id.
+    """
+    from longhand.analysis.project_inference import find_project_root_strict
+    from longhand.parser import _resolve_cwd_to_project
+
+    try:
+        with store.sqlite.connect() as conn:
+            rows = conn.execute(
+                "SELECT cwd, COUNT(*) AS n FROM events "
+                "WHERE session_id = ? AND cwd IS NOT NULL AND cwd != '' "
+                "GROUP BY cwd ORDER BY n DESC",
+                (session_id,),
+            ).fetchall()
+    except Exception:
+        return None
+
+    try:
+        home_resolved = Path.home().resolve()
+    except (OSError, PermissionError):
+        home_resolved = None
+
+    counts: dict[str, int] = {}
+    for row in rows[:20]:  # bounded, mirrors _MAX_UNIQUE_CWDS_SCANNED
+        root = _resolve_cwd_to_project(row["cwd"], home_resolved, find_project_root_strict)
+        if root:
+            counts[root] = counts.get(root, 0) + int(row["n"])
+    if not counts:
+        return None
+    return max(counts, key=lambda k: counts[k])
+
+
 def ingest_live_tail(
     transcript: str,
     data_dir: str | None = None,
@@ -756,7 +795,6 @@ def ingest_live_tail(
                              AND file_operation IN ('edit','write','multi_edit','notebook_edit')
                         THEN 1 ELSE 0 END
                     ) AS edit_count,
-                    MAX(cwd) AS cwd,
                     MAX(git_branch) AS git_branch,
                     MAX(model) AS model
                 FROM events
@@ -774,6 +812,11 @@ def ingest_live_tail(
             existing_session["started_at"] if existing_session else _dt.now().isoformat()
         )
         ended_at = agg["ended_at"] if agg and agg["ended_at"] else _dt.now().isoformat()
+
+        # Derive cwd the same way build_session does (mode of project-resolving
+        # cwds), not MAX(cwd). None → the UPSERT's COALESCE preserves the existing
+        # cwd, so an in-progress session never drifts out of sync with its project.
+        best_cwd = _live_best_project_cwd(store, session_id)
 
         with store.sqlite.connect() as conn:
             conn.execute(
@@ -798,9 +841,7 @@ def ingest_live_tail(
                 """,
                 (
                     session_id,
-                    existing_session["project_path"]
-                    if existing_session
-                    else (agg["cwd"] if agg else None),
+                    existing_session["project_path"] if existing_session else best_cwd,
                     str(path),
                     started_at,
                     ended_at,
@@ -810,7 +851,7 @@ def ingest_live_tail(
                     int(agg["tool_count"] or 0) if agg else 0,
                     int(agg["edit_count"] or 0) if agg else 0,
                     agg["git_branch"] if agg else None,
-                    agg["cwd"] if agg else None,
+                    best_cwd,
                     agg["model"] if agg else None,
                     _dt.now().isoformat(),
                 ),
