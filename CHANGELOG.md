@@ -9,7 +9,7 @@ commits and tag annotations of those releases.
 
 ---
 
-## [0.11.1] — Unreleased
+## [0.11.1] — 2026-06-18
 
 Bugfix release: per-project rollup counters were inflated, and sessions could be
 filed under the wrong project. No schema-breaking changes; a one-time migration
