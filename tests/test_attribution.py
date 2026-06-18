@@ -187,7 +187,11 @@ def test_live_tail_sets_cwd_to_project_not_lexicographic_max(tmp_path):
                         "type": "tool_use",
                         "id": "t1",
                         "name": "Edit",
-                        "input": {"file_path": f"{proj}/main.py", "old_string": "a", "new_string": "b"},
+                        "input": {
+                            "file_path": f"{proj}/main.py",
+                            "old_string": "a",
+                            "new_string": "b",
+                        },
                     }
                 ],
             },
