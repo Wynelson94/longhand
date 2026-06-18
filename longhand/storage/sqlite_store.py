@@ -581,11 +581,16 @@ class SQLiteStore:
     # ─── Projects ──────────────────────────────────────────────────────────
 
     def upsert_project(self, project: dict[str, Any]) -> None:
-        """Insert or update a project row. Merges keywords/aliases on conflict."""
+        """Insert or update a project row. Merges keywords/aliases on conflict.
+
+        session_count and total_edits are NOT maintained here — they are derived
+        rollups recomputed from the sessions table by recompute_project_stats()
+        after a session is attached. Incrementing them per upsert (the previous
+        behavior) double-counted on every re-ingest of the same session.
+        """
         with self.connect() as conn:
             existing = conn.execute(
-                "SELECT keywords_json, aliases_json, session_count, total_edits, first_seen "
-                "FROM projects WHERE project_id = ?",
+                "SELECT keywords_json, aliases_json FROM projects WHERE project_id = ?",
                 (project["project_id"],),
             ).fetchone()
 
@@ -601,9 +606,7 @@ class SQLiteStore:
                     """
                     UPDATE projects
                     SET display_name = ?, aliases_json = ?, keywords_json = ?,
-                        languages_json = ?, category = ?, last_seen = ?,
-                        session_count = session_count + 1,
-                        total_edits = total_edits + ?
+                        languages_json = ?, category = ?, last_seen = ?
                     WHERE project_id = ?
                     """,
                     (
@@ -613,7 +616,6 @@ class SQLiteStore:
                         json.dumps(project.get("languages", [])),
                         project.get("category"),
                         project.get("last_seen"),
-                        project.get("new_edits", 0),
                         project["project_id"],
                     ),
                 )
@@ -636,10 +638,36 @@ class SQLiteStore:
                         project.get("category"),
                         project.get("first_seen"),
                         project.get("last_seen"),
-                        1,
-                        project.get("new_edits", 0),
+                        0,
+                        0,
                     ),
                 )
+
+    def recompute_project_stats(self, project_id: str) -> None:
+        """Recompute a project's session_count and total_edits from the sessions
+        table — the authoritative source.
+
+        session_count = number of sessions attached to the project; total_edits =
+        the sum of their file_edit_count. Call this after attaching a session to a
+        project. Idempotent: it sets absolute values rather than incrementing, so
+        re-ingesting the same session never inflates the rollups.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE projects
+                SET session_count = (
+                        SELECT COUNT(*) FROM sessions
+                        WHERE sessions.project_id = projects.project_id
+                    ),
+                    total_edits = (
+                        SELECT COALESCE(SUM(file_edit_count), 0) FROM sessions
+                        WHERE sessions.project_id = projects.project_id
+                    )
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            )
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:

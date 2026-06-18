@@ -115,6 +115,10 @@ class LonghandStore:
         project = infer_project(session, events)
         self.sqlite.upsert_project(project)
         self.sqlite.attach_session_to_project(session.session_id, project["project_id"])
+        # session_count / total_edits are derived rollups — recompute from the
+        # sessions table now that this session is attached, so re-ingests don't
+        # inflate them.
+        self.sqlite.recompute_project_stats(project["project_id"])
 
         # 1b. Project embedding
         self.vectors.add_project_embedding(
