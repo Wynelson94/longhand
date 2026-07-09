@@ -105,16 +105,119 @@ class LonghandStore:
 
         return result
 
+    def attribute_session_project(self, session: Session, events: list[Event]) -> dict:
+        """Infer this session's project, attach it, and refresh the project's
+        derived rollups — WITHOUT the heavy episode/segment/embedding analysis.
+
+        This is the lockstep primitive: project_id is always derived from the same
+        (session, events) pair that determines the session's cwd, so the two can't
+        desync. Used by analyze_session (full pass), the live-tail hook, and the
+        reattribute backfill. session_count / total_edits are recomputed from the
+        sessions table (not incremented), so repeated calls never inflate them.
+        """
+        project = infer_project(session, events)
+        self.sqlite.upsert_project(project)
+        self.sqlite.attach_session_to_project(session.session_id, project["project_id"])
+        self.sqlite.recompute_project_stats(project["project_id"])
+        return project
+
+    def reattribute_sessions(self, session_ids: list[str] | None = None) -> dict:
+        """Re-derive each session's project (and corrected cwd) from its events in
+        the events table — independent of the transcript file, which may have been
+        rotated off disk — and re-attach it.
+
+        Repairs project_id↔cwd drift (the F2 misattribution bug, where sessions
+        ended up filed under the home catch-all). Returns counts:
+        ``{scanned, reattributed, skipped}``.
+        """
+        from longhand.parser import _pick_best_project_cwd
+
+        rows = self.sqlite.list_sessions(limit=1_000_000)
+        if session_ids is not None:
+            wanted = set(session_ids)
+            rows = [r for r in rows if r["session_id"] in wanted]
+
+        scanned = reattributed = skipped = 0
+        for row in rows:
+            sid = row["session_id"]
+            events = self._events_for_session(sid)
+            if not events:
+                skipped += 1
+                continue
+            best_cwd = _pick_best_project_cwd(events) or row.get("cwd") or row.get("project_path")
+            session = self._session_from_row(row, best_cwd)
+            old_pid = row.get("project_id")
+            project = self.attribute_session_project(session, events)
+            if best_cwd and best_cwd != row.get("cwd"):
+                with self.sqlite.connect() as conn:
+                    conn.execute(
+                        "UPDATE sessions SET cwd = ? WHERE session_id = ?", (best_cwd, sid)
+                    )
+            scanned += 1
+            if project["project_id"] != old_pid:
+                reattributed += 1
+
+        # Sessions may have moved between projects — re-derive every project's
+        # rollups so counts stay accurate (emptied projects drop to 0).
+        with self.sqlite.connect() as conn:
+            pids = [r[0] for r in conn.execute("SELECT project_id FROM projects").fetchall()]
+        for pid in pids:
+            self.sqlite.recompute_project_stats(pid)
+
+        return {"scanned": scanned, "reattributed": reattributed, "skipped": skipped}
+
+    def _events_for_session(self, session_id: str) -> list[Event]:
+        """Rebuild Event objects from the events table — only the fields project
+        attribution needs. Used when the transcript is no longer on disk."""
+        from longhand.parser import _parse_timestamp
+
+        rows = self.sqlite.get_events(session_id=session_id, limit=1_000_000)
+        events: list[Event] = []
+        for r in rows:
+            try:
+                events.append(
+                    Event(
+                        event_id=r["event_id"],
+                        session_id=r["session_id"],
+                        parent_event_id=r.get("parent_event_id"),
+                        event_type=r["event_type"],
+                        sequence=r["sequence"],
+                        timestamp=_parse_timestamp(r.get("timestamp")),
+                        cwd=r.get("cwd"),
+                        model=r.get("model"),
+                        content=r.get("content") or "",
+                        file_path=r.get("file_path"),
+                        file_operation=r.get("file_operation"),
+                    )
+                )
+            except Exception:
+                continue
+        return events
+
+    def _session_from_row(self, row: dict, cwd: str | None) -> Session:
+        from longhand.parser import _parse_timestamp
+
+        return Session(
+            session_id=row["session_id"],
+            project_path=cwd or row.get("project_path"),
+            transcript_path=row.get("transcript_path") or "",
+            started_at=_parse_timestamp(row.get("started_at")),
+            ended_at=_parse_timestamp(row.get("ended_at")),
+            event_count=row.get("event_count") or 0,
+            file_edit_count=row.get("file_edit_count") or 0,
+            git_branch=row.get("git_branch"),
+            cwd=cwd,
+            model=row.get("model"),
+        )
+
     def analyze_session(self, session: Session, events: list[Event]) -> dict:
         """Run the analysis layer for a session: project, outcome, episodes, embeddings.
 
         Safe to call multiple times (upserts everywhere). Used both by `ingest_session`
         and by the `longhand analyze --all` backfill command.
         """
-        # 1. Project inference + merge
-        project = infer_project(session, events)
-        self.sqlite.upsert_project(project)
-        self.sqlite.attach_session_to_project(session.session_id, project["project_id"])
+        # 1. Project inference + attach (cwd↔project_id kept in lockstep here).
+        project = self.attribute_session_project(session, events)
 
         # 1b. Project embedding
         self.vectors.add_project_embedding(

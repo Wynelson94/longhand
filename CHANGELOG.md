@@ -9,6 +9,38 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.11.1] — 2026-06-18
+
+Bugfix release: per-project rollup counters were inflated, and sessions could be
+filed under the wrong project. No schema-breaking changes; a one-time migration
+repairs existing databases automatically on first open.
+
+### Fixed
+
+- **Project misattribution: sessions no longer drift to the wrong project.**
+  `session.cwd` (set by the Stop-hook live tail via `MAX(cwd)`, a meaningless
+  lexicographic pick) and `project_id` (set only by the full analysis pass) were
+  written by independent paths and could desync — so work launched from `$HOME`
+  ended up filed under the home catch-all project, invisible to per-project
+  recall. On a real 265-session corpus, 35 sessions (13%) were affected. Now
+  project attribution and cwd are always derived together from the same events
+  (`attribute_session_project()`), and the live tail derives cwd the same way
+  `build_session` does instead of `MAX(cwd)`. New `longhand reattribute` command
+  re-derives every session's project from the **events table** (not the
+  transcript, which may have rotated away) to repair existing databases.
+- **`projects.session_count` and `projects.total_edits` no longer double-count.**
+  `upsert_project()` incremented both columns on *every* (re-)ingest of a session
+  — SessionEnd, the live-tail Stop hook's analysis path, and `reconcile`
+  re-ingests — so they counted ingest events, not distinct sessions. On a real
+  corpus the home directory showed 2,068 "sessions" against 264 real ones (and
+  53,952 edits against ~7,200 actual). The columns are now derived rollups,
+  recomputed authoritatively from the `sessions` table
+  (`recompute_project_stats()`) after each session is attached. Affected
+  `longhand projects`, the `list_projects` MCP tool, and `recall_project_status`;
+  raw session/event data, search, and recall were never affected.
+- **Migration v6 backfills existing databases**, recomputing both columns for all
+  projects from the `sessions` table on first open. Idempotent and non-destructive.
+
 ## [0.11.0] — 2026-06-09
 
 UX release: the CLI gets organized, the stats get honest, and first-run gets smarter. No breaking changes — every existing command and flag still works.

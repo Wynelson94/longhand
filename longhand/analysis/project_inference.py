@@ -280,14 +280,6 @@ def infer_project(session: Session, events: list[Event]) -> dict[str, Any]:
     # Aliases
     aliases = _generate_aliases(display_name, canonical, category)
 
-    # Count file edits for new_edits increment
-    new_edits = sum(
-        1
-        for e in events
-        if (e.event_type if isinstance(e.event_type, str) else e.event_type.value) == "tool_call"
-        and e.file_operation in ("edit", "write", "multi_edit", "notebook_edit")
-    )
-
     started_iso = session.started_at.isoformat()
     ended_iso = session.ended_at.isoformat()
 
@@ -301,5 +293,4 @@ def infer_project(session: Session, events: list[Event]) -> dict[str, Any]:
         "category": category,
         "first_seen": started_iso,
         "last_seen": ended_iso,
-        "new_edits": new_edits,
     }

@@ -34,6 +34,37 @@ def test_file_edits_filter(sample_session_file, temp_store):
     assert edits[0]["tool_name"] == "Edit"
 
 
+def test_project_counts_not_inflated_on_reingest(sample_session_file, temp_store):
+    """Re-ingesting the same session must NOT inflate projects.session_count or
+    total_edits.
+
+    These columns reflect distinct attached sessions and the sum of their file
+    edits, recomputed from the sessions table — not a per-ingest running tally.
+    Regression: upsert_project() used to run `session_count = session_count + 1`
+    (and `total_edits = total_edits + new_edits`) on every ingest, so a single
+    re-ingested session inflated both counts. On the real corpus the home-dir
+    project showed 2,068 "sessions" against 264 real ones.
+    """
+    parser = JSONLParser(sample_session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+
+    temp_store.ingest_session(session, events)
+    project_id = temp_store.sqlite.get_session(session.session_id)["project_id"]
+    p1 = temp_store.sqlite.get_project(project_id)
+    assert p1["session_count"] == 1
+    edits_after_first = p1["total_edits"]
+    assert edits_after_first > 0  # the sample session has real file edits
+
+    # Ingest the exact same session again — what a SessionEnd re-run or a
+    # `reconcile` re-ingest does in practice.
+    temp_store.ingest_session(session, events)
+    p2 = temp_store.sqlite.get_project(project_id)
+
+    assert p2["session_count"] == 1  # still one distinct session, not 2
+    assert p2["total_edits"] == edits_after_first  # edits not double-counted
+
+
 def test_stats(sample_session_file, temp_store):
     parser = JSONLParser(sample_session_file)
     events = list(parser.parse_events())
