@@ -318,3 +318,66 @@ def test_v6_migration_repairs_inflated_project_counts(tmp_path: Path):
     p = store.get_project("proj1")
     assert p["session_count"] == 2
     assert p["total_edits"] == 5
+
+
+def test_migration_race_loser_recovers(tmp_path: Path):
+    """A process that loses the post-upgrade migration race must not crash.
+
+    Simulate the loser: its first read of applied versions is stale (empty),
+    but the winner has already fully applied every migration. The loser's
+    DDL/INSERT conflicts must be swallowed once the version rows are visible.
+    """
+    from unittest.mock import patch
+
+    from longhand.storage import migrations as mig
+
+    store = SQLiteStore(tmp_path / "race.db")  # fully migrated on init
+
+    real = mig._applied_versions
+    calls = {"n": 0}
+
+    def stale_first(conn):
+        calls["n"] += 1
+        return set() if calls["n"] == 1 else real(conn)
+
+    with (
+        store.connect() as conn,
+        patch.object(mig, "_applied_versions", side_effect=stale_first),
+    ):
+        applied = apply_migrations(conn)
+
+    assert applied == []  # loser records nothing; the winner's rows stand
+
+
+def test_concurrent_store_init_does_not_crash(tmp_path: Path):
+    """Two stores constructed concurrently on one fresh DB must both survive.
+
+    Stand-in for parallel session hooks racing migrations right after an
+    upgrade — each thread opens its own connection, like separate processes.
+    """
+    import threading
+
+    db = tmp_path / "concurrent.db"
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def build() -> None:
+        try:
+            barrier.wait(timeout=10)
+            SQLiteStore(db)
+        except Exception as e:  # pragma: no cover — the bug this guards against
+            errors.append(e)
+
+    threads = [threading.Thread(target=build) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert errors == []
+    conn = sqlite3.connect(str(db))
+    dupes = conn.execute(
+        "SELECT version FROM schema_version GROUP BY version HAVING COUNT(*) > 1"
+    ).fetchall()
+    conn.close()
+    assert dupes == []

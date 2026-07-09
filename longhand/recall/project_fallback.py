@@ -141,7 +141,10 @@ def trigger_background_ingest(store: LonghandStore) -> bool:
         # leaks a file descriptor on the calling process.
         with log_file.open("a") as log_fh:
             subprocess.Popen(
-                [sys.executable, "-m", "longhand.cli", "ingest"],
+                # "-m longhand" (the package __main__), NOT "-m longhand.cli":
+                # longhand.cli is a package with no __main__.py, so spawning
+                # it dies instantly and the background ingest never runs.
+                [sys.executable, "-m", "longhand", "ingest"],
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
