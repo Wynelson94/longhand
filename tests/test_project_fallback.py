@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 from longhand.parser import JSONLParser
 from longhand.recall import project_fallback
 from longhand.recall.project_match import match_projects
+from longhand.setup_commands import ingest_single_session
 
 
 def _ingest(fixture_path, store):
@@ -205,3 +209,71 @@ def test_claim_lock_atomic_create_loses_race(temp_store):
     # The racing winner's PID must be untouched.
     assert lock.read_text().strip() == str(other_pid)
     lock.unlink()
+
+
+def test_trigger_background_ingest_spawn_target_is_executable(temp_store):
+    """The spawned `-m` target must be an importable, runnable module.
+
+    Regression guard: v0.11.1 spawned `-m longhand.cli` — a package with no
+    __main__.py — so every background ingest died instantly and silently.
+    """
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+
+    with patch("subprocess.Popen") as mock_popen:
+        assert project_fallback.trigger_background_ingest(temp_store) is True
+
+    argv = mock_popen.call_args[0][0]
+    assert argv[0] == sys.executable
+    assert argv[1] == "-m"
+    target = argv[2]
+    spec = importlib.util.find_spec(target)
+    assert spec is not None, f"spawn target {target!r} is not importable"
+    if spec.submodule_search_locations is not None:
+        assert importlib.util.find_spec(f"{target}.__main__") is not None, (
+            f"spawn target {target!r} is a package without __main__.py — it dies instantly under -m"
+        )
+
+
+def test_python_dash_m_longhand_runs():
+    """`python -m longhand` must keep working — the background spawn depends on it."""
+    result = subprocess.run(
+        [sys.executable, "-m", "longhand", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_ingest_single_session_defers_when_lock_held(sample_session_file, temp_store):
+    """SessionEnd ingest defers with a success exit when another ingest owns the lock."""
+    lock = temp_store.data_dir / ".ingest.lock"
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    # Another alive PID (claim is idempotent for our own PID, so use the parent).
+    lock.write_text(str(os.getppid()))
+
+    ingest_single_session(
+        str(sample_session_file), data_dir=str(temp_store.data_dir), run_analysis=False
+    )
+
+    with temp_store.sqlite.connect() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    assert n == 0  # deferred — nothing ingested, nothing raised
+    assert lock.exists()  # not ours; must be left untouched
+    lock.unlink()
+
+
+def test_ingest_single_session_reclaims_stale_lock_and_releases(sample_session_file, temp_store):
+    """A dead holder must not block SessionEnd; the lock is released afterwards."""
+    lock = temp_store.data_dir / ".ingest.lock"
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock.write_text("0")  # PID 0 — treated as dead/invalid
+
+    ingest_single_session(
+        str(sample_session_file), data_dir=str(temp_store.data_dir), run_analysis=False
+    )
+
+    with temp_store.sqlite.connect() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    assert n == 1
+    assert not lock.exists()  # released in the finally

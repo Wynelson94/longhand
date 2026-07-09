@@ -296,3 +296,9 @@ def test_batched_methods_return_upserted_count(temp_store):
         {"segment_id": "s-2", "text": "", "metadata": {"segment_type": "discussion"}},
     ]
     assert temp_store.vectors.add_segment_embeddings_batch(seg_items) == 1
+
+
+def test_busy_timeout_pragma(temp_store):
+    """Write-lock waits must be generous — parallel hooks contend on one DB."""
+    with temp_store.sqlite.connect() as conn:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000

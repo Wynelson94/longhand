@@ -588,13 +588,35 @@ def ingest_single_session(
     runs; even faster when skipped. Pass ``run_analysis=False`` to populate
     SQLite only (no episodes, segments, or vectors). Power users can defer
     the analysis pass via ``longhand analyze --all``.
+
+    Takes the ingest lock: parallel sessions ending together would otherwise
+    open concurrent ChromaDB writers on the same directory, which ChromaDB
+    does not tolerate. A locked-out session defers (success exit) — the bulk
+    ingest holding the lock, or a later reconcile, picks it up.
     """
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock,
+        release_ingest_lock,
+    )
+
     path = Path(transcript).expanduser()
     if not path.exists():
         console.print(f"[red]Transcript not found: {transcript}[/red]")
         raise typer.Exit(1)
 
-    store = LonghandStore(data_dir=data_dir)
+    try:
+        store = LonghandStore(data_dir=data_dir)
+    except Exception as e:
+        console.print(f"[red]✗[/red] Could not open the Longhand store: {e}")
+        raise typer.Exit(1) from e
+
+    if not claim_ingest_lock(store):
+        console.print(
+            f"[yellow]Another Longhand ingest is running — deferring {path.name}; "
+            "reconcile will pick it up.[/yellow]"
+        )
+        return
+
     try:
         parser = JSONLParser(path)
         events = list(parser.parse_events())
@@ -611,6 +633,8 @@ def ingest_single_session(
     except Exception as e:
         console.print(f"[red]✗[/red] Failed to ingest {path.name}: {e}")
         raise typer.Exit(1) from e
+    finally:
+        release_ingest_lock(store)
 
 
 # ─── Live ingest (for Stop hook) ──────────────────────────────────────────
@@ -698,18 +722,23 @@ def ingest_live_tail(
         summary["skipped"] = "empty"
         return summary
 
-    store = LonghandStore(data_dir=data_dir)
-
-    if store.sqlite.live_caught_up(str(path), current_size):
-        summary["skipped"] = "caught-up"
-        return summary
-
-    # Non-blocking lock — if a heavier ingest is running, defer to next Stop.
-    if not claim_ingest_lock(store):
-        summary["skipped"] = "locked"
-        return summary
-
+    locked = False
     try:
+        # LonghandStore() runs migrations and opens ChromaDB — it can raise
+        # (corrupted store, disk full, migration race), so it must sit inside
+        # this guard: nothing in this function may raise into the Stop hook.
+        store = LonghandStore(data_dir=data_dir)
+
+        if store.sqlite.live_caught_up(str(path), current_size):
+            summary["skipped"] = "caught-up"
+            return summary
+
+        # Non-blocking lock — if a heavier ingest is running, defer to next Stop.
+        if not claim_ingest_lock(store):
+            summary["skipped"] = "locked"
+            return summary
+        locked = True
+
         start_offset = store.sqlite.get_live_offset(str(path))
 
         try:
@@ -873,7 +902,8 @@ def ingest_live_tail(
         summary["skipped"] = f"error:{type(e).__name__}"
         return summary
     finally:
-        release_ingest_lock(store)
+        if locked:
+            release_ingest_lock(store)
 
 
 # ─── Doctor ────────────────────────────────────────────────────────────────

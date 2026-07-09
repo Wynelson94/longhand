@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -110,15 +111,33 @@ class SQLiteStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        with self.connect() as conn:
-            conn.executescript(SCHEMA)
-            apply_migrations(conn)
+        # Concurrent first-runs (parallel session hooks right after an upgrade)
+        # can deadlock-detect and raise "database is locked" immediately —
+        # busy_timeout does not apply to that path. The whole init is
+        # idempotent (IF NOT EXISTS DDL, guarded ALTERs, versioned migrations),
+        # so retry until it lands instead of crashing the losing process.
+        last_lock_error: sqlite3.OperationalError | None = None
+        for _ in range(100):
+            try:
+                with self.connect() as conn:
+                    conn.executescript(SCHEMA)
+                    apply_migrations(conn)
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                last_lock_error = e
+                time.sleep(0.05)
+        assert last_lock_error is not None
+        raise last_lock_error  # pragma: no cover — >5s of sustained contention
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 5000")
+        # 30s: parallel session hooks + bulk ingests can hold the write lock
+        # through large executemany batches; waiting beats "database is locked".
+        conn.execute("PRAGMA busy_timeout = 30000")
         # WAL lets the Stop hook ingest concurrently with reads from MCP/CLI
         # without serializing on the busy_timeout. Idempotent: SQLite remembers
         # the journal mode in the file header.

@@ -8,6 +8,7 @@ Migrations are applied in order, once, and logged in the `schema_version` table.
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime
 
 MIGRATIONS: dict[int, str] = {
@@ -255,12 +256,28 @@ def apply_migrations(conn: sqlite3.Connection) -> list[int]:
             continue
 
         sql = MIGRATIONS[version]
-        conn.executescript(sql)
-        _apply_alters(conn, version)
-        conn.execute(
-            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-            (version, datetime.now().isoformat()),
-        )
+        try:
+            conn.executescript(sql)
+            _apply_alters(conn, version)
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (version, datetime.now().isoformat()),
+            )
+        except (sqlite3.IntegrityError, sqlite3.OperationalError):
+            # Two processes can race the same migration right after an
+            # upgrade (parallel session hooks, the MCP server, and the CLI
+            # all construct stores). The loser sees "already exists" /
+            # "duplicate column" from the DDL or a schema_version PK hit.
+            # Wait for the winner to record the version, then move on;
+            # only re-raise if it never lands (a genuine failure).
+            conn.rollback()
+            for _ in range(20):
+                if version in _applied_versions(conn):
+                    break
+                time.sleep(0.05)
+            else:
+                raise
+            continue
         newly_applied.append(version)
 
     conn.commit()

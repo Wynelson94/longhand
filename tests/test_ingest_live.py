@@ -333,3 +333,57 @@ def test_live_then_session_end_composes(tmp_path: Path) -> None:
 
     assert n_events == len(events)
     assert size_logged == transcript.stat().st_size
+
+
+def test_live_tail_never_raises_when_store_init_fails(tmp_path, monkeypatch):
+    """Store construction failures must surface as a summary, never an exception.
+
+    The Stop hook calls this every assistant turn — a corrupted Chroma dir or
+    a migration race must not crash the hook chain.
+    """
+    entry = {
+        "type": "user",
+        "uuid": "u-x",
+        "sessionId": "s-x",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "cwd": "/tmp/p",
+        "message": {"role": "user", "content": "hi"},
+    }
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(_line(entry))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("corrupted store")
+
+    monkeypatch.setattr("longhand.setup_commands.LonghandStore", boom)
+
+    summary = ingest_live_tail(str(transcript), data_dir=str(tmp_path / "lh"))
+    assert summary["skipped"] == "error:RuntimeError"
+
+
+def test_live_tail_never_raises_when_caught_up_check_fails(tmp_path, monkeypatch):
+    """Failures after store construction but before the lock also return a summary."""
+
+    class _BrokenSqlite:
+        def live_caught_up(self, *args, **kwargs):
+            raise RuntimeError("db exploded")
+
+    class _BrokenStore:
+        def __init__(self, *args, **kwargs):
+            self.sqlite = _BrokenSqlite()
+
+    monkeypatch.setattr("longhand.setup_commands.LonghandStore", _BrokenStore)
+
+    entry = {
+        "type": "user",
+        "uuid": "u-y",
+        "sessionId": "s-y",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "cwd": "/tmp/p",
+        "message": {"role": "user", "content": "hi"},
+    }
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(_line(entry))
+
+    summary = ingest_live_tail(str(transcript), data_dir=None)
+    assert summary["skipped"] == "error:RuntimeError"
