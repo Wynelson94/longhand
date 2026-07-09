@@ -2,9 +2,11 @@
 confidence: high
 id: '0002'
 references:
-- lines: null
+- advisory: false
+  lines: null
   path: longhand/parser.py
-  sha: d577dd844bffe6eed691048e6cb744f87ffe4bab527686d5fc50319991fef1b3
+  pinned_at: '2026-06-11T17:58:33.907018Z'
+  sha: 89c1beb169b9c06521aeee28fce3246641d09f973a793ac2023d180114025d0a
   symbol: null
 session_id: null
 superseded_by: '0006'
