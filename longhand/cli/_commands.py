@@ -454,13 +454,15 @@ def reconcile(
     fix: bool = typer.Option(
         False,
         "--fix",
-        help="Re-ingest sessions that are missing or have NULL project_id",
+        help="Re-ingest sessions that are missing, partially indexed, or have NULL project_id",
     ),
 ):
     """Reconcile session transcripts on disk against the sessions table.
 
-    Finds three buckets:
-    - Fully indexed (session row exists, project_id set)
+    Finds four buckets:
+    - Fully indexed (session row exists, project_id set, analysis completed)
+    - Partially indexed (the ingest pipeline crashed mid-way — events landed
+      but analysis/vectors may be incomplete)
     - Ingested but project_id IS NULL (project inference failed — often because
       Claude Code launched from $HOME so the transcript's first-event cwd
       wasn't a project directory)
@@ -482,11 +484,14 @@ def reconcile(
 
     console.print(f"[bold]On disk:[/bold] {report.files_on_disk} JSONL files")
     console.print(f"  [green]{report.fully_indexed}[/green] fully indexed")
+    console.print(
+        f"  [yellow]{len(report.partially_indexed)}[/yellow] partially indexed (ingest crashed mid-pipeline)"
+    )
     console.print(f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL")
     console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
 
     if not fix:
-        if report.missing or report.null_project:
+        if report.missing or report.null_project or report.partially_indexed:
             console.print("\n[dim]Run with --fix to re-ingest.[/dim]")
         return
 
@@ -494,13 +499,12 @@ def reconcile(
         console.print("[yellow]Another ingest is running — aborting reconcile.[/yellow]")
         raise typer.Exit(1)
 
-    if not (report.missing or report.null_project):
+    if not (report.missing or report.null_project or report.partially_indexed):
         console.print("\n[green]Nothing to fix.[/green]")
         return
 
-    console.print(
-        f"\n[cyan]Re-ingesting {len(report.missing) + len(report.null_project)} file(s)...[/cyan]"
-    )
+    n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
+    console.print(f"\n[cyan]Re-ingesting {n_fixable} file(s)...[/cyan]")
     for err in report.errors:
         console.print(f"  [red]✗[/red] {Path(err['path']).name}: {err['error']}")
     console.print(

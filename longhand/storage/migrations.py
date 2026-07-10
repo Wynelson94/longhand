@@ -167,6 +167,17 @@ MIGRATIONS: dict[int, str] = {
     -- The recompute UPDATE runs in _apply_alters with table-existence guards,
     -- since migrations may be applied before the base schema in standalone paths.
     """,
+    7: """
+    -- v7: ingest atomicity — track how far the ingest pipeline got per
+    -- transcript so reconcile can spot crashes that landed the session row
+    -- but not the analysis. Values:
+    --   NULL       pre-0.12 row or live-tail cursor row (unknown; treated as
+    --              complete so upgrades don't trigger a re-analysis stampede)
+    --   'pending'  pipeline started but did not finish (crash) — repairable
+    --   'events'   core data landed, analysis deliberately skipped
+    --   'analyzed' full pipeline completed
+    -- The guarded ALTER runs in _apply_alters.
+    """,
 }
 
 
@@ -209,6 +220,14 @@ def _apply_alters(conn: sqlite3.Connection, version: int) -> None:
                 "ALTER TABLE ingestion_log ADD COLUMN last_offset INTEGER NOT NULL DEFAULT 0"
             )
             conn.execute("UPDATE ingestion_log SET last_offset = file_size WHERE last_offset = 0")
+    if version == 7:
+        if _table_exists(conn, "ingestion_log") and not _column_exists(
+            conn, "ingestion_log", "analysis_stage"
+        ):
+            # NULL default on purpose: existing rows stay "unknown" and are
+            # treated as complete — flagging 300+ sessions as partial on
+            # upgrade would trigger a full re-analysis stampede.
+            conn.execute("ALTER TABLE ingestion_log ADD COLUMN analysis_stage TEXT")
     if version == 6:
         # One-time backfill: recompute the project rollups from the authoritative
         # sessions table. Guarded on table existence because migrations may run
