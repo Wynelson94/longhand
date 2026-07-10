@@ -991,18 +991,27 @@ def analyze(
     errors = 0
     total_episodes = 0
 
+    fallback_used = 0
     for sess_row in sessions:
         try:
-            # Re-parse the transcript file for full event objects
             transcript_path = sess_row["transcript_path"]
-            if not Path(transcript_path).exists():
-                errors += 1
-                continue
-            parser = JSONLParser(transcript_path)
-            events = list(parser.parse_events())
-            if not events:
-                continue
-            session_obj = parser.build_session(events)
+            if transcript_path and Path(transcript_path).exists():
+                # Re-parse the transcript file for full event objects
+                parser = JSONLParser(transcript_path)
+                events = list(parser.parse_events())
+                if not events:
+                    continue
+                session_obj = parser.build_session(events)
+            else:
+                # Transcript rotated off disk — rebuild from the events table
+                # (the same source reattribute uses), so old sessions still
+                # get re-analyzed with current extractors.
+                loaded = store.load_session_from_db(sess_row)
+                if loaded is None:
+                    errors += 1
+                    continue
+                session_obj, events = loaded
+                fallback_used += 1
             result = store.analyze_session(session_obj, events)
             total_episodes += result.get("episodes", 0)
             analyzed += 1
@@ -1016,7 +1025,7 @@ def analyze(
     console.print(
         f"[bold]Analyzed {analyzed}[/bold] sessions, "
         f"[bold]{total_episodes}[/bold] episodes "
-        f"([dim]{errors} errors[/dim])"
+        f"([dim]{errors} errors; {fallback_used} rebuilt from the events table[/dim])"
     )
 
     # A full re-analysis can shift episode boundaries, leaving stale

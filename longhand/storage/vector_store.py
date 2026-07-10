@@ -579,6 +579,19 @@ class VectorStore:
         except Exception:
             return 0
 
+    def delete_session_analysis(self, session_id: str) -> None:
+        """Drop a session's episode/segment embeddings ahead of re-analysis.
+
+        Mirrors SQLiteStore.delete_session_analysis — re-extraction mints new
+        ids for changed boundaries, so the old vectors must go or they haunt
+        semantic search forever. Best-effort: never raises.
+        """
+        for collection in (self.episodes_collection, self.segments_collection):
+            try:
+                collection.delete(where={"session_id": session_id})
+            except Exception:
+                pass
+
     def reset(self) -> None:
         """Delete and recreate all collections."""
         for name in ("events", "sessions", "projects", "segments", "episodes"):

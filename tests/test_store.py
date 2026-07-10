@@ -361,3 +361,79 @@ def test_query_episodes_min_confidence_in_sql(temp_store):
 
     assert [e["episode_id"] for e in confident] == ["ep-hi"]
     assert {e["episode_id"] for e in everything} == {"ep-hi", "ep-lo"}
+
+
+def test_reanalysis_replaces_stale_episodes(sample_session_file, temp_store):
+    """Re-analysis must REPLACE a session's episodes/segments — boundary
+    changes mint new ids, and without the pre-delete the old-boundary rows
+    accumulate as stale duplicates on every analyze pass."""
+    from longhand.parser import JSONLParser
+
+    parser = JSONLParser(sample_session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    temp_store.ingest_session(session, events, run_analysis=True)
+
+    # Simulate an old-extractor leftover: same session, id that the current
+    # extractor will never mint again.
+    temp_store.sqlite.insert_episodes(
+        [
+            {
+                "episode_id": "ep-stale-boundary",
+                "session_id": session.session_id,
+                "project_id": "p1",
+                "started_at": "2026-01-01T00:00:00Z",
+                "ended_at": "2026-01-01T00:30:00Z",
+                "problem_event_id": "pe-old",
+                "fix_event_id": "fe-old",
+                "problem_description": "stale",
+                "fix_summary": "stale",
+                "touched_files": [],
+                "tags": [],
+                "status": "resolved",
+            }
+        ]
+    )
+
+    temp_store.analyze_session(session, events)
+
+    with temp_store.sqlite.connect() as conn:
+        stale = conn.execute(
+            "SELECT COUNT(*) FROM episodes WHERE episode_id = 'ep-stale-boundary'"
+        ).fetchone()[0]
+    assert stale == 0
+
+    # And it stays stable across repeated passes (no accumulation).
+    with temp_store.sqlite.connect() as conn:
+        first = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+    temp_store.analyze_session(session, events)
+    with temp_store.sqlite.connect() as conn:
+        second = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+    assert first == second
+
+
+def test_load_session_from_db_round_trips_analysis_fields(sample_session_file, temp_store):
+    """Events rebuilt from the DB must carry the fields episode extraction
+    reads (tool_use_id, tool_success, error_detected) — not just the
+    attribution subset."""
+    from longhand.parser import JSONLParser
+
+    parser = JSONLParser(sample_session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    temp_store.ingest_session(session, events, run_analysis=False)
+
+    row = temp_store.sqlite.list_sessions(limit=10)[0]
+    loaded = temp_store.load_session_from_db(row)
+    assert loaded is not None
+    rebuilt_session, rebuilt_events = loaded
+    assert rebuilt_session.session_id == session.session_id
+    assert len(rebuilt_events) == len(events)
+
+    by_id = {e.event_id: e for e in rebuilt_events}
+    for orig in events:
+        re = by_id[orig.event_id]
+        assert re.tool_use_id == orig.tool_use_id
+        assert re.tool_success == orig.tool_success
+        assert re.error_detected == orig.error_detected
+        assert re.tool_name == orig.tool_name

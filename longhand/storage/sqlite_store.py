@@ -747,6 +747,20 @@ class SQLiteStore:
                 (project_id,),
             )
 
+    def delete_session_analysis(self, session_id: str) -> int:
+        """Delete a session's episodes and segments ahead of re-analysis.
+
+        Ids hash the start position, so re-extraction with different
+        boundaries mints new ids — without this, stale old-boundary rows
+        accumulate on every analyze pass. Returns rows deleted.
+        """
+        with self.connect() as conn:
+            a = conn.execute("DELETE FROM episodes WHERE session_id = ?", (session_id,))
+            b = conn.execute(
+                "DELETE FROM conversation_segments WHERE session_id = ?", (session_id,)
+            )
+            return a.rowcount + b.rowcount
+
     def prune_empty_projects(self) -> int:
         """Delete project rows with no attached sessions. Returns the count.
 
