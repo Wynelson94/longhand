@@ -9,6 +9,92 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.12.0] — 2026-07-10
+
+Feature release: the update channel, cleaner attribution, sharper episodes,
+and storage hygiene. One new migration pair (7 and 8) — both O(1) and applied
+automatically on first open; existing data is never re-processed without your
+say-so. Everything below was dogfooded on a real 331-session corpus before
+release, which itself surfaced (and fixed) three long-standing bugs.
+
+### Added
+
+- **Update channel.** `longhand --version` / `-V` prints the installed
+  version; the interactive CLI checks pypi.org for a newer release at most
+  once a day (cache-only hints, printed after your command's output, TTY
+  only) and `doctor` gains a Version row. The check never runs from hooks or
+  the MCP server — enforced by a test — never blocks a command, and
+  `LONGHAND_NO_UPDATE_CHECK=1` disables it entirely. The README privacy
+  section discloses exactly what it does. (#46)
+- **`longhand db vacuum`** (opt-in, never automatic) — reclaim disk space
+  with a free-space preflight and the ingest lock held; `--prune-aux`
+  first deletes stored harness-noise events. `doctor` now shows SQLite +
+  vector store sizes. (#51)
+- **Reconcile sees more.** New `partially_indexed` bucket for sessions whose
+  ingest crashed mid-pipeline (repaired by `--fix`), and `skipped_oversize`
+  for transcripts past the parser's size cap. Pre-existing rows are treated
+  as complete — no re-analysis stampede on upgrade. (#48, #52)
+
+### Changed
+
+- **Attribution overhaul.** The project-root walk now prefers the highest
+  `.git` over nearer non-git markers (monorepo packages stop splitting into
+  per-package projects); paths are normalized to the filesystem's own casing
+  (case-dupe spellings mint one project); and sessions with no cwd or a
+  markerless cwd in reserved locations ($HOME root, temp/pytest dirs, plugin
+  caches, Claude Code internals) land in one explicit `unattributed` bucket
+  instead of minting junk projects. `longhand reattribute` is now **dry-run
+  by default** — review the move list, then `--fix` to apply and prune
+  emptied projects. (#49)
+- **Episode extraction got honest.** Verification requires an explicit
+  success flag or an error-free result from a command-executing tool —
+  Read/Grep output no longer marks episodes "resolved". A new error always
+  starts a new episode instead of being swallowed by the previous one.
+  Harness plumbing (`<task-notification>` and friends) is never a problem
+  anchor, and the leaked `Ask: ` scaffold is gone from problem descriptions
+  (migration 8 cleans existing rows). The `find_episodes` MCP tool now
+  defaults to `min_confidence: 0.5` (pass 0 for everything); low-confidence
+  episodes are filtered by default, never deleted. Historical labels change
+  only when you run `longhand analyze --all`. (#50)
+- **`analyze --all` now reaches your whole corpus and truly replaces.**
+  Sessions whose transcripts rotated off disk are rebuilt from the events
+  table (previously ~75% of a mature corpus was unreachable), and
+  re-analysis deletes a session's old episodes/segments before extracting —
+  no more stale-boundary duplicates accumulating in SQLite and vector
+  search. (#53, #54)
+- **The prompt hook never embeds inline.** The first-recall-after-upgrade
+  episode backfill (up to the whole corpus, synchronously, inside the
+  UserPromptSubmit hook) is now a detached `backfill-episodes` worker that
+  claims the ingest lock. (#47)
+
+### Fixed
+
+- Harness UI-state entries (`last-prompt`, `mode`, `permission-mode`,
+  `attachment`, `ai-title`, `agent-name`) are no longer stored as "unknown"
+  events with full raw JSON — they were the 3rd-largest event type on a real
+  corpus. (#51)
+- The hook installer's no-PATH fallback wrote dead `-m longhand.cli`
+  commands (the v0.11.2 background-spawn bug class); hooks installed without
+  `longhand` on PATH now actually run. (#52)
+- The MCP server reuses one store across tool calls (it re-ran migrations
+  and re-opened ChromaDB on every call) and wraps handler failures in a
+  readable JSON error instead of a raw traceback. (#52)
+- Session-id prefix lookup (`longhand timeline <prefix>` etc.) now searches
+  the whole corpus in SQL — it previously scanned only the 1,000 most
+  recent sessions, so older prefixes silently failed to resolve. (#52)
+- Segment ids no longer collide when rebuilt events carry duplicate
+  sequence numbers — a collision failed the session's whole embedding
+  batch. (#54)
+- The credit-card redaction pattern is skipped unless a cheap digit-run
+  pre-check fires, cutting redaction CPU on numeric-heavy transcripts;
+  masking behavior is unchanged. (#52)
+
+### Internal
+
+- First direct tests for `session_summary_embedding`, `segment_search`,
+  `vector_store`, and `cli/helpers`; suite now 421 tests. Third-party
+  deprecation noise filtered in pytest config (6,426 → 95 warnings). (#52)
+
 ## [0.11.2] — 2026-07-10
 
 Bugfix release from a full audit of the codebase and a live 324-session corpus:
