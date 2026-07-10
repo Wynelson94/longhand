@@ -2,68 +2,71 @@
   "bsoi-mesh-kit material profiles": {
     "episodes": [
       {
-        "distance": 1.1596,
-        "episode_id": "ep_981815365c1cfac7",
+        "distance": 1.2642,
+        "episode_id": "ep_85ba831298fc6da2",
         "rank": 0,
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+        "session_id": "d1801a3e-2744-42dd-b151-b683cca63276"
       },
       {
-        "distance": 1.3981,
-        "episode_id": "ep_b58ebe53965f67d6",
+        "distance": 1.5511,
+        "episode_id": "ep_2504d7db1ce61753",
         "rank": 1,
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+        "session_id": "d1801a3e-2744-42dd-b151-b683cca63276"
       },
       {
-        "distance": 1.5141,
-        "episode_id": "ep_b220812d7de03bd2",
+        "distance": 1.3554,
+        "episode_id": "ep_38bc9e734d4ca3c5",
         "rank": 2,
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+        "session_id": "8eea2770-97b6-45e2-90b6-7fe275bf6ac7"
       },
       {
-        "distance": 1.532,
-        "episode_id": "ep_7daaaf3fadab6237",
+        "distance": 1.4365,
+        "episode_id": "ep_f7c2f2a919431889",
         "rank": 3,
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+        "session_id": "8eea2770-97b6-45e2-90b6-7fe275bf6ac7"
       },
       {
-        "distance": 1.6887,
-        "episode_id": "ep_8350a820f3d3a38c",
+        "distance": 1.1403,
+        "episode_id": "ep_4b1f9d109afc9a6d",
         "rank": 4,
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+        "session_id": "503c2815-8c7f-46ca-acd9-fe62ae0ea4e9"
       }
     ],
     "narrative_session_prefixes": [
-      "823dd358"
+      "2d8b7ee4",
+      "823dd358",
+      "9e9f4ac9",
+      "d1801a3e"
     ],
     "segments": [
       {
-        "distance": 1.1156,
+        "distance": 0.8412,
         "rank": 0,
-        "segment_id": "seg_b4a2f08724d66f60",
+        "segment_id": "seg_737efea789f72f4d",
+        "session_id": "9e9f4ac9-0dea-4846-b709-5c095d82365a"
+      },
+      {
+        "distance": 1.0372,
+        "rank": 1,
+        "segment_id": "seg_19fd1d8011e4adbc",
+        "session_id": "2d8b7ee4-b644-4bee-9c09-710b928920c2"
+      },
+      {
+        "distance": 1.1122,
+        "rank": 2,
+        "segment_id": "seg_e5be9f0ec357dada",
         "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
+      },
+      {
+        "distance": 1.1175,
+        "rank": 3,
+        "segment_id": "seg_dd21e08d82ae3d55",
+        "session_id": "7b5c384a-b27e-4c48-9faf-aaef7b9dd94c"
       },
       {
         "distance": 1.1333,
-        "rank": 1,
-        "segment_id": "seg_f4af00e9a0ed4abc",
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
-      },
-      {
-        "distance": 1.2026,
-        "rank": 2,
-        "segment_id": "seg_01bc72f33b76d924",
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
-      },
-      {
-        "distance": 1.245,
-        "rank": 3,
-        "segment_id": "seg_f6b4f295146f37eb",
-        "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
-      },
-      {
-        "distance": 1.2461,
         "rank": 4,
-        "segment_id": "seg_c8abaae9ccdefdc4",
+        "segment_id": "seg_1e1e4fa0241ae4fd",
         "session_id": "823dd358-f32f-4d73-a481-38a05b378966"
       }
     ]
@@ -72,185 +75,283 @@
     "episodes": [
       {
         "distance": 1.3114,
-        "episode_id": "ep_96ab51533e14fdbd",
+        "episode_id": "ep_406186b0fc500a6d",
         "rank": 0,
         "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
       },
       {
-        "distance": 1.0978,
-        "episode_id": "ep_c237fdd1649b18c8",
+        "distance": 1.4312,
+        "episode_id": "ep_e45f43c7ee62b83a",
         "rank": 1,
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "session_id": "316fd0da-03de-4b75-8d28-c486d98d3376"
       },
       {
-        "distance": 1.4607,
-        "episode_id": "ep_56cb5b507f901663",
+        "distance": 1.5168,
+        "episode_id": "ep_9d5fed895a1a6dc5",
         "rank": 2,
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "session_id": "e5012482-e3ed-4fe3-898d-b5c2231f2a0e"
       },
       {
-        "distance": 1.54,
-        "episode_id": "ep_e0894efa55c1aa7f",
+        "distance": 1.534,
+        "episode_id": "ep_308506d64b7d98a4",
         "rank": 3,
+        "session_id": "17c2aa16-f72e-4fcb-b64b-1e45c02a2b5b"
+      },
+      {
+        "distance": 1.0862,
+        "episode_id": "ep_3d51f14d9ba6db54",
+        "rank": 4,
         "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
       }
     ],
     "narrative_session_prefixes": [
+      "0bc0297c",
+      "b94a3b0a",
+      "df3c039c",
       "e6a468ef"
     ],
     "segments": [
       {
-        "distance": 1.0148,
+        "distance": 1.0569,
         "rank": 0,
-        "segment_id": "seg_1ac865ccbe308f79",
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "segment_id": "seg_49afcc10708f9762",
+        "session_id": "df3c039c-8766-40bc-8b4e-109f2cc51443"
       },
       {
-        "distance": 1.2627,
+        "distance": 1.1592,
         "rank": 1,
-        "segment_id": "seg_29aaf7c12f9fdf6b",
+        "segment_id": "seg_466624a7974c36ef",
         "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
       },
       {
-        "distance": 1.2747,
+        "distance": 1.1598,
         "rank": 2,
-        "segment_id": "seg_3618294b2bd2c538",
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "segment_id": "seg_03cbbb4b595514be",
+        "session_id": "0bc0297c-7e96-4c41-8d27-56d653506df9"
       },
       {
-        "distance": 1.2841,
+        "distance": 1.1952,
         "rank": 3,
-        "segment_id": "seg_a9969f58b7f80d48",
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "segment_id": "seg_5e087f5b479d0b9c",
+        "session_id": "b94a3b0a-fd93-4dc6-ad80-f15e195f27cf"
       },
       {
-        "distance": 1.3012,
+        "distance": 1.2368,
         "rank": 4,
-        "segment_id": "seg_503d03c2f73454f0",
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "segment_id": "seg_ff9bc1ad80ce70d5",
+        "session_id": "30511358-22d1-4889-9f7d-56077b0d1dca"
       }
     ]
   },
   "longhand v0.8 future plans": {
-    "episodes": [],
-    "narrative_session_prefixes": [
-      "015252dd",
-      "65e3c3ee"
-    ],
-    "segments": [
-      {
-        "distance": 0.9834,
-        "rank": 0,
-        "segment_id": "seg_407fa509ffb658a2",
-        "session_id": "015252dd-f28b-461f-9f4c-57e231cdb24e"
-      },
-      {
-        "distance": 1.0541,
-        "rank": 1,
-        "segment_id": "seg_ab52dfa27cd7f8c5",
-        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
-      },
-      {
-        "distance": 1.0765,
-        "rank": 2,
-        "segment_id": "seg_28e80da30c5778e3",
-        "session_id": "015252dd-f28b-461f-9f4c-57e231cdb24e"
-      },
-      {
-        "distance": 1.1253,
-        "rank": 3,
-        "segment_id": "seg_c04408e3d024973c",
-        "session_id": "015252dd-f28b-461f-9f4c-57e231cdb24e"
-      }
-    ]
-  },
-  "project inference home cd attribution": {
-    "episodes": [],
-    "narrative_session_prefixes": [
-      "48066c69"
-    ],
-    "segments": [
-      {
-        "distance": 1.3372,
-        "rank": 0,
-        "segment_id": "seg_6aa4a6c6bd25330f",
-        "session_id": "48066c69-1087-4de5-82ab-23c365b3465b"
-      },
-      {
-        "distance": 1.3372,
-        "rank": 1,
-        "segment_id": "seg_ce480d4f68410b95",
-        "session_id": "48066c69-1087-4de5-82ab-23c365b3465b"
-      }
-    ]
-  },
-  "secondary match recall fix": {
     "episodes": [
       {
-        "distance": 1.321,
-        "episode_id": "ep_c6ceeb02c0aeafa1",
+        "distance": 1.2668,
+        "episode_id": "ep_fa7958c4935ce042",
         "rank": 0,
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+        "session_id": "58df5093-a591-4d1d-a5aa-2006dbcfbd1f"
       },
       {
-        "distance": 1.6136,
-        "episode_id": "ep_f7b01b677cbd6d81",
+        "distance": 1.4669,
+        "episode_id": "ep_5fe0901cee1ab7d3",
         "rank": 1,
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       },
       {
-        "distance": 1.3437,
-        "episode_id": "ep_efde4c73c2204805",
+        "distance": 1.6434,
+        "episode_id": "ep_6c148edf718e7076",
         "rank": 2,
-        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
+        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
       },
       {
-        "distance": 1.5901,
-        "episode_id": "ep_5f3aaa9bfe085989",
+        "distance": 1.5959,
+        "episode_id": "ep_f70c47245e676b50",
         "rank": 3,
-        "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
+        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
       },
       {
-        "distance": 1.2155,
-        "episode_id": "ep_b7c0141c7991be39",
+        "distance": 1.6333,
+        "episode_id": "ep_e2c93fb4b330c4e7",
         "rank": 4,
         "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
       }
     ],
     "narrative_session_prefixes": [
       "0b810af9",
-      "33aa751f",
-      "7b4515c8"
+      "58df5093"
     ],
     "segments": [
       {
-        "distance": 1.0853,
+        "distance": 1.1575,
         "rank": 0,
-        "segment_id": "seg_8186ef38328b3e88",
-        "session_id": "33aa751f-f0d8-4809-b42f-3051eac70471"
+        "segment_id": "seg_b1609151490a2785",
+        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
       },
       {
-        "distance": 1.0853,
+        "distance": 1.1755,
         "rank": 1,
-        "segment_id": "seg_93a3dc83bb099695",
-        "session_id": "33aa751f-f0d8-4809-b42f-3051eac70471"
+        "segment_id": "seg_4d97fc404f707a31",
+        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+      },
+      {
+        "distance": 1.1831,
+        "rank": 2,
+        "segment_id": "seg_ea183a988404f350",
+        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+      },
+      {
+        "distance": 1.2042,
+        "rank": 3,
+        "segment_id": "seg_62ded8c52d40b01e",
+        "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
+      },
+      {
+        "distance": 1.2136,
+        "rank": 4,
+        "segment_id": "seg_f9e73ea491f98d1a",
+        "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
+      }
+    ]
+  },
+  "project inference home cd attribution": {
+    "episodes": [
+      {
+        "distance": 1.4642,
+        "episode_id": "ep_bbede5a6dc49aeed",
+        "rank": 0,
+        "session_id": "4d9d5ac2-a57a-47b5-b032-d77903aace85"
+      },
+      {
+        "distance": 1.6698,
+        "episode_id": "ep_7ab5bf1dae0a886c",
+        "rank": 1,
+        "session_id": "a29849d5-334a-4dc5-a724-3ff7b65c06ce"
+      },
+      {
+        "distance": 1.5316,
+        "episode_id": "ep_a830a6e01e62dfc3",
+        "rank": 2,
+        "session_id": "6176e558-1a72-4f63-bebf-efd6bc898a2c"
+      },
+      {
+        "distance": 1.5697,
+        "episode_id": "ep_99cfdedd25920b02",
+        "rank": 3,
+        "session_id": "50aae759-445e-47b7-812b-d2c7404e4578"
+      },
+      {
+        "distance": 1.6586,
+        "episode_id": "ep_3ebac1dd6c00528b",
+        "rank": 4,
+        "session_id": "766be4db-481e-4502-ada2-72c2161bf965"
+      }
+    ],
+    "narrative_session_prefixes": [
+      "4d9d5ac2",
+      "ca06d28b",
+      "fae52c08",
+      "ff35152d"
+    ],
+    "segments": [
+      {
+        "distance": 1.2505,
+        "rank": 0,
+        "segment_id": "seg_ba188e7849ed9192",
+        "session_id": "ff35152d-772a-4262-88ac-9199424f7ea4"
+      },
+      {
+        "distance": 1.2626,
+        "rank": 1,
+        "segment_id": "seg_44408815a8776e6b",
+        "session_id": "ca06d28b-6989-4451-aa8c-7753592fd97a"
+      },
+      {
+        "distance": 1.2733,
+        "rank": 2,
+        "segment_id": "seg_ceb60df949ec369d",
+        "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
+      },
+      {
+        "distance": 1.2902,
+        "rank": 3,
+        "segment_id": "seg_11ac0231c29945e2",
+        "session_id": "6176e558-1a72-4f63-bebf-efd6bc898a2c"
+      },
+      {
+        "distance": 1.2911,
+        "rank": 4,
+        "segment_id": "seg_d0d711a6d7ec5073",
+        "session_id": "bdaac329-1af0-42a4-bea7-7afc098f46f2"
+      }
+    ]
+  },
+  "secondary match recall fix": {
+    "episodes": [
+      {
+        "distance": 1.0309,
+        "episode_id": "ep_6390d04799973fe5",
+        "rank": 0,
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
+      },
+      {
+        "distance": 1.4083,
+        "episode_id": "ep_fb6710782a025ed7",
+        "rank": 1,
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
+      },
+      {
+        "distance": 1.2303,
+        "episode_id": "ep_50b4f4cd354cbf5b",
+        "rank": 2,
+        "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
+      },
+      {
+        "distance": 1.2306,
+        "episode_id": "ep_b491149d828124e8",
+        "rank": 3,
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
+      },
+      {
+        "distance": 1.2871,
+        "episode_id": "ep_aade0a9bff3baf07",
+        "rank": 4,
+        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+      }
+    ],
+    "narrative_session_prefixes": [
+      "0b810af9",
+      "0f975ac8",
+      "65e3c3ee"
+    ],
+    "segments": [
+      {
+        "distance": 1.107,
+        "rank": 0,
+        "segment_id": "seg_1cbb3d442be271ad",
+        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
+      },
+      {
+        "distance": 1.1079,
+        "rank": 1,
+        "segment_id": "seg_e06dcdda66e7797f",
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
+      },
+      {
+        "distance": 1.117,
+        "rank": 2,
+        "segment_id": "seg_25a97f9bc9158987",
+        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
       },
       {
         "distance": 1.1683,
-        "rank": 2,
-        "segment_id": "seg_6dfeb5f615e62ab5",
+        "rank": 3,
+        "segment_id": "seg_4e22d5a15a6d4bce",
         "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
       },
       {
         "distance": 1.1697,
-        "rank": 3,
-        "segment_id": "seg_0ea696d9756be49b",
-        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
-      },
-      {
-        "distance": 1.1697,
         "rank": 4,
-        "segment_id": "seg_7d26b76fdee6e46c",
+        "segment_id": "seg_aa832a455ffcdb10",
         "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
       }
     ]
@@ -259,38 +360,39 @@
     "episodes": [],
     "narrative_session_prefixes": [
       "2901f511",
+      "b3e1506e",
       "fae52c08"
     ],
     "segments": [
       {
-        "distance": 0.7304,
+        "distance": 0.9249,
         "rank": 0,
-        "segment_id": "seg_2cb51ba0dbd73608",
+        "segment_id": "seg_f2289e0497902d98",
         "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
       },
       {
-        "distance": 0.735,
+        "distance": 0.9319,
         "rank": 1,
-        "segment_id": "seg_9255a3ee2c05f890",
+        "segment_id": "seg_7372a3a8b1aa5f5c",
         "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
       },
       {
-        "distance": 0.8684,
+        "distance": 1.1353,
         "rank": 2,
-        "segment_id": "seg_04d45dba3ee64f35",
-        "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
-      },
-      {
-        "distance": 0.9858,
-        "rank": 3,
-        "segment_id": "seg_0a927d29f5a019ed",
+        "segment_id": "seg_16ecc131edaac8f1",
         "session_id": "2901f511-0a85-4b7a-870a-26be43417e57"
       },
       {
-        "distance": 1.0606,
+        "distance": 1.1402,
+        "rank": 3,
+        "segment_id": "seg_91eb4ed1e378e2c5",
+        "session_id": "b3e1506e-0433-4a24-8c2c-ec2660d5324b"
+      },
+      {
+        "distance": 1.2019,
         "rank": 4,
-        "segment_id": "seg_35a07a90fdb6fd84",
-        "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
+        "segment_id": "seg_34df731c8cde9743",
+        "session_id": "2901f511-0a85-4b7a-870a-26be43417e57"
       }
     ]
   },
@@ -298,90 +400,99 @@
     "episodes": [
       {
         "distance": 1.4325,
-        "episode_id": "ep_7c784aa3e4bf77ac",
+        "episode_id": "ep_be4b8caac595e96d",
         "rank": 0,
         "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
       },
       {
-        "distance": 0.9712,
-        "episode_id": "ep_2a3140f91a72cac9",
+        "distance": 1.4521,
+        "episode_id": "ep_2e6a7d90ffc3a02d",
         "rank": 1,
-        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
+        "session_id": "bb5117ab-7c57-4f76-a77f-cb7102283527"
       },
       {
-        "distance": 1.1164,
-        "episode_id": "ep_753d3fbe254dbf4e",
+        "distance": 1.1401,
+        "episode_id": "ep_50b4f4cd354cbf5b",
         "rank": 2,
-        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
+        "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
       },
       {
-        "distance": 1.1619,
-        "episode_id": "ep_b7c0141c7991be39",
+        "distance": 1.4577,
+        "episode_id": "ep_4501792bdfac082e",
         "rank": 3,
-        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
+        "session_id": "7c9e5393-a25a-4132-91ce-15394c92ca27"
       },
       {
-        "distance": 1.3206,
-        "episode_id": "ep_c6ceeb02c0aeafa1",
+        "distance": 1.1339,
+        "episode_id": "ep_04519196cc8a0991",
         "rank": 4,
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+        "session_id": "419ca408-722b-4e19-849b-52bbebf67f2d"
       }
     ],
     "narrative_session_prefixes": [
       "0b810af9",
+      "65e3c3ee",
+      "7b4515c8",
       "f3ba67ab"
     ],
     "segments": [
       {
         "distance": 0.8604,
         "rank": 0,
-        "segment_id": "seg_66a04e85000ecb0a",
+        "segment_id": "seg_93aaf0ce7791d8be",
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       },
       {
-        "distance": 0.9574,
+        "distance": 0.9183,
         "rank": 1,
-        "segment_id": "seg_708d181a42c8b535",
-        "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
+        "segment_id": "seg_25a97f9bc9158987",
+        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
       },
       {
         "distance": 0.9574,
         "rank": 2,
-        "segment_id": "seg_f81670b936694fa1",
-        "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
-      },
-      {
-        "distance": 0.9574,
-        "rank": 3,
-        "segment_id": "seg_fd92fe281944ac05",
+        "segment_id": "seg_68bb254d8e58a2af",
         "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
       },
       {
         "distance": 1.0687,
-        "rank": 4,
-        "segment_id": "seg_55af2da5bde7cca7",
+        "rank": 3,
+        "segment_id": "seg_89ebc2538fc34ca6",
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+      },
+      {
+        "distance": 1.0725,
+        "rank": 4,
+        "segment_id": "seg_1cbb3d442be271ad",
+        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
       }
     ]
   },
   "what did we ship in v0.6": {
     "episodes": [],
     "narrative_session_prefixes": [
+      "04f54a92",
       "2901f511",
       "fae52c08"
     ],
     "segments": [
       {
-        "distance": 1.278,
+        "distance": 1.2973,
         "rank": 0,
-        "segment_id": "seg_2cb51ba0dbd73608",
+        "segment_id": "seg_34df731c8cde9743",
+        "session_id": "2901f511-0a85-4b7a-870a-26be43417e57"
+      },
+      {
+        "distance": 1.3362,
+        "rank": 1,
+        "segment_id": "seg_f2289e0497902d98",
         "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
       },
       {
-        "distance": 1.2973,
-        "rank": 1,
-        "segment_id": "seg_bc0a28849aa365c4",
-        "session_id": "2901f511-0a85-4b7a-870a-26be43417e57"
+        "distance": 1.3527,
+        "rank": 2,
+        "segment_id": "seg_523e337464282a62",
+        "session_id": "04f54a92-5047-4961-bbe2-95e381d15752"
       }
     ]
   }
