@@ -378,12 +378,23 @@ class VectorStore:
         """Upsert multiple segment embeddings in one ONNX batch.
 
         Each item: ``{"segment_id": str, "text": str, "metadata": dict}``.
-        Items with empty or whitespace-only text are dropped. Chunked at
-        CHROMA_BATCH_SIZE for Chroma stability. Returns the number of
-        embeddings upserted.
+        Items with empty or whitespace-only text are dropped, and duplicate
+        ids keep only the first occurrence — Chroma rejects a batch wholesale
+        when it contains a repeated id. Chunked at CHROMA_BATCH_SIZE for
+        Chroma stability. Returns the number of embeddings upserted.
         """
         if not items:
             return 0
+
+        seen_ids: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for item in items:
+            sid = str(item.get("segment_id") or "")
+            if sid in seen_ids:
+                continue
+            seen_ids.add(sid)
+            deduped.append(item)
+        items = deduped
 
         ids: list[str] = []
         documents: list[str] = []

@@ -232,9 +232,16 @@ def extract_segments(
         all_text = " ".join(user_texts)
         keywords = sorted(_extract_simple_keywords(all_text))[:20]
 
+        # Id includes the segment ordinal: events rebuilt from the DB can
+        # carry duplicate sequence numbers (live-tail + full-ingest rows),
+        # and two segments hashing to one id fails the whole ChromaDB batch.
+        # Re-analysis deletes-then-reinserts a session's segments, so id
+        # stability across extractor versions is not required.
         seg_id = (
             "seg_"
-            + hashlib.sha256(f"{session_id}:{seg_events[0].sequence}".encode()).hexdigest()[:16]
+            + hashlib.sha256(
+                f"{session_id}:{len(segments)}:{seg_events[0].sequence}".encode()
+            ).hexdigest()[:16]
         )
 
         segments.append(
