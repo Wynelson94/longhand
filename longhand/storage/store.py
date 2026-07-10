@@ -220,14 +220,18 @@ class LonghandStore:
         }
 
     def _events_for_session(self, session_id: str) -> list[Event]:
-        """Rebuild Event objects from the events table — only the fields project
-        attribution needs. Used when the transcript is no longer on disk."""
+        """Rebuild Event objects from the events table. Carries every field
+        the analysis layer reads (attribution, outcomes, episode extraction),
+        so rotated-off-disk transcripts can still be fully re-analyzed.
+        (error_category isn't stored as a column — episode tags degrade
+        gracefully without it.)"""
         from longhand.parser import _parse_timestamp
 
         rows = self.sqlite.get_events(session_id=session_id, limit=1_000_000)
         events: list[Event] = []
         for r in rows:
             try:
+                success = r.get("tool_success")
                 events.append(
                     Event(
                         event_id=r["event_id"],
@@ -237,15 +241,38 @@ class LonghandStore:
                         sequence=r["sequence"],
                         timestamp=_parse_timestamp(r.get("timestamp")),
                         cwd=r.get("cwd"),
+                        git_branch=r.get("git_branch"),
                         model=r.get("model"),
                         content=r.get("content") or "",
+                        is_sidechain=bool(r.get("is_sidechain")),
+                        tool_name=r.get("tool_name"),
+                        tool_use_id=r.get("tool_use_id"),
+                        tool_output=r.get("tool_output"),
+                        tool_success=None if success is None else bool(success),
                         file_path=r.get("file_path"),
                         file_operation=r.get("file_operation"),
+                        old_content=r.get("old_content"),
+                        new_content=r.get("new_content"),
+                        error_detected=bool(r.get("error_detected")),
+                        error_snippet=r.get("error_snippet"),
                     )
                 )
             except Exception:
                 continue
         return events
+
+    def load_session_from_db(self, row: dict) -> tuple[Session, list[Event]] | None:
+        """Rebuild (session, events) from the events table — for sessions whose
+        transcript has rotated off disk. Same source `reattribute` uses, so
+        `analyze --all` can re-extract the whole corpus, not just the ~25% of
+        sessions whose JSONLs still exist."""
+        from longhand.parser import _pick_best_project_cwd
+
+        events = self._events_for_session(row["session_id"])
+        if not events:
+            return None
+        best_cwd = _pick_best_project_cwd(events) or row.get("cwd") or row.get("project_path")
+        return self._session_from_row(row, best_cwd), events
 
     def _session_from_row(self, row: dict, cwd: str | None) -> Session:
         from longhand.parser import _parse_timestamp
@@ -266,9 +293,16 @@ class LonghandStore:
     def analyze_session(self, session: Session, events: list[Event]) -> dict:
         """Run the analysis layer for a session: project, outcome, episodes, embeddings.
 
-        Safe to call multiple times (upserts everywhere). Used both by `ingest_session`
-        and by the `longhand analyze --all` backfill command.
+        Safe to call multiple times — re-analysis REPLACES the session's
+        episodes and segments. Episode/segment ids hash the start position, so
+        when a new extractor draws different boundaries the fresh rows get new
+        ids; without the delete below, the old-boundary rows would linger as
+        stale duplicates forever. Used both by `ingest_session` and by the
+        `longhand analyze --all` backfill command.
         """
+        self.sqlite.delete_session_analysis(session.session_id)
+        self.vectors.delete_session_analysis(session.session_id)
+
         # 1. Project inference + attach (cwd↔project_id kept in lockstep here).
         project = self.attribute_session_project(session, events)
 

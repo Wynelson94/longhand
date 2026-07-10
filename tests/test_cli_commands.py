@@ -437,3 +437,39 @@ def test_db_vacuum_defers_to_running_ingest(runner: CliRunner, tmp_path: Path):
         left = conn.execute("SELECT COUNT(*) FROM events WHERE event_type='unknown'").fetchone()[0]
     assert left == 1  # untouched
     lock.unlink()
+
+
+def test_analyze_all_falls_back_to_events_table(runner: CliRunner, tmp_path: Path):
+    """Sessions whose transcript rotated off disk still get re-analyzed —
+    rebuilt from the events table instead of being counted as errors."""
+    from longhand.parser import JSONLParser
+    from longhand.storage import LonghandStore
+
+    transcript = tmp_path / "rotated.jsonl"
+    entries = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s-rot",
+            "timestamp": "2026-07-01T00:00:01Z",
+            "cwd": "/Users/tester/proj",
+            "message": {"role": "user", "content": "fix the bug"},
+        },
+    ]
+    transcript.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+    store = LonghandStore(data_dir=tmp_path / "lh")
+    parser = JSONLParser(transcript)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    store.ingest_session(session, events, run_analysis=False)
+
+    transcript.unlink()  # rotate it away
+
+    result = runner.invoke(app, ["analyze", "--all", "--data-dir", str(tmp_path / "lh")])
+    assert result.exit_code == 0, result.output
+    assert "Analyzed 1" in result.output
+    assert "1 rebuilt from the events table" in result.output
+    with store.sqlite.connect() as conn:
+        outcome = conn.execute("SELECT COUNT(*) FROM session_outcomes").fetchone()[0]
+    assert outcome == 1
