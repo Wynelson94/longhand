@@ -353,8 +353,20 @@ class JSONLParser:
         if entry_type == "file-history-snapshot":
             return [self._file_snapshot_event(entry, base_sequence)]
 
-        # Queue operations and progress — skip (internal orchestration)
-        if entry_type in {"queue-operation", "progress"}:
+        # Internal orchestration and auxiliary UI state — skip. Each of these
+        # would otherwise be stored as an "unknown" event carrying its full
+        # raw_json (12,238 rows — the 3rd-largest event type on a real
+        # corpus) while containing nothing recallable.
+        if entry_type in {
+            "queue-operation",
+            "progress",
+            "last-prompt",
+            "mode",
+            "permission-mode",
+            "attachment",
+            "ai-title",
+            "agent-name",
+        }:
             return []
 
         # User messages
