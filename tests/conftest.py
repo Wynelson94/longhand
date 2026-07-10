@@ -9,6 +9,14 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_update_check(monkeypatch):
+    """Keep the suite offline and deterministic: the CLI app callback would
+    otherwise refresh the PyPI update cache after every CliRunner invocation.
+    Tests that exercise the update check delete this env var explicitly."""
+    monkeypatch.setenv("LONGHAND_NO_UPDATE_CHECK", "1")
+
+
 def _line(entry: dict[str, Any]) -> str:
     return json.dumps(entry) + "\n"
 

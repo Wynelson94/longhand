@@ -981,6 +981,12 @@ def doctor() -> None:
             "[yellow]⚠[/yellow] not on PATH (run [bold]pip install longhand[/bold])",
         )
 
+    # 1b. Version freshness — the ONLY doctor check that goes online (a single
+    # HTTPS GET to pypi.org; opt-out via LONGHAND_NO_UPDATE_CHECK=1).
+    from longhand import update_check
+
+    table.add_row("Version", update_check.doctor_status())
+
     # 2. SessionEnd + Stop + UserPromptSubmit hooks installed?
     hook_installed = False
     hook_stale = False
