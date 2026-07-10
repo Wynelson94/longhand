@@ -277,3 +277,95 @@ def test_ingest_single_session_reclaims_stale_lock_and_releases(sample_session_f
         n = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
     assert n == 1
     assert not lock.exists()  # released in the finally
+
+
+# ─── spawn_background generalization + episode-backfill trigger ──────────────
+
+
+def _with_fix_episode(episode_id: str = "ep-bg") -> dict:
+    return {
+        "episode_id": episode_id,
+        "session_id": "s-bg",
+        "project_id": "p-bg",
+        "started_at": "2026-07-01T10:00:00Z",
+        "ended_at": "2026-07-01T10:30:00Z",
+        "problem_event_id": f"{episode_id}-prob",
+        "fix_event_id": f"{episode_id}-fix",
+        "problem_description": "background backfill problem",
+        "fix_summary": "background backfill fix",
+        "touched_files": [],
+        "tags": [],
+        "status": "resolved",
+    }
+
+
+def test_trigger_background_episode_backfill_spawn_target(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+
+    with patch("subprocess.Popen") as mock_popen:
+        assert project_fallback.trigger_background_episode_backfill(temp_store) is True
+
+    argv = mock_popen.call_args[0][0]
+    assert argv == [sys.executable, "-m", "longhand", "backfill-episodes"]
+
+
+def test_spawn_background_skips_when_lock_holder_alive(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text(str(os.getppid()))  # an alive holder
+
+    with patch("subprocess.Popen") as mock_popen:
+        assert project_fallback.trigger_background_episode_backfill(temp_store) is False
+
+    mock_popen.assert_not_called()
+    lock.unlink()
+
+
+def test_recall_spawns_backfill_instead_of_embedding_inline(temp_store, monkeypatch):
+    """The recall pipeline runs inside the UserPromptSubmit hook — it must
+    never embed the corpus inline. When a backfill is needed it spawns the
+    detached worker and serves the current query from SQLite."""
+    from longhand.recall import recall_pipeline
+
+    temp_store.sqlite.insert_episodes([_with_fix_episode()])
+    assert temp_store.episode_backfill_needed() is True
+
+    spawned: list[int] = []
+    monkeypatch.setattr(
+        recall_pipeline,
+        "trigger_background_episode_backfill",
+        lambda store: spawned.append(1) or True,
+    )
+
+    def _no_inline(*args, **kwargs):
+        raise AssertionError("recall embedded episodes inline")
+
+    monkeypatch.setattr(temp_store, "backfill_episode_embeddings", _no_inline)
+    monkeypatch.setattr(temp_store, "ensure_episode_embeddings", _no_inline)
+    # Keep the match-miss fallback from scanning the real ~/.claude/projects.
+    monkeypatch.setattr(recall_pipeline, "match_projects", lambda *a, **k: [])
+
+    recall_pipeline.recall(temp_store, "background backfill problem")
+
+    assert spawned == [1]
+    assert temp_store.vectors.episode_count() == 0  # nothing embedded inline
+
+
+def test_recall_does_not_spawn_when_vectors_populated(temp_store, monkeypatch):
+    from longhand.recall import recall_pipeline
+
+    temp_store.sqlite.insert_episodes([_with_fix_episode("ep-done")])
+    temp_store.backfill_episode_embeddings()
+    assert temp_store.episode_backfill_needed() is False
+
+    spawned: list[int] = []
+    monkeypatch.setattr(
+        recall_pipeline,
+        "trigger_background_episode_backfill",
+        lambda store: spawned.append(1) or True,
+    )
+    monkeypatch.setattr(recall_pipeline, "match_projects", lambda *a, **k: [])
+
+    recall_pipeline.recall(temp_store, "background backfill problem")
+
+    assert spawned == []
