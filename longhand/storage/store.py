@@ -424,18 +424,28 @@ class LonghandStore:
 
         return embedded
 
+    def episode_backfill_needed(self) -> bool:
+        """True when SQLite has episodes but the vector collection is empty —
+        i.e. a first run after upgrading to a version with episode embeddings.
+        Cheap (two counts); never raises.
+        """
+        try:
+            if self.vectors.episode_count() > 0:
+                return False
+            return self.sqlite.count_episodes() > 0
+        except Exception:
+            return False
+
     def ensure_episode_embeddings(self) -> int:
         """If the episodes vector collection is empty but SQLite has episodes,
         transparently backfill. Returns the number of episodes embedded
-        (0 if no backfill was needed). Safe to call on every recall.
+        (0 if no backfill was needed).
+
+        NB: this embeds inline — up to the whole corpus. The recall pipeline
+        deliberately does NOT call it (it spawns a detached
+        `longhand backfill-episodes` instead); this stays for the CLI and for
+        callers that want the synchronous behavior.
         """
-        try:
-            vector_count = self.vectors.episode_count()
-        except Exception:
-            return 0
-        if vector_count > 0:
-            return 0
-        sql_count = self.sqlite.count_episodes()
-        if sql_count == 0:
+        if not self.episode_backfill_needed():
             return 0
         return self.backfill_episode_embeddings()

@@ -291,3 +291,55 @@ def test_ensure_episode_embeddings_noops_when_already_populated(temp_store: Long
 
     n = temp_store.ensure_episode_embeddings()
     assert n == 0
+
+
+def test_episode_backfill_needed_states(temp_store: LonghandStore):
+    """False on empty store, True with unembedded episodes, False after backfill."""
+    assert temp_store.episode_backfill_needed() is False
+
+    temp_store.sqlite.insert_episodes(
+        [_fixture_episode(episode_id="ep-need", problem="p", fix="f")]
+    )
+    assert temp_store.episode_backfill_needed() is True
+
+    temp_store.backfill_episode_embeddings()
+    assert temp_store.episode_backfill_needed() is False
+
+
+def test_backfill_cli_defers_when_lock_held(temp_store: LonghandStore):
+    """backfill-episodes must not race a running ingest for ChromaDB writes."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from longhand.cli._commands import app
+
+    temp_store.sqlite.insert_episodes(
+        [_fixture_episode(episode_id="ep-lock", problem="p", fix="f")]
+    )
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text(str(os.getppid()))  # an alive holder
+
+    result = CliRunner().invoke(app, ["backfill-episodes", "--data-dir", str(temp_store.data_dir)])
+    assert result.exit_code == 0  # deferral is success, not failure
+    assert "deferring" in result.stdout.lower()
+    assert temp_store.vectors.episode_count() == 0  # nothing embedded
+    assert lock.read_text().strip() == str(os.getppid())  # not ours; untouched
+    lock.unlink()
+
+
+def test_backfill_cli_reclaims_stale_lock_and_releases(temp_store: LonghandStore):
+    from typer.testing import CliRunner
+
+    from longhand.cli._commands import app
+
+    temp_store.sqlite.insert_episodes(
+        [_fixture_episode(episode_id="ep-stale", problem="p", fix="f")]
+    )
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text("0")  # dead/invalid holder
+
+    result = CliRunner().invoke(app, ["backfill-episodes", "--data-dir", str(temp_store.data_dir)])
+    assert result.exit_code == 0
+    assert temp_store.vectors.episode_count() == 1
+    assert not lock.exists()  # released in the finally

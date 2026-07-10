@@ -2499,9 +2499,19 @@ def backfill_episodes(
 
     Needed once after upgrading to a version that added the episodes
     ChromaDB collection. Idempotent — safe to re-run. The recall pipeline
-    also triggers this automatically on first use, so most users never
-    need to call it directly.
+    spawns this in the background on first use, so most users never need
+    to call it directly.
+
+    Takes the ingest lock: the embedding pass writes ChromaDB, and a
+    concurrent ingest would race it. A locked-out run defers (success
+    exit) — the recall pipeline re-spawns it on the next query for as
+    long as the backfill is still needed.
     """
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock,
+        release_ingest_lock,
+    )
+
     store = _get_store(data_dir)
 
     sql_count = store.sqlite.count_episodes()
@@ -2515,18 +2525,28 @@ def backfill_episodes(
         console.print(f"[green]✓[/green] All {sql_count} episodes already embedded.")
         return
 
-    console.print(
-        f"[cyan]Embedding {sql_count} episode(s)...[/cyan] [dim]({vector_count} already done)[/dim]"
-    )
+    if not claim_ingest_lock(store):
+        console.print(
+            "[yellow]Another Longhand ingest is running — deferring the episode "
+            "backfill; the next recall will retry it.[/yellow]"
+        )
+        return
 
-    def _progress(done: int, total: int) -> None:
-        console.print(f"   {done}/{total}...", end="\r")
+    try:
+        console.print(
+            f"[cyan]Embedding {sql_count} episode(s)...[/cyan] [dim]({vector_count} already done)[/dim]"
+        )
 
-    embedded = store.backfill_episode_embeddings(progress=_progress)
-    console.print(
-        f"[green]✓[/green] Embedded {embedded} episode(s). "
-        f"Vector collection now has {store.vectors.episode_count()} entries."
-    )
+        def _progress(done: int, total: int) -> None:
+            console.print(f"   {done}/{total}...", end="\r")
+
+        embedded = store.backfill_episode_embeddings(progress=_progress)
+        console.print(
+            f"[green]✓[/green] Embedded {embedded} episode(s). "
+            f"Vector collection now has {store.vectors.episode_count()} entries."
+        )
+    finally:
+        release_ingest_lock(store)
 
 
 if __name__ == "__main__":

@@ -109,14 +109,15 @@ def infer_missing_projects(store: LonghandStore) -> list[dict[str, Any]]:
     return inferred
 
 
-def trigger_background_ingest(store: LonghandStore) -> bool:
-    """Fire a detached `longhand ingest` in the background.
+def spawn_background(store: LonghandStore, subcommand: list[str], log_prefix: str) -> bool:
+    """Fire a detached `longhand <subcommand>` in the background.
 
-    Returns True if a new ingest subprocess was spawned; False if one is
-    already running (lockfile owned by an alive PID) or we couldn't start.
+    Returns True if a subprocess was spawned; False if an ingest-lock holder
+    is already alive (the work is underway — don't stack another process) or
+    the spawn failed.
 
     The subprocess itself owns the lockfile — see `claim_ingest_lock` in
-    this module. This module never writes the lock; it just reads it to
+    this module. This function never writes the lock; it just reads it to
     decide whether to skip spawning.
     """
     lock = _lock_path(store)
@@ -133,7 +134,7 @@ def trigger_background_ingest(store: LonghandStore) -> bool:
         return False
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    log_file = logs / f"background-ingest-{today}.log"
+    log_file = logs / f"{log_prefix}-{today}.log"
 
     try:
         # Open inside a `with` so the parent closes its FD as soon as Popen
@@ -143,8 +144,8 @@ def trigger_background_ingest(store: LonghandStore) -> bool:
             subprocess.Popen(
                 # "-m longhand" (the package __main__), NOT "-m longhand.cli":
                 # longhand.cli is a package with no __main__.py, so spawning
-                # it dies instantly and the background ingest never runs.
-                [sys.executable, "-m", "longhand", "ingest"],
+                # it dies instantly and the background work never runs.
+                [sys.executable, "-m", "longhand", *subcommand],
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -153,6 +154,22 @@ def trigger_background_ingest(store: LonghandStore) -> bool:
         return True
     except Exception:
         return False
+
+
+def trigger_background_ingest(store: LonghandStore) -> bool:
+    """Fire a detached `longhand ingest` in the background."""
+    return spawn_background(store, ["ingest"], "background-ingest")
+
+
+def trigger_background_episode_backfill(store: LonghandStore) -> bool:
+    """Fire a detached `longhand backfill-episodes` in the background.
+
+    Used by the recall pipeline after an upgrade that added the episodes
+    vector collection: embedding the whole corpus inline would block the
+    user's prompt (recall runs in the UserPromptSubmit hook), so the work
+    happens in a detached process that claims the ingest lock.
+    """
+    return spawn_background(store, ["backfill-episodes"], "background-backfill")
 
 
 def claim_ingest_lock(store: LonghandStore) -> bool:

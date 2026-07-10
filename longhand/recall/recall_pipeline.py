@@ -21,6 +21,7 @@ from typing import Any
 from longhand.parser import discover_sessions
 from longhand.recall.episode_search import find_episodes
 from longhand.recall.narrative import build_narrative
+from longhand.recall.project_fallback import trigger_background_episode_backfill
 from longhand.recall.project_match import ProjectMatch, match_projects
 from longhand.recall.segment_search import find_segments
 from longhand.recall.time_parser import parse_time_phrase
@@ -167,12 +168,15 @@ def recall(
     if now is None:
         now = datetime.now(timezone.utc)
 
-    # 0. Transparent first-run backfill — if we're on a fresh upgrade and the
-    # episodes vector collection is empty while the SQLite episode table is
-    # populated, embed everything now so semantic episode search works.
-    # Idempotent and a no-op after the first call.
+    # 0. First-run backfill — after an upgrade the episodes vector collection
+    # can be empty while SQLite is populated. Embedding the whole corpus
+    # inline would block the user's prompt (recall runs inside the
+    # UserPromptSubmit hook), so spawn a detached `longhand backfill-episodes`
+    # (which claims the ingest lock) and serve this recall from SQLite;
+    # semantic episode search comes online once the backfill lands.
     try:
-        store.ensure_episode_embeddings()
+        if store.episode_backfill_needed():
+            trigger_background_episode_backfill(store)
     except Exception:
         pass
 
