@@ -9,6 +9,65 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.11.2] — 2026-07-10
+
+Bugfix release from a full audit of the codebase and a live 324-session corpus:
+multi-process reliability, Windows correctness, and a privacy gap in `redact`.
+No schema changes and no new migrations — deliberately, so the migration-race
+fix below reaches every install before any future migration ships.
+
+### Fixed
+
+- **Background semantic-index catch-up actually runs again.** The recall
+  fallback spawned `python -m longhand.cli` — a package with no `__main__.py` —
+  so every background ingest died instantly, and silently (output went to a log
+  file, exceptions were swallowed). The spawn now targets `python -m longhand`,
+  and a regression test asserts the spawn target is importable and runnable so
+  this class of bug can't ship again. If your ChromaDB vector index has lagged
+  behind the main database, it will converge over subsequent recalls. (#41)
+- **Parallel sessions no longer race ChromaDB.** SessionEnd ingest was the one
+  write path that never took the ingest lock, so two sessions ending together
+  could open concurrent ChromaDB writers on the same directory (lock errors,
+  HNSW-index corruption risk). It now claims the lock and — if a bulk ingest
+  holds it — defers with a success exit instead of failing; `reconcile` or the
+  background sweep picks the session up later. (#41)
+- **The Stop hook can no longer crash on store construction.** `ingest-live`
+  promised "never raises" but built the store, checked the tail cursor, and
+  claimed the lock *outside* its guard — a corrupted Chroma dir, a full disk,
+  or a migration race would have crashed the hook every turn. The whole body is
+  now guarded; init failures return a summary dict and exit 0. (#41)
+- **Concurrent first-run migrations no longer crash the loser.** Two processes
+  applying the same migration right after an upgrade (parallel session hooks,
+  the CLI, and the MCP server all construct stores) raced `schema_version` and
+  the loser crashed with `sqlite3.IntegrityError`; it now waits for the
+  winner's version row and continues. SQLite `busy_timeout` also raised
+  5s → 30s for compaction-heavy parallel writes. (#41)
+- **`find_episodes` no longer returns `[]` by default on noisy corpora.** The
+  `has_fix=true` default filtered in Python *after* SQL's
+  `ORDER BY ended_at DESC LIMIT`, so when the newest N episodes were fixless
+  extraction noise, every with-fix episode fell past the limit and the tool's
+  default call came back empty. The filter now lives in the SQL `WHERE`. (#44)
+- **Windows: subagent transcripts are no longer ingested as real sessions.**
+  The `"/subagents/"` substring check never matched backslash paths; the
+  filter now checks path components. (#44)
+- **Windows: drift scan no longer crashes on non-ASCII transcripts.** A bare
+  `open()` used the platform encoding (cp1252 on Windows) with strict
+  decoding, and the resulting `UnicodeDecodeError` escaped through
+  `recall_project_status`. Now UTF-8 with `errors=replace`, matching the main
+  parser. (#44)
+- **Outcome classifier: error → clean → error is "stuck", not "fixed".** A
+  clean result now only counts as "ended clean" when it came after the *last*
+  error, so sessions that ended broken stop inflating the fixed count.
+  Historical labels are unchanged unless you re-run `longhand analyze --all`.
+  (#44)
+- **`redact --apply` now actually covers segments — and git commit messages.**
+  The retroactive-redaction table map named a nonexistent `segments` table
+  (the real one is `conversation_segments`), and per-table error handling
+  silently skipped it — so segment topics (the verbatim first user message),
+  summaries, and keywords were never scanned. Git commit messages weren't
+  listed at all. Both are covered now; re-run `longhand redact --apply` if
+  you've relied on it. (#44)
+
 ## [0.11.1] — 2026-06-18
 
 Bugfix release: per-project rollup counters were inflated, and sessions could be
