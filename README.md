@@ -167,6 +167,8 @@ Everything in Longhand's analysis is rules-based. Regex error detection. Hash-ba
 
 Your Claude Code history is yours. It goes into a SQLite file and a ChromaDB directory in `~/.longhand/`. No telemetry. No sync. No account. If your laptop is offline, Longhand works. If Anthropic goes down, Longhand works. If you delete the directory, it's gone.
 
+One boring exception, disclosed in full: the interactive CLI checks pypi.org for a newer Longhand version at most once a day. That request carries nothing but itself — no telemetry, no identifiers, nothing about your corpus — and a newer version just shows up as a dim one-line hint and a `doctor` row. It never runs from hooks or the MCP server, never blocks a command, and `LONGHAND_NO_UPDATE_CHECK=1` turns it off entirely. "Zero API calls" means what it always meant: no LLM or cloud service ever touches your data.
+
 ---
 
 ## What It Actually Does

@@ -70,6 +70,53 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# Hook/plumbing entry points where the update check must never run: hooks fire
+# on every Claude Code turn and the MCP server is a long-lived subprocess —
+# neither may gain network calls, extra output, or startup latency. Every
+# hidden command belongs here (enforced by test_update_check.py).
+_UPDATE_CHECK_EXCLUDED = {
+    "__prompt-hook-run",
+    "backfill-episodes",
+    "context",
+    "ingest-live",
+    "ingest-session",
+    "mcp-server",
+    "reanalyze",
+}
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    from longhand import update_check
+    from longhand.version import __version__
+
+    console.print(f"longhand {__version__}")
+    hint = update_check.hint_from_cache()
+    if hint:
+        console.print(hint, style="dim")
+    raise typer.Exit()
+
+
+@app.callback()
+def _app_main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print the installed version and exit.",
+    ),
+):
+    if ctx.invoked_subcommand not in _UPDATE_CHECK_EXCLUDED:
+        from longhand import update_check
+
+        # Runs after the command finishes: prints the cache-only hint, then
+        # refreshes the cache (24h TTL) so the *next* run knows what's newest.
+        ctx.call_on_close(update_check.after_command)
+
 
 # -----------------------------------------------------------------------------
 # SETUP — one-command install wrapper
