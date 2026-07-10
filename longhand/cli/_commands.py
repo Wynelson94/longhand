@@ -489,6 +489,11 @@ def reconcile(
     )
     console.print(f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL")
     console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
+    if report.skipped_oversize:
+        console.print(
+            f"  [dim]{len(report.skipped_oversize)} skipped — over the parser size cap "
+            "(not ingestable by any path)[/dim]"
+        )
 
     if not fix:
         if report.missing or report.null_project or report.partially_indexed:

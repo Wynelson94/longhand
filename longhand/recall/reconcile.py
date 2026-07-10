@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from longhand.parser import JSONLParser, discover_sessions
+from longhand.parser import MAX_FILE_SIZE_BYTES, JSONLParser, discover_sessions
 from longhand.recall.project_fallback import (
     claim_ingest_lock,
     release_ingest_lock,
@@ -25,6 +25,7 @@ class ReconcileReport:
     null_project: list[str] = field(default_factory=list)  # transcript paths
     missing: list[str] = field(default_factory=list)
     partially_indexed: list[str] = field(default_factory=list)  # crashed mid-pipeline
+    skipped_oversize: list[str] = field(default_factory=list)  # > parser size cap
     ingested: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)  # [{path, error}]
     fix_applied: bool = False
@@ -37,6 +38,8 @@ class ReconcileReport:
             "null_project_count": len(self.null_project),
             "missing_count": len(self.missing),
             "partially_indexed_count": len(self.partially_indexed),
+            "skipped_oversize_count": len(self.skipped_oversize),
+            "skipped_oversize": self.skipped_oversize,
             "null_project": self.null_project,
             "missing": self.missing,
             "partially_indexed": self.partially_indexed,
@@ -68,8 +71,18 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
     missing: list[Path] = []
     null_project: list[Path] = []
     partial: list[Path] = []
+    oversize: list[Path] = []
     fully_indexed = 0
     for f in files:
+        # Files past the parser's size cap can't be ingested by ANY path —
+        # report them instead of erroring on every --fix pass (or worse,
+        # sitting silently in the missing bucket forever).
+        try:
+            if f.stat().st_size > MAX_FILE_SIZE_BYTES:
+                oversize.append(f)
+                continue
+        except OSError:
+            pass
         state = indexed.get(str(f), "__not_found__")
         if state == "__not_found__":
             missing.append(f)
@@ -92,6 +105,7 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
         null_project=[str(p) for p in null_project],
         missing=[str(p) for p in missing],
         partially_indexed=[str(p) for p in partial],
+        skipped_oversize=[str(p) for p in oversize],
     )
 
     if not fix:
