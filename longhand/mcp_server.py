@@ -700,9 +700,13 @@ async def list_tools() -> list[Tool]:
             },
             outputSchema={
                 "type": "object",
-                "description": "Counts of fully-indexed, null-project, missing, ingested, and errors.",
+                "description": (
+                    "Counts of fully-indexed, partially-indexed, null-project, "
+                    "missing, ingested, and errors."
+                ),
                 "properties": {
                     "fully_indexed": {"type": "integer"},
+                    "partially_indexed": {"type": "integer"},
                     "null_project": {"type": "integer"},
                     "missing": {"type": "integer"},
                     "ingested": {"type": "integer"},

@@ -24,6 +24,7 @@ class ReconcileReport:
     fully_indexed: int
     null_project: list[str] = field(default_factory=list)  # transcript paths
     missing: list[str] = field(default_factory=list)
+    partially_indexed: list[str] = field(default_factory=list)  # crashed mid-pipeline
     ingested: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)  # [{path, error}]
     fix_applied: bool = False
@@ -35,8 +36,10 @@ class ReconcileReport:
             "fully_indexed": self.fully_indexed,
             "null_project_count": len(self.null_project),
             "missing_count": len(self.missing),
+            "partially_indexed_count": len(self.partially_indexed),
             "null_project": self.null_project,
             "missing": self.missing,
+            "partially_indexed": self.partially_indexed,
             "ingested": self.ingested,
             "errors": self.errors,
             "fix_applied": self.fix_applied,
@@ -48,9 +51,10 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
     """Classify on-disk JSONLs vs. indexed sessions; optionally re-ingest problem buckets.
 
     Without `fix`: returns counts only.
-    With `fix=True`: acquires the ingest lock and re-ingests missing + null-project
-    entries using current project inference. If another ingest is running, returns
-    with `lock_unavailable=True` and zero ingested.
+    With `fix=True`: acquires the ingest lock and re-ingests missing,
+    null-project, and partially-indexed entries using current project
+    inference. If another ingest is running, returns with
+    `lock_unavailable=True` and zero ingested.
     """
     files = discover_sessions()
     if not files:
@@ -59,9 +63,11 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
     with store.sqlite.connect() as conn:
         rows = conn.execute("SELECT transcript_path, project_id FROM sessions").fetchall()
     indexed: dict[str, str | None] = {r[0]: r[1] for r in rows}
+    stages = store.sqlite.analysis_stages()
 
     missing: list[Path] = []
     null_project: list[Path] = []
+    partial: list[Path] = []
     fully_indexed = 0
     for f in files:
         state = indexed.get(str(f), "__not_found__")
@@ -69,6 +75,14 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
             missing.append(f)
         elif state is None:
             null_project.append(f)
+        elif stages.get(str(f)) == "pending":
+            # The ingest pipeline started but never finished — a crash left
+            # this session with events but possibly no analysis/vectors.
+            # Only 'pending' counts: NULL is a pre-v0.12 or live-tail row
+            # (unknown — treated as complete so upgrades don't stampede),
+            # and 'events' is a deliberate --skip-analysis defer owned by
+            # `longhand analyze --all`.
+            partial.append(f)
         else:
             fully_indexed += 1
 
@@ -77,12 +91,13 @@ def run_reconcile(store: LonghandStore, fix: bool = False) -> ReconcileReport:
         fully_indexed=fully_indexed,
         null_project=[str(p) for p in null_project],
         missing=[str(p) for p in missing],
+        partially_indexed=[str(p) for p in partial],
     )
 
     if not fix:
         return report
 
-    to_process = missing + null_project
+    to_process = missing + null_project + partial
     if not to_process:
         report.fix_applied = True
         return report

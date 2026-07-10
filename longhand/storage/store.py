@@ -65,12 +65,21 @@ class LonghandStore:
         """Persist a parsed session and its events to both backends.
 
         Pipeline:
+        0. Mark intent (analysis_stage='pending' — a crash below leaves this
+           marker for reconcile's partially_indexed bucket)
         1. SQLite events + session
         2. Vector store embeddings
         3. Tool pair linking (call ↔ result)
         4. Ingestion log
-        5. (optional) Analysis: project inference, outcome, episodes, session embedding
+        5. (optional) Analysis: project inference, outcome, episodes, session
+           embedding — stamps analysis_stage='analyzed' on completion;
+           run_analysis=False stamps 'events' (deliberate defer, not a crash)
+
+        Each step commits separately; the stage marker is what makes a
+        mid-pipeline failure visible instead of silently under-analyzed.
         """
+        self.sqlite.mark_ingest_started(session.transcript_path, session.session_id)
+
         self.sqlite.upsert_session(session)
         sql_inserted = self.sqlite.insert_events(events)
         vec_inserted = self.vectors.add_events(events)
@@ -102,6 +111,8 @@ class LonghandStore:
         if run_analysis:
             analysis_result = self.analyze_session(session, events)
             result.update(analysis_result)
+        else:
+            self.sqlite.set_analysis_stage(session.transcript_path, "events")
 
         return result
 
@@ -302,6 +313,11 @@ class LonghandStore:
             text=session_text,
             metadata=session_meta,
         )
+
+        # Full pipeline done for this transcript — clears the 'pending' crash
+        # marker. Also covers `longhand analyze --all`, which calls this
+        # directly. No-op when the transcript has no ingestion_log row.
+        self.sqlite.set_analysis_stage(session.transcript_path, "analyzed")
 
         return {
             "project_id": project["project_id"],

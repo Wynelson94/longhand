@@ -381,3 +381,43 @@ def test_concurrent_store_init_does_not_crash(tmp_path: Path):
     ).fetchall()
     conn.close()
     assert dupes == []
+
+
+def test_v7_adds_analysis_stage_null_for_existing_rows(tmp_path: Path):
+    """Upgrading a pre-v7 database adds the column with NULL for existing
+    rows — NULL means "unknown, treat as complete" so the upgrade never
+    triggers a re-analysis stampede."""
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    # Minimal base tables so migrations 1-6 apply (matches
+    # test_apply_migrations_from_empty), plus the pre-v7 ingestion_log shape.
+    conn.execute(
+        "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_path TEXT, transcript_path TEXT, started_at TEXT, ended_at TEXT, event_count INTEGER, user_message_count INTEGER, assistant_message_count INTEGER, tool_call_count INTEGER, file_edit_count INTEGER, git_branch TEXT, cwd TEXT, model TEXT, ingested_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE events (event_id TEXT PRIMARY KEY, session_id TEXT, parent_event_id TEXT, event_type TEXT, sequence INTEGER, timestamp TEXT, cwd TEXT, git_branch TEXT, model TEXT, content TEXT, is_sidechain INTEGER, tool_name TEXT, tool_use_id TEXT, tool_input_json TEXT, tool_output TEXT, tool_success INTEGER, file_path TEXT, file_operation TEXT, old_content TEXT, new_content TEXT, raw_json TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE ingestion_log (transcript_path TEXT PRIMARY KEY, "
+        "session_id TEXT NOT NULL, ingested_at TEXT NOT NULL, "
+        "file_size INTEGER NOT NULL, event_count INTEGER NOT NULL)"
+    )
+    conn.execute("INSERT INTO ingestion_log VALUES ('/t/old.jsonl', 's-old', '2026-01-01', 100, 5)")
+    conn.commit()
+
+    apply_migrations(conn)
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(ingestion_log)")}
+    assert "analysis_stage" in cols
+    stage = conn.execute(
+        "SELECT analysis_stage FROM ingestion_log WHERE transcript_path = '/t/old.jsonl'"
+    ).fetchone()[0]
+    assert stage is None
+    conn.close()
+
+
+def test_fresh_store_has_analysis_stage(tmp_path: Path):
+    store = SQLiteStore(tmp_path / "lh" / "longhand.db")
+    with store.connect() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(ingestion_log)")}
+    assert "analysis_stage" in cols

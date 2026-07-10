@@ -267,18 +267,77 @@ class SQLiteStore:
             )
         return pairs
 
-    def log_ingestion(
-        self, transcript_path: str, session_id: str, file_size: int, event_count: int
-    ) -> None:
+    def mark_ingest_started(self, transcript_path: str, session_id: str) -> None:
+        """Record intent before the ingest pipeline runs.
+
+        A crash anywhere in the pipeline leaves analysis_stage='pending',
+        which reconcile classifies as partially_indexed and --fix repairs.
+        Preserves an existing row's file_size/event_count/last_offset (the
+        live-tail cursor may already be mid-file).
+        """
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO ingestion_log
-                    (transcript_path, session_id, ingested_at, file_size, event_count)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO ingestion_log
+                    (transcript_path, session_id, ingested_at, file_size,
+                     event_count, analysis_stage)
+                VALUES (?, ?, ?, 0, 0, 'pending')
+                ON CONFLICT(transcript_path) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    analysis_stage = 'pending'
                 """,
-                (transcript_path, session_id, _iso(datetime.now()), file_size, event_count),
+                (transcript_path, session_id, _iso(datetime.now())),
             )
+
+    def log_ingestion(
+        self, transcript_path: str, session_id: str, file_size: int, event_count: int
+    ) -> None:
+        """Record a completed core-data ingest (analysis may still follow).
+
+        Preserves the live-tail cursor: a full ingest consumed the whole file,
+        so last_offset advances to at least file_size instead of being reset
+        to 0 (which made the next Stop-hook tail re-parse from the start).
+        """
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ingestion_log
+                    (transcript_path, session_id, ingested_at, file_size,
+                     event_count, analysis_stage, last_offset)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                ON CONFLICT(transcript_path) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    ingested_at = excluded.ingested_at,
+                    file_size = excluded.file_size,
+                    event_count = excluded.event_count,
+                    analysis_stage = 'pending',
+                    last_offset = MAX(last_offset, excluded.file_size)
+                """,
+                (
+                    transcript_path,
+                    session_id,
+                    _iso(datetime.now()),
+                    file_size,
+                    event_count,
+                    file_size,
+                ),
+            )
+
+    def set_analysis_stage(self, transcript_path: str, stage: str) -> None:
+        """Advance the pipeline marker ('events' or 'analyzed') for a transcript."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE ingestion_log SET analysis_stage = ? WHERE transcript_path = ?",
+                (stage, transcript_path),
+            )
+
+    def analysis_stages(self) -> dict[str, str | None]:
+        """transcript_path → analysis_stage for every logged ingest."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT transcript_path, analysis_stage FROM ingestion_log"
+            ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def already_ingested(self, transcript_path: str, current_size: int) -> bool:
         """Check if a file has been ingested at its current size (for skip on re-ingest)."""
