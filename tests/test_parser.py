@@ -345,3 +345,25 @@ def test_tail_parse_skips_non_dict_json_lines(tmp_path):
     events, safe_offset = parser.parse_tail_from_offset(0)
     assert len(events) == 1
     assert safe_offset == len(content.encode("utf-8"))
+
+
+def test_is_subagent_transcript_cross_platform():
+    """The subagent filter must check path components, not a substring.
+
+    Regression: `"/subagents/" in str(path)` never matches on Windows
+    (backslash separators), so subagent transcripts were ingested as
+    standalone sessions and polluted the corpus.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    from longhand.parser import _is_subagent_transcript
+
+    posix = PurePosixPath("/Users/x/.claude/projects/p/sess/subagents/agent.jsonl")
+    win = PureWindowsPath(r"C:\Users\x\.claude\projects\p\sess\subagents\agent.jsonl")
+    plain = PurePosixPath("/Users/x/.claude/projects/p/sess.jsonl")
+    lookalike = PurePosixPath("/Users/x/projects/subagents-notes/sess.jsonl")
+
+    assert _is_subagent_transcript(posix) is True
+    assert _is_subagent_transcript(win) is True
+    assert _is_subagent_transcript(plain) is False
+    assert _is_subagent_transcript(lookalike) is False

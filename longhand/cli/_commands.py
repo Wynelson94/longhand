@@ -1279,8 +1279,13 @@ _REDACT_TABLES: dict[str, tuple[str, list[str]]] = {
         ],
     ),
     "episodes": ("episode_id", ["problem_description", "diagnosis_summary", "fix_summary"]),
-    "segments": ("segment_id", ["summary", "keywords_json"]),
+    # The table is conversation_segments — a bare "segments" key selected a
+    # nonexistent table, was swallowed by the per-table except, and left ALL
+    # segment text unredacted. topic holds the segment's verbatim first user
+    # message, so it must be scanned too.
+    "conversation_segments": ("segment_id", ["topic", "summary", "keywords_json"]),
     "session_outcomes": ("session_id", ["summary", "topics_json"]),
+    "git_operations": ("git_op_id", ["commit_message"]),
 }
 
 

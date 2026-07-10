@@ -146,6 +146,26 @@ def test_classify_stuck_session():
     assert outcome["outcome"] == "stuck"
 
 
+def test_classify_error_after_clean_is_stuck():
+    """error → clean → error must classify stuck — the session ENDED broken.
+
+    Regression: any clean result after SOME earlier error marked the session
+    "fixed", even when a later error was the last word.
+    """
+    session = _session()
+    events = [
+        _event("u1", EventType.USER_MESSAGE, 1, "Debug this"),
+        _event("c1", EventType.TOOL_CALL, 2, tool_name="Bash"),
+        _event("r1", EventType.TOOL_RESULT, 3, content="error: broke", error_detected=True),
+        _event("c2", EventType.TOOL_CALL, 4, tool_name="Bash"),
+        _event("r2", EventType.TOOL_RESULT, 5, content="looks fixed"),
+        _event("c3", EventType.TOOL_CALL, 6, tool_name="Bash"),
+        _event("r3", EventType.TOOL_RESULT, 7, content="error: broke again", error_detected=True),
+    ]
+    outcome = classify_session(session, events)
+    assert outcome["outcome"] == "stuck"
+
+
 def test_classify_shipped_session():
     session = _session()
     events = [

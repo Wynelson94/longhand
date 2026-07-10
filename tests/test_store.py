@@ -302,3 +302,33 @@ def test_busy_timeout_pragma(temp_store):
     """Write-lock waits must be generous — parallel hooks contend on one DB."""
     with temp_store.sqlite.connect() as conn:
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+
+
+def test_query_episodes_has_fix_in_sql(temp_store):
+    """has_fix filters inside the SQL WHERE (before ORDER BY/LIMIT)."""
+    base = {
+        "session_id": "s1",
+        "project_id": "p1",
+        "started_at": "2026-07-01T10:00:00Z",
+        "ended_at": "2026-07-01T10:30:00Z",
+        "problem_event_id": "pe",
+        "problem_description": "x",
+        "fix_summary": "",
+        "touched_files": [],
+        "tags": [],
+        "status": "unresolved",
+    }
+    temp_store.sqlite.insert_episodes(
+        [
+            {**base, "episode_id": "ep-f", "fix_event_id": "fe-1", "status": "resolved"},
+            {**base, "episode_id": "ep-n", "fix_event_id": None},
+        ]
+    )
+
+    with_fix = temp_store.sqlite.query_episodes(has_fix=True)
+    fixless = temp_store.sqlite.query_episodes(has_fix=False)
+    everything = temp_store.sqlite.query_episodes()
+
+    assert [e["episode_id"] for e in with_fix] == ["ep-f"]
+    assert [e["episode_id"] for e in fixless] == ["ep-n"]
+    assert {e["episode_id"] for e in everything} == {"ep-f", "ep-n"}

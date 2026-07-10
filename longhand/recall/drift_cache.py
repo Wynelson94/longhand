@@ -169,7 +169,10 @@ def _scan_jsonl(jsonl_path: Path, mtime: float) -> DriftCacheEntry | None:
     entry = DriftCacheEntry(mtime=mtime)
     seen_cwds: set[str] = set()
     try:
-        with jsonl_path.open() as f:
+        # utf-8 + replace matches the main parser (parser.py). A bare open()
+        # uses the platform encoding — cp1252 on Windows — and any non-ASCII
+        # transcript byte then crashes the whole recall_project_status path.
+        with jsonl_path.open(encoding="utf-8", errors="replace") as f:
             for i, line in enumerate(f):
                 if i >= _DRIFT_SCAN_LINE_LIMIT:
                     break
@@ -196,7 +199,7 @@ def _scan_jsonl(jsonl_path: Path, mtime: float) -> DriftCacheEntry | None:
                 root = find_project_root_strict(p)
                 if root is not None:
                     entry.resolved_roots.add(str(root))
-    except (OSError, PermissionError):
+    except (OSError, PermissionError, UnicodeDecodeError):
         return None
     return entry
 

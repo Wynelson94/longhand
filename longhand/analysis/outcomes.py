@@ -88,7 +88,14 @@ def classify_session(session: Session, events: list[Event]) -> dict[str, Any]:
     confidence: float
 
     has_errors = len(error_events) > 0
-    ended_clean = has_errors and last_success_after_error_idx is not None
+    # A clean result only counts as "ended clean" if it came after the LAST
+    # error — error → clean → error must classify stuck, not fixed.
+    ended_clean = (
+        has_errors
+        and last_success_after_error_idx is not None
+        and last_error_idx is not None
+        and last_success_after_error_idx > last_error_idx
+    )
     edit_heavy = edit_count >= 3
     read_heavy = read_count > edit_count * 2 and edit_count < 3
 

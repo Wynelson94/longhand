@@ -12,7 +12,7 @@ import json
 from collections import Counter
 from collections.abc import Iterator
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from longhand.extractors.errors import detect_error
@@ -709,7 +709,7 @@ def discover_sessions(claude_projects_dir: str | Path | None = None) -> list[Pat
             continue
         # Subagent transcripts live under .../<session-id>/subagents/<id>.jsonl.
         # They're referenced from the parent session's events, not standalone.
-        if "/subagents/" in path_str:
+        if _is_subagent_transcript(jsonl):
             continue
         # Pytest leaves behind JSONLs in tmp project dirs during test runs.
         if "pytest-of-" in path_str:
@@ -717,3 +717,13 @@ def discover_sessions(claude_projects_dir: str | Path | None = None) -> list[Pat
         sessions.append(jsonl)
 
     return sessions
+
+
+def _is_subagent_transcript(path: PurePath) -> bool:
+    """True when the JSONL sits under a `subagents/` directory.
+
+    Checks path components, not the string form — on Windows the separator is
+    a backslash, so a substring test against "/subagents/" never matches and
+    subagent transcripts would be ingested as standalone sessions.
+    """
+    return "subagents" in path.parts
