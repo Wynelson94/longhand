@@ -362,3 +362,78 @@ def test_cli_recall_json_flag_emits_valid_json(
     assert "narrative" in payload
     # Artifacts key should be absent on an empty store (matches MCP behavior)
     assert "artifacts" not in payload
+
+
+# ─── v0.12 DB hygiene ────────────────────────────────────────────────────────
+
+
+def _seed_unknown_events(store, n: int) -> None:
+    with store.sqlite.connect() as conn:
+        for k in range(n):
+            conn.execute(
+                "INSERT INTO events (event_id, session_id, event_type, sequence,"
+                " timestamp, content, raw_json) VALUES (?, 's-aux', 'unknown', ?,"
+                " '2026-07-01T00:00:00Z', '', ?)",
+                (f"unk-{k}", k, '{"type": "mode", "payload": "' + "x" * 200 + '"}'),
+            )
+
+
+def test_parser_skips_aux_entry_types(tmp_path: Path):
+    """last-prompt/mode/permission-mode/attachment/ai-title/agent-name entries
+    must not be stored as unknown events (they were the 3rd-largest event
+    type on a real corpus); genuinely unrecognized types are still kept."""
+    from longhand.parser import JSONLParser
+
+    entries = [
+        {"type": t, "uuid": f"u-{t}", "sessionId": "s1", "timestamp": "2026-07-01T00:00:00Z"}
+        for t in ("last-prompt", "mode", "permission-mode", "attachment", "ai-title", "agent-name")
+    ]
+    entries.append(
+        {
+            "type": "some-future-type",
+            "uuid": "u-future",
+            "sessionId": "s1",
+            "timestamp": "2026-07-01T00:00:00Z",
+        }
+    )
+    f = tmp_path / "aux.jsonl"
+    f.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+    events = list(JSONLParser(f).parse_events())
+    types = [e.event_type.value if hasattr(e.event_type, "value") else e.event_type for e in events]
+    assert types == ["unknown"]  # only the genuinely unrecognized one survives
+    assert events[0].event_id == "u-future"
+
+
+def test_db_vacuum_prune_aux_removes_unknown_events(runner: CliRunner, tmp_path: Path):
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "lh")
+    _seed_unknown_events(store, 5)
+
+    result = runner.invoke(app, ["db", "vacuum", "--prune-aux", "--data-dir", str(tmp_path / "lh")])
+    assert result.exit_code == 0, result.output
+    assert "Pruned" in result.output and "5" in result.output
+    with store.sqlite.connect() as conn:
+        left = conn.execute("SELECT COUNT(*) FROM events WHERE event_type='unknown'").fetchone()[0]
+    assert left == 0
+    lock = tmp_path / "lh" / ".ingest.lock"
+    assert not lock.exists()  # released
+
+
+def test_db_vacuum_defers_to_running_ingest(runner: CliRunner, tmp_path: Path):
+    import os
+
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "lh")
+    _seed_unknown_events(store, 1)
+    lock = tmp_path / "lh" / ".ingest.lock"
+    lock.write_text(str(os.getppid()))  # alive holder
+
+    result = runner.invoke(app, ["db", "vacuum", "--data-dir", str(tmp_path / "lh")])
+    assert result.exit_code == 1
+    with store.sqlite.connect() as conn:
+        left = conn.execute("SELECT COUNT(*) FROM events WHERE event_type='unknown'").fetchone()[0]
+    assert left == 1  # untouched
+    lock.unlink()

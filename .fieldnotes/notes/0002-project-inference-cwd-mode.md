@@ -5,8 +5,8 @@ references:
 - advisory: false
   lines: null
   path: longhand/parser.py
-  pinned_at: '2026-07-10T18:16:27.059400Z'
-  sha: c052aa5aa88c5e0f001f5013869d95316ec638ae0cad7fb445060bfb6f4e9c97
+  pinned_at: '2026-07-10T20:55:48.344557Z'
+  sha: 611a1710fa576229caba133d4e7563eb63d14027ab5917eaf6c6f4a205f3b7c7
   symbol: null
 session_id: null
 superseded_by: '0006'
@@ -20,6 +20,8 @@ title: Project attribution uses MODE of cwds, not first-event cwd
 topic: project-inference-cwd-mode
 validations:
 - at: '2026-07-10T18:16:41.805585Z'
+  by: unknown
+- at: '2026-07-10T20:55:48.497843Z'
   by: unknown
 written_at: '2026-04-26T05:28:36.808901Z'
 written_by: claude-opus-4-7
