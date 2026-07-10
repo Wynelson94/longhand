@@ -965,6 +965,15 @@ def _freshness_status(store: LonghandStore) -> str | None:
     )
 
 
+def _human_size(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def doctor() -> None:
     """Diagnose Longhand installation and data."""
     table = Table(title="Longhand Doctor", show_header=False, border_style="cyan")
@@ -1116,6 +1125,29 @@ def doctor() -> None:
         table.add_row(
             "Sessions needing analysis",
             f"[yellow]{sessions_needing_analysis}[/yellow] (run [bold]longhand analyze --all[/bold])",
+        )
+
+    # 7. Storage footprint — the corpus grows forever by design, but nothing
+    # surfaced how big it had gotten (3 GB observed in the wild).
+    db_file = store.data_dir / "longhand.db"
+    db_size = db_file.stat().st_size if db_file.exists() else 0
+    chroma_dir = store.data_dir / "chroma"
+    chroma_size = (
+        sum(f.stat().st_size for f in chroma_dir.rglob("*") if f.is_file())
+        if chroma_dir.exists()
+        else 0
+    )
+    table.add_row("Storage", f"SQLite {_human_size(db_size)} · vectors {_human_size(chroma_size)}")
+
+    with store.sqlite.connect() as conn:
+        aux_events = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type = 'unknown'"
+        ).fetchone()[0]
+    if aux_events > 0:
+        table.add_row(
+            "Aux/unknown events",
+            f"[yellow]{aux_events:,}[/yellow] stored orchestration noise "
+            "(reclaim: [bold]longhand db vacuum --prune-aux[/bold])",
         )
 
     console.print(table)

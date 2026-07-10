@@ -1142,6 +1142,84 @@ plans_app = typer.Typer(name="plans", help="Plan files written across all sessio
 app.add_typer(plans_app, name="plans", rich_help_panel="Plumbing")
 
 
+# -----------------------------------------------------------------------------
+# DB MAINTENANCE
+# -----------------------------------------------------------------------------
+
+db_app = typer.Typer(name="db", help="Storage maintenance (opt-in, never automatic)")
+
+
+@db_app.command("vacuum")
+def db_vacuum(
+    prune_aux: bool = typer.Option(
+        False,
+        "--prune-aux",
+        help=(
+            "First delete stored aux/unknown events (harness orchestration "
+            "noise — mode changes, attachments, UI titles). Source JSONLs "
+            "remain the recovery path."
+        ),
+    ),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Reclaim disk space from the SQLite store.
+
+    VACUUM rewrites the whole database file, so it needs free disk at least
+    the size of the current DB and must not race a concurrent ingest — the
+    command checks both and aborts (exit 1) rather than proceeding unsafely.
+    """
+    import shutil as _shutil
+
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock,
+        release_ingest_lock,
+    )
+
+    store = _get_store(data_dir)
+    db_file = store.data_dir / "longhand.db"
+    if not db_file.exists():
+        console.print("[yellow]No database found — nothing to vacuum.[/yellow]")
+        return
+    before = db_file.stat().st_size
+
+    free = _shutil.disk_usage(str(store.data_dir)).free
+    if free < before:
+        console.print(
+            f"[red]✗[/red] Not enough free disk: VACUUM needs ~{before:,} bytes "
+            f"free (a full copy of the DB), only {free:,} available."
+        )
+        raise typer.Exit(1)
+
+    if not claim_ingest_lock(store):
+        console.print("[yellow]Another Longhand ingest is running — try again later.[/yellow]")
+        raise typer.Exit(1)
+
+    try:
+        if prune_aux:
+            with store.sqlite.connect() as conn:
+                cur = conn.execute("DELETE FROM events WHERE event_type = 'unknown'")
+                console.print(f"Pruned [bold]{cur.rowcount:,}[/bold] aux/unknown event(s).")
+
+        # VACUUM must run outside a transaction — plain connection, no
+        # context-manager commit wrapper.
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(str(db_file))
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+    finally:
+        release_ingest_lock(store)
+
+    after = db_file.stat().st_size
+    saved = before - after
+    console.print(
+        f"[green]✓[/green] VACUUM complete: {before:,} → {after:,} bytes "
+        f"([bold]{saved:,}[/bold] reclaimed)."
+    )
+
+
 @plans_app.command("list")
 def plans_list(
     limit: int = typer.Option(50, "--limit"),
@@ -2338,6 +2416,7 @@ schedule_app = typer.Typer(
     help="Background reconciler (launchd) — catches sessions when hooks miss",
 )
 
+app.add_typer(db_app, name="db", rich_help_panel="Data")
 app.add_typer(hook_app, name="hook", rich_help_panel="Plumbing")
 app.add_typer(mcp_app, name="mcp", rich_help_panel="Plumbing")
 app.add_typer(schedule_app, name="schedule", rich_help_panel="Plumbing")
