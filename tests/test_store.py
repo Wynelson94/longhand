@@ -437,3 +437,46 @@ def test_load_session_from_db_round_trips_analysis_fields(sample_session_file, t
         assert re.tool_success == orig.tool_success
         assert re.error_detected == orig.error_detected
         assert re.tool_name == orig.tool_name
+
+
+def test_segment_ids_unique_even_with_duplicate_sequences(temp_store):
+    """Events rebuilt from the DB can carry duplicate sequence numbers
+    (live-tail + full-ingest rows) — two segments starting at the same
+    sequence must not hash to one id, which fails the whole Chroma batch."""
+    from datetime import datetime, timezone
+
+    from longhand.analysis.segment_extraction import extract_segments
+    from longhand.types import Event, EventType
+
+    def _user(eid: str, seq: int, text: str) -> Event:
+        return Event(
+            event_id=eid,
+            session_id="s-dup",
+            event_type=EventType.USER_MESSAGE,
+            sequence=seq,
+            timestamp=datetime(2026, 7, 1, 0, min(seq, 59), tzinfo=timezone.utc),
+            content=text,
+        )
+
+    # Two conversation clusters, both starting at sequence 1 (duplicated).
+    events = [
+        _user("u1", 1, "first topic about the login flow and sessions"),
+        _user("u2", 1, "more about login"),
+        _user("u3", 40, "totally different second topic about deployment"),
+    ]
+    # Force a second cluster by making the timestamps far apart if the
+    # extractor splits on gaps; regardless, ids must be unique.
+    segments = extract_segments("s-dup", "p1", events)
+    ids = [s["segment_id"] for s in segments]
+    assert len(ids) == len(set(ids))
+
+
+def test_segment_batch_dedupes_duplicate_ids(temp_store):
+    items = [
+        {"segment_id": "seg-x", "text": "first version", "metadata": {"segment_type": "d"}},
+        {"segment_id": "seg-x", "text": "duplicate id", "metadata": {"segment_type": "d"}},
+        {"segment_id": "seg-y", "text": "another segment", "metadata": {"segment_type": "d"}},
+    ]
+    # Must not raise (Chroma rejects batches with repeated ids wholesale).
+    n = temp_store.vectors.add_segment_embeddings_batch(items)
+    assert n == 2
