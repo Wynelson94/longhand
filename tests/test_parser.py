@@ -122,7 +122,7 @@ def test_session_summary(sample_session_file):
     session = parser.build_session(events)
 
     assert session.session_id == "test-session-1"
-    assert session.project_path == "/tmp/test-project"
+    assert session.project_path == "/Users/tester/test-project"
     assert session.git_branch == "main"
     assert session.user_message_count >= 1
     assert session.tool_call_count >= 2

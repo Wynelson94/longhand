@@ -41,7 +41,7 @@ def sample_session_file(tmp_path: Path) -> Path:
             "parentUuid": None,
             "sessionId": "test-session-1",
             "timestamp": "2026-04-09T10:00:01.000Z",
-            "cwd": "/tmp/test-project",
+            "cwd": "/Users/tester/test-project",
             "gitBranch": "main",
             "isSidechain": False,
             "message": {"role": "user", "content": "Edit the readme"},
@@ -53,7 +53,7 @@ def sample_session_file(tmp_path: Path) -> Path:
             "parentUuid": "user-1",
             "sessionId": "test-session-1",
             "timestamp": "2026-04-09T10:00:02.000Z",
-            "cwd": "/tmp/test-project",
+            "cwd": "/Users/tester/test-project",
             "isSidechain": False,
             "message": {
                 "model": "claude-sonnet-4-6",
@@ -82,7 +82,7 @@ def sample_session_file(tmp_path: Path) -> Path:
             "parentUuid": "asst-1",
             "sessionId": "test-session-1",
             "timestamp": "2026-04-09T10:00:03.000Z",
-            "cwd": "/tmp/test-project",
+            "cwd": "/Users/tester/test-project",
             "isSidechain": False,
             "message": {
                 "role": "user",
@@ -103,7 +103,7 @@ def sample_session_file(tmp_path: Path) -> Path:
             "parentUuid": "result-1",
             "sessionId": "test-session-1",
             "timestamp": "2026-04-09T10:00:04.000Z",
-            "cwd": "/tmp/test-project",
+            "cwd": "/Users/tester/test-project",
             "isSidechain": False,
             "message": {
                 "model": "claude-sonnet-4-6",
@@ -142,7 +142,7 @@ def multi_edit_session_file(tmp_path: Path) -> Path:
             "parentUuid": parent,
             "sessionId": "edit-session",
             "timestamp": ts,
-            "cwd": "/tmp/test",
+            "cwd": "/Users/tester/test",
             "isSidechain": False,
             "message": {
                 "model": "claude-sonnet-4-6",
@@ -171,7 +171,7 @@ def multi_edit_session_file(tmp_path: Path) -> Path:
             "parentUuid": None,
             "sessionId": "edit-session",
             "timestamp": "2026-04-09T12:00:00.000Z",
-            "cwd": "/tmp/test",
+            "cwd": "/Users/tester/test",
             "isSidechain": False,
             "message": {
                 "model": "claude-sonnet-4-6",
