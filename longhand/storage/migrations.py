@@ -178,6 +178,16 @@ MIGRATIONS: dict[int, str] = {
     --   'analyzed' full pipeline completed
     -- The guarded ALTER runs in _apply_alters.
     """,
+    8: """
+    -- v8: strip the leaked "Ask: " scaffold from stored problem descriptions.
+    -- The extractor prefixed every user ask with "Ask: " (embedding cue) and
+    -- it leaked into displayed text — same class as the v4 "Intent: " fix.
+    -- New extractions no longer write the prefix.
+
+    UPDATE episodes
+    SET problem_description = substr(problem_description, 6)
+    WHERE problem_description LIKE 'Ask: %';
+    """,
 }
 
 

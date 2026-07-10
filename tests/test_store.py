@@ -332,3 +332,32 @@ def test_query_episodes_has_fix_in_sql(temp_store):
     assert [e["episode_id"] for e in with_fix] == ["ep-f"]
     assert [e["episode_id"] for e in fixless] == ["ep-n"]
     assert {e["episode_id"] for e in everything} == {"ep-f", "ep-n"}
+
+
+def test_query_episodes_min_confidence_in_sql(temp_store):
+    """min_confidence filters inside the SQL WHERE (before ORDER BY/LIMIT)."""
+    base = {
+        "session_id": "s1",
+        "project_id": "p1",
+        "started_at": "2026-07-01T10:00:00Z",
+        "ended_at": "2026-07-01T10:30:00Z",
+        "problem_event_id": "pe",
+        "fix_event_id": "fe",
+        "problem_description": "x",
+        "fix_summary": "y",
+        "touched_files": [],
+        "tags": [],
+        "status": "resolved",
+    }
+    temp_store.sqlite.insert_episodes(
+        [
+            {**base, "episode_id": "ep-hi", "confidence": 0.8},
+            {**base, "episode_id": "ep-lo", "confidence": 0.3},
+        ]
+    )
+
+    confident = temp_store.sqlite.query_episodes(min_confidence=0.5)
+    everything = temp_store.sqlite.query_episodes()
+
+    assert [e["episode_id"] for e in confident] == ["ep-hi"]
+    assert {e["episode_id"] for e in everything} == {"ep-hi", "ep-lo"}

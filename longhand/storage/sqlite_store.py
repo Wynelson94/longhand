@@ -911,6 +911,7 @@ class SQLiteStore:
         status: str | None = None,
         keyword: str | None = None,
         has_fix: bool | None = None,
+        min_confidence: float | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -928,6 +929,11 @@ class SQLiteStore:
                 # In SQL, before ORDER/LIMIT: filtering after the recency cut
                 # returned [] whenever the newest rows were all fixless.
                 conditions.append("fix_event_id IS NOT NULL" if has_fix else "fix_event_id IS NULL")
+            if min_confidence is not None:
+                # Same rule as has_fix: filter before the recency cut, or a
+                # run of low-confidence noise starves the result set.
+                conditions.append("confidence >= ?")
+                params.append(min_confidence)
             if since:
                 conditions.append("ended_at >= ?")
                 params.append(since)

@@ -15,7 +15,24 @@ from pathlib import Path
 from typing import Any
 
 from longhand.extractors.file_refs import extract_file_references
+from longhand.parser import COMMAND_EXECUTING_TOOLS
 from longhand.types import Event
+
+# Harness plumbing that can appear as user_message content. None of it is a
+# human ask — anchoring an episode's problem text to it produces the
+# "<task-notification> fragments minted as problems" noise class.
+_PLUMBING_PREFIXES = (
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<local-command-stdout>",
+    "<system-reminder>",
+)
+
+
+def _is_plumbing_text(text: str) -> bool:
+    return text.lstrip().startswith(_PLUMBING_PREFIXES)
+
 
 # Events we consider "edits" (candidate fixes)
 _FIX_OPERATIONS = {"edit", "write", "multi_edit", "notebook_edit"}
@@ -89,6 +106,15 @@ def extract_episodes(
     4. Close episode at verification, at the next independent error, or at session end.
     """
     episodes: list[dict[str, Any]] = []
+
+    # tool_result events don't carry tool_name — pair them back to their
+    # tool_call so the verification gate can tell Bash output from Read output.
+    tool_by_use_id: dict[str, str] = {
+        e.tool_use_id: e.tool_name or ""
+        for e in events
+        if _get_type(e) == "tool_call" and e.tool_use_id
+    }
+
     i = 0
 
     while i < len(events):
@@ -109,7 +135,8 @@ def extract_episodes(
         preceding_user = None
         lookback_start = max(i - _USER_LOOKBACK_EVENTS, -1)
         for j in range(i - 1, lookback_start, -1):
-            if _get_type(events[j]) == "user_message" and (events[j].content or "").strip():
+            text = (events[j].content or "").strip()
+            if _get_type(events[j]) == "user_message" and text and not _is_plumbing_text(text):
                 preceding_user = events[j]
                 break
 
@@ -141,13 +168,12 @@ def extract_episodes(
             cand = events[j]
             ctype = _get_type(cand)
 
-            # Another independent error → close current episode
-            if ctype == "tool_result" and cand.error_detected and j > i + 1:
-                # Only treat as independent if we haven't found a fix yet
-                # OR if the error is in a different file
-                new_files = set(extract_file_references(cand.content or ""))
-                if not fix_event or (new_files and new_files.isdisjoint(touched_files)):
-                    break
+            # Any subsequent error closes the current episode — a new error is
+            # a new episode (the outer loop re-opens at j). The old same-file
+            # exemption let one episode swallow every later error after a fix,
+            # blurring problem boundaries and inflating resolved status.
+            if ctype == "tool_result" and cand.error_detected:
+                break
 
             # Accumulate diagnosis material — any thinking or substantive
             # assistant_text between problem and fix. Collected BEFORE the
@@ -218,9 +244,14 @@ def extract_episodes(
                             if intent_text:
                                 fix_intent_text = intent_text
 
-            # Verification: a clean tool_result after a fix
+            # Verification: a clean tool_result after a fix — but only from a
+            # signal that can actually verify: an explicit success flag, or an
+            # error-free result from a command-executing tool (tests, builds).
+            # Read/Grep results carry tool_success=None and prove nothing;
+            # the old `is not False` gate let them mark episodes "resolved".
             if ctype == "tool_result" and not cand.error_detected and fix_event is not None:
-                if cand.tool_success is not False:
+                paired_tool = tool_by_use_id.get(cand.tool_use_id or "", "")
+                if cand.tool_success is True or paired_tool in COMMAND_EXECUTING_TOOLS:
                     verification_event = cand
                     j += 1
                     break
@@ -351,10 +382,11 @@ def _compose_problem_description(
     """Combine the user's ask (if found) with the error signal into a single
     semantically rich description.
 
-    Format: "Ask: <user request truncated>. Error: <error content truncated>"
+    Format: "<user request truncated>. Error: <error content truncated>"
 
-    Either piece can be missing — degrade to the other. Labels are kept
-    explicit so the embedding carries structural cues.
+    Either piece can be missing — degrade to the other. The user ask leads
+    bare — the old "Ask:" scaffold leaked into every displayed problem
+    description (same class as the "Intent:" leak fixed in v0.8).
     """
     parts: list[str] = []
 
@@ -363,7 +395,7 @@ def _compose_problem_description(
         if ask:
             # Give the user ask ~60% of the budget
             ask_budget = int(max_chars * 0.6)
-            parts.append(f"Ask: {ask[:ask_budget]}")
+            parts.append(ask[:ask_budget])
 
     # Always include an error signal — prefer the dedicated error_snippet
     # field over the raw content (shorter, more focused).
