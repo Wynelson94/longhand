@@ -505,6 +505,42 @@ def test_tool_find_episodes(sample_session_file, temp_store):
     assert isinstance(payload, list)
 
 
+def test_tool_find_episodes_default_filters_in_sql(temp_store):
+    """has_fix (default true) must filter in SQL, not after the recency LIMIT.
+
+    Regression: 20+ recent fixless episodes pushed every with-fix episode past
+    the limit, so the tool's DEFAULT call returned [] on corpora whose newest
+    episodes are extraction noise.
+    """
+
+    def _ep(eid: str, day: int, month: int, fix: str | None) -> dict:
+        return {
+            "episode_id": eid,
+            "session_id": "s-eps",
+            "project_id": "p1",
+            "started_at": f"2026-{month:02d}-{day:02d}T10:00:00Z",
+            "ended_at": f"2026-{month:02d}-{day:02d}T10:30:00Z",
+            "problem_event_id": f"pe-{eid}",
+            "fix_event_id": fix,
+            "problem_description": "text",
+            "fix_summary": "fixed" if fix else "",
+            "touched_files": [],
+            "tags": [],
+            "status": "resolved" if fix else "unresolved",
+        }
+
+    older_with_fix = [_ep(f"ep-fix-{i}", day=1 + i, month=5, fix=f"fe-{i}") for i in range(5)]
+    recent_fixless = [_ep(f"ep-noise-{i}", day=1 + i, month=6, fix=None) for i in range(21)]
+    temp_store.sqlite.insert_episodes(older_with_fix + recent_fixless)
+
+    result = _call(mcp_server._tool_find_episodes, temp_store, {"limit": 20})
+    payload = _payload(result)
+
+    ids = {e["episode_id"] for e in payload}
+    assert {f"ep-fix-{i}" for i in range(5)} <= ids
+    assert all(e["fix_event_id"] for e in payload)
+
+
 def test_tool_get_episode_unknown(temp_store):
     result = _call(
         mcp_server._tool_get_episode,

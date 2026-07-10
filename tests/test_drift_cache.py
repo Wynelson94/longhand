@@ -146,3 +146,19 @@ def test_save_is_atomic(tmp_path):
 
     leftover_tmps = [p for p in tmp_path.iterdir() if p.name.startswith(".jsonl_project_map-")]
     assert leftover_tmps == []
+
+
+def test_scan_survives_non_utf8_bytes(tmp_path):
+    """A transcript with invalid-UTF-8 bytes must not crash the drift scan.
+
+    Regression: a bare open() decoded strictly (and with the platform default
+    encoding on Windows), so one bad byte raised UnicodeDecodeError through
+    recall_project_status. utf-8 + errors=replace matches the main parser.
+    """
+    p = tmp_path / "bad.jsonl"
+    good_line = json.dumps({"cwd": str(tmp_path)}).encode("utf-8")
+    p.write_bytes(b"\xff\xfe garbage bytes\n" + good_line + b"\n")
+
+    entry = _scan_jsonl(p, 1.0)
+    assert entry is not None
+    assert str(tmp_path) in entry.raw_cwds

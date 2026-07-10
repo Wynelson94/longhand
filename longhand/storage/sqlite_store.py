@@ -832,6 +832,7 @@ class SQLiteStore:
         until: str | None = None,
         status: str | None = None,
         keyword: str | None = None,
+        has_fix: bool | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -845,6 +846,10 @@ class SQLiteStore:
             if session_id:
                 conditions.append("session_id = ?")
                 params.append(session_id)
+            if has_fix is not None:
+                # In SQL, before ORDER/LIMIT: filtering after the recency cut
+                # returned [] whenever the newest rows were all fixless.
+                conditions.append("fix_event_id IS NOT NULL" if has_fix else "fix_event_id IS NULL")
             if since:
                 conditions.append("ended_at >= ?")
                 params.append(since)

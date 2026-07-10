@@ -244,3 +244,56 @@ def test_cli_redact_scan_and_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     result = runner.invoke(app, ["redact", "--data-dir", str(data_dir)])
     assert result.exit_code == 0
     assert "clean" in result.stdout.lower()
+
+
+def test_retroactive_redact_covers_segments_and_git_commits(tmp_path: Path):
+    """`redact --apply` must reach conversation_segments and git_operations.
+
+    Regression: the table map said "segments" — a nonexistent table — so the
+    per-table except skipped ALL segment text (topic/summary/keywords)
+    silently, and git commit messages were never listed at all. topic holds
+    the segment's verbatim first user message.
+    """
+    data_dir = tmp_path / "lh"
+    store = LonghandStore(data_dir=data_dir)
+    store.sqlite.insert_segments(
+        [
+            {
+                "segment_id": "seg-1",
+                "session_id": "s1",
+                "started_at": "2026-07-01T10:00:00Z",
+                "ended_at": "2026-07-01T10:10:00Z",
+                "start_sequence": 1,
+                "end_sequence": 5,
+                "topic": f"set the key to {FAKE_ANTHROPIC} please",
+                "summary": "credentials discussion",
+            }
+        ]
+    )
+    store.sqlite.insert_git_operations(
+        [
+            {
+                "git_op_id": "g1",
+                "session_id": "s1",
+                "event_id": "e1",
+                "operation_type": "commit",
+                "commit_message": f"chore: rotate {FAKE_ANTHROPIC}",
+                "timestamp": "2026-07-01T10:05:00Z",
+            }
+        ]
+    )
+
+    local_runner = CliRunner()
+    result = local_runner.invoke(app, ["redact", "--apply", "--yes", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0
+
+    fresh = LonghandStore(data_dir=data_dir)
+    with fresh.sqlite.connect() as conn:
+        topic = conn.execute(
+            "SELECT topic FROM conversation_segments WHERE segment_id = 'seg-1'"
+        ).fetchone()[0]
+        msg = conn.execute(
+            "SELECT commit_message FROM git_operations WHERE git_op_id = 'g1'"
+        ).fetchone()[0]
+    assert FAKE_ANTHROPIC not in topic
+    assert FAKE_ANTHROPIC not in msg

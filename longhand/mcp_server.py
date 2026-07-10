@@ -1605,15 +1605,16 @@ async def _tool_match_project(store: LonghandStore, arguments: dict[str, Any]) -
 
 
 async def _tool_find_episodes(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # has_fix=True (the default) filters in SQL; False means "no filter",
+    # matching the old post-filter semantics (include fixless episodes too).
     episodes = store.sqlite.query_episodes(
         project_ids=arguments.get("project_ids"),
         since=arguments.get("since"),
         until=arguments.get("until"),
         keyword=arguments.get("keyword"),
+        has_fix=True if _bool(arguments.get("has_fix"), True) else None,
         limit=_limit(arguments.get("limit"), 20),
     )
-    if _bool(arguments.get("has_fix"), True):
-        episodes = [e for e in episodes if e.get("fix_event_id")]
     return [TextContent(type="text", text=json.dumps(episodes, indent=2, default=str))]
 
 
