@@ -83,7 +83,7 @@ def test_tool_search_auto_scopes_on_project_name_match(sample_session_file, temp
     events, and the response should advertise the auto-scoping so agents can
     override it."""
     _ingest(sample_session_file, temp_store)
-    # sample_session_file's cwd is /tmp/test-project, so the project becomes
+    # sample_session_file's cwd is /Users/tester/test-project, so the project becomes
     # "test project" after canonicalization.
     result = _call(
         mcp_server._tool_search,

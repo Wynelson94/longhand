@@ -747,6 +747,25 @@ class SQLiteStore:
                 (project_id,),
             )
 
+    def prune_empty_projects(self) -> int:
+        """Delete project rows with no attached sessions. Returns the count.
+
+        Completes a reattribution: when every session moves out of a junk or
+        case-dupe project, the emptied row would otherwise linger forever in
+        `longhand projects` and fuzzy matching.
+        """
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM projects
+                WHERE project_id NOT IN (
+                    SELECT DISTINCT project_id FROM sessions
+                    WHERE project_id IS NOT NULL
+                )
+                """
+            )
+            return cur.rowcount
+
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(

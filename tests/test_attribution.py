@@ -208,3 +208,179 @@ def test_live_tail_sets_cwd_to_project_not_lexicographic_max(tmp_path):
     row = store.sqlite.get_session("live-attr")
     assert row is not None
     assert row["cwd"] == proj
+
+
+# ─── v0.12 attribution overhaul ──────────────────────────────────────────────
+
+
+def _mini_session(cwd: str | None, tmp_path: Path):
+    """Session + events with a given cwd, without touching disk transcripts."""
+    from datetime import datetime, timezone
+
+    from longhand.types import Session
+
+    return Session(
+        session_id="s-attr",
+        project_path=cwd or "",
+        transcript_path=str(tmp_path / "t.jsonl"),
+        started_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 7, 1, 1, tzinfo=timezone.utc),
+        event_count=1,
+        user_message_count=1,
+        assistant_message_count=0,
+        tool_call_count=0,
+        file_edit_count=0,
+        git_branch=None,
+        cwd=cwd,
+        model=None,
+    )
+
+
+def test_monorepo_package_attributes_to_git_root(tmp_path):
+    """repo/.git outranks repo/apps/web/package.json — sessions in the package
+    dir must not split into a separate per-package project."""
+    from longhand.analysis.project_inference import infer_project
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    web = repo / "apps" / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text("{}")
+
+    at_root = infer_project(_mini_session(str(repo), tmp_path), [])
+    in_package = infer_project(_mini_session(str(web), tmp_path), [])
+    assert in_package["canonical_path"] == str(repo)
+    assert in_package["project_id"] == at_root["project_id"]
+
+
+def test_nested_git_collapses_to_outermost(tmp_path):
+    from longhand.analysis.project_inference import infer_project
+
+    outer = tmp_path / "outer"
+    (outer / ".git").mkdir(parents=True)
+    inner = outer / "vendor" / "lib"
+    inner.mkdir(parents=True)
+    (inner / ".git").mkdir()
+
+    fp = infer_project(_mini_session(str(inner), tmp_path), [])
+    assert fp["canonical_path"] == str(outer)
+
+
+def test_nearest_non_git_marker_still_wins_without_git(tmp_path):
+    from longhand.analysis.project_inference import infer_project
+
+    pkg = tmp_path / "plain" / "pkg"
+    sub = pkg / "src"
+    sub.mkdir(parents=True)
+    (pkg / "package.json").write_text("{}")
+
+    fp = infer_project(_mini_session(str(sub), tmp_path), [])
+    assert fp["canonical_path"] == str(pkg)
+
+
+def test_case_dupe_spellings_mint_one_project(tmp_path):
+    """~/Projects/Foo and ~/projects/foo are the same dir on a case-insensitive
+    filesystem — both spellings must hash to one project_id."""
+    import pytest
+
+    from longhand.analysis.project_inference import infer_project
+
+    proj = tmp_path / "CamelCase"
+    (proj / ".git").mkdir(parents=True)
+    alt = Path(str(proj).replace("CamelCase", "camelcase"))
+    if not alt.exists():
+        pytest.skip("case-sensitive filesystem — dupe spellings are distinct dirs")
+
+    a = infer_project(_mini_session(str(proj), tmp_path), [])
+    b = infer_project(_mini_session(str(alt), tmp_path), [])
+    assert a["project_id"] == b["project_id"]
+    assert a["canonical_path"] == b["canonical_path"] == str(proj)
+
+
+def test_reserved_paths_go_to_unattributed_bucket(tmp_path):
+    from longhand.analysis.project_inference import (
+        UNATTRIBUTED_PROJECT_ID,
+        infer_project,
+    )
+
+    home = str(Path.home())
+    claude_internal = str(Path.home() / ".claude" / "projects" / "some-slug")
+    markerless_pytest_dir = str(tmp_path)  # under pytest-of-*, no markers
+    tmp_scratch = "/tmp/scratch-abc123"
+
+    for cwd in (home, claude_internal, markerless_pytest_dir, tmp_scratch, None):
+        fp = infer_project(_mini_session(cwd, tmp_path), [])
+        assert fp["project_id"] == UNATTRIBUTED_PROJECT_ID, cwd
+        assert fp["display_name"] == "unattributed"
+        assert fp["keywords"] == [] and fp["aliases"] == ["unattributed"]
+
+
+def test_markered_dir_under_tmp_is_a_real_project(tmp_path):
+    """The reserved-path guard only applies to MARKERLESS paths — a real repo
+    checked out under a temp dir still attributes normally."""
+    from longhand.analysis.project_inference import (
+        UNATTRIBUTED_PROJECT_ID,
+        infer_project,
+    )
+
+    repo = tmp_path / "real-work"
+    (repo / ".git").mkdir(parents=True)
+
+    fp = infer_project(_mini_session(str(repo), tmp_path), [])
+    assert fp["project_id"] != UNATTRIBUTED_PROJECT_ID
+    assert fp["canonical_path"] == str(repo)
+
+
+def test_reattribute_dry_run_reports_without_writing(tmp_path):
+    """Dry-run (the new default) lists the moves and touches nothing; --fix
+    applies them and prunes the emptied project row."""
+    store = LonghandStore(data_dir=tmp_path / "lh")
+
+    repo = tmp_path / "realproj"
+    (repo / ".git").mkdir(parents=True)
+    session_file = _write_session_file(tmp_path / "s.jsonl", str(tmp_path / "noise"), str(repo))
+    parser = JSONLParser(session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    store.ingest_session(session, events, run_analysis=True)
+
+    # Simulate legacy drift: force the session onto a fake junk project.
+    store.sqlite.upsert_project(
+        {
+            "project_id": "p_junk",
+            "canonical_path": "/tmp/junk",
+            "display_name": "junk",
+            "aliases": ["junk"],
+            "keywords": [],
+            "languages": [],
+            "category": None,
+            "first_seen": "2026-07-01T00:00:00+00:00",
+            "last_seen": "2026-07-01T00:00:00+00:00",
+        }
+    )
+    with store.sqlite.connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET project_id = 'p_junk' WHERE session_id = ?",
+            (session.session_id,),
+        )
+    store.sqlite.recompute_project_stats("p_junk")
+
+    dry = store.reattribute_sessions(apply=False)
+    assert dry["applied"] is False
+    assert dry["reattributed"] == 1
+    assert dry["changes"][0]["old_project_id"] == "p_junk"
+    assert dry["pruned"] == 1  # p_junk would be emptied
+    with store.sqlite.connect() as conn:
+        still = conn.execute(
+            "SELECT project_id FROM sessions WHERE session_id = ?", (session.session_id,)
+        ).fetchone()[0]
+    assert still == "p_junk"  # nothing written
+
+    fixed = store.reattribute_sessions(apply=True)
+    assert fixed["applied"] is True and fixed["reattributed"] == 1
+    with store.sqlite.connect() as conn:
+        moved = conn.execute(
+            "SELECT project_id FROM sessions WHERE session_id = ?", (session.session_id,)
+        ).fetchone()[0]
+    assert moved != "p_junk"
+    assert store.sqlite.get_project("p_junk") is None  # pruned

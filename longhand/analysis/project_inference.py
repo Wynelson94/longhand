@@ -11,11 +11,20 @@ from __future__ import annotations
 
 import hashlib
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from longhand.extractors.topics import extract_extensions, extract_keywords
 from longhand.types import Event, Session
+
+# Reserved bucket for sessions that can't honestly be attributed to a project:
+# no cwd at all, or a markerless cwd in a location that must never mint a
+# project (home root, temp dirs, plugin caches, tool-results, pytest dirs).
+# Fixed id — NOT derived from _project_id_for — so every such session lands in
+# one stable bucket instead of minting junk projects per path.
+UNATTRIBUTED_PROJECT_ID = "p_unattributed"
+UNATTRIBUTED_CANONICAL_PATH = "unattributed://"
 
 # Map file extensions → language names
 _EXT_TO_LANGUAGE = {
@@ -117,9 +126,10 @@ _CATEGORY_SIGNALS: list[tuple[str, list[str]]] = [
 ]
 
 
-# Files/directories that indicate a project root
-_PROJECT_ROOT_MARKERS = (
-    ".git",  # git repo
+# Files/directories that indicate a project root. `.git` is handled
+# separately in the walk (highest .git wins over any nearer non-git marker —
+# monorepo packages must not split into per-package projects).
+_NON_GIT_ROOT_MARKERS = (
     "package.json",  # node
     "pyproject.toml",  # python (modern)
     "setup.py",  # python (legacy)
@@ -132,6 +142,7 @@ _PROJECT_ROOT_MARKERS = (
     "mix.exs",  # elixir
     "pubspec.yaml",  # dart/flutter
 )
+_PROJECT_ROOT_MARKERS = (".git", *_NON_GIT_ROOT_MARKERS)
 
 
 def _find_project_root(path: Path, max_walk: int = 8) -> Path:
@@ -147,22 +158,35 @@ def _find_project_root(path: Path, max_walk: int = 8) -> Path:
 def find_project_root_strict(path: Path, max_walk: int = 8) -> Path | None:
     """Walk up from `path` looking for a project marker; return None if none found.
 
+    `.git` outranks every other marker, and the HIGHEST `.git` within the walk
+    wins: in a monorepo (`repo/.git` + `repo/apps/web/package.json`), sessions
+    in `apps/web` must attribute to `repo`, not split into a per-package
+    project. Nested repos likewise collapse into the outermost one. Only when
+    no `.git` is found does the nearest non-git marker decide.
+
     Unlike `_find_project_root`, this returns None instead of falling back to
     the input path. Callers that need to distinguish "real project" from
     "arbitrary directory" should use this.
     """
     current = path
+    git_root: Path | None = None
+    marker_root: Path | None = None
     for _ in range(max_walk):
         try:
-            for marker in _PROJECT_ROOT_MARKERS:
-                if (current / marker).exists():
-                    return current
-            # Also match *.xcodeproj wildcard
-            try:
-                if any(current.glob("*.xcodeproj")):
-                    return current
-            except (OSError, PermissionError):
-                pass
+            if (current / ".git").exists():
+                git_root = current  # keep walking — a higher .git wins
+            elif marker_root is None:
+                for marker in _NON_GIT_ROOT_MARKERS:
+                    if (current / marker).exists():
+                        marker_root = current
+                        break
+                else:
+                    # Also match *.xcodeproj wildcard
+                    try:
+                        if any(current.glob("*.xcodeproj")):
+                            marker_root = current
+                    except (OSError, PermissionError):
+                        pass
         except (OSError, PermissionError):
             break
 
@@ -171,7 +195,82 @@ def find_project_root_strict(path: Path, max_walk: int = 8) -> Path | None:
             break
         current = parent
 
-    return None
+    return git_root or marker_root
+
+
+def _true_case(path: Path) -> Path:
+    """Recover the on-disk casing of an existing path, component by component.
+
+    On case-insensitive filesystems (macOS APFS), `~/projects/Foo` and
+    `~/Projects/foo` are the same directory but hash to different project ids.
+    Normalizing to the filesystem's own casing makes every spelling of a path
+    mint the same project. Non-existent components (and case-sensitive
+    filesystems, where only the exact casing exists) pass through unchanged.
+    """
+    try:
+        out = Path(path.anchor)
+        for comp in path.parts[len(out.parts) :]:
+            candidate = out / comp
+            if candidate.exists():
+                # Fast path — but on a case-insensitive FS this matches any
+                # casing, so recover the real name from the parent listing.
+                match = next(
+                    (c for c in out.iterdir() if c.name.lower() == comp.lower()),
+                    None,
+                )
+                out = match if match is not None else candidate
+            else:
+                out = candidate
+        return out
+    except (OSError, PermissionError):
+        return path
+
+
+def _is_reserved_path(path: Path) -> bool:
+    """True for locations that must never mint a project of their own.
+
+    Only consulted when NO project marker was found — a real repo checked out
+    under /tmp still attributes normally. These are the junk-project sources
+    observed on real corpora: the $HOME catch-all, temp/scratch dirs, pytest
+    tmpdirs, and Claude Code's own internal directories (plugin caches,
+    tool-results, the transcript store itself).
+    """
+    home = Path.home()
+    if path == home:
+        return True
+    claude_dir = home / ".claude"
+    if path == claude_dir or claude_dir in path.parents:
+        return True
+    parts = path.parts
+    if any(p.startswith("pytest-") for p in parts):
+        return True
+    if "plugin-cache" in parts or "tool-results" in parts:
+        return True
+    tmp_roots = {
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp"),
+        Path("/private/tmp"),
+        Path("/var/folders"),
+        Path("/private/var/folders"),
+    }
+    return any(path == root or root in path.parents for root in tmp_roots)
+
+
+def _unattributed_fingerprint(session: Session) -> dict[str, Any]:
+    """The reserved bucket fingerprint. Keywords/languages deliberately empty —
+    hundreds of unrelated sessions share this row, and merging their keywords
+    would turn it into an alias magnet that hijacks fuzzy project matching."""
+    return {
+        "project_id": UNATTRIBUTED_PROJECT_ID,
+        "canonical_path": UNATTRIBUTED_CANONICAL_PATH,
+        "display_name": "unattributed",
+        "aliases": ["unattributed"],
+        "keywords": [],
+        "languages": [],
+        "category": None,
+        "first_seen": session.started_at.isoformat(),
+        "last_seen": session.ended_at.isoformat(),
+    }
 
 
 def _canonicalize_path(path: str | None) -> str | None:
@@ -183,7 +282,7 @@ def _canonicalize_path(path: str | None) -> str | None:
         if resolved.is_file():
             resolved = resolved.parent
         root = _find_project_root(resolved)
-        return str(root)
+        return str(_true_case(root))
     except Exception:
         return path
 
@@ -241,11 +340,30 @@ def _infer_category(
 
 
 def infer_project(session: Session, events: list[Event]) -> dict[str, Any]:
-    """Build a ProjectFingerprint dict from a session and its events."""
-    canonical = _canonicalize_path(session.cwd or session.project_path)
-    if not canonical:
-        # No cwd — use a synthetic project keyed on the transcript file's parent
-        canonical = str(Path(session.transcript_path).parent.resolve())
+    """Build a ProjectFingerprint dict from a session and its events.
+
+    Sessions with no cwd, or a markerless cwd in a reserved location (home
+    root, temp/pytest dirs, Claude Code internals), land in the reserved
+    `unattributed` bucket instead of minting a junk project. Everything else
+    keys off the (case-normalized) project root as before.
+    """
+    raw = session.cwd or session.project_path
+    if not raw:
+        # Pre-v0.12 this minted a synthetic project from the transcript file's
+        # parent — i.e. Claude Code's own storage dir — which is exactly the
+        # "launch slug" junk-project source.
+        return _unattributed_fingerprint(session)
+
+    try:
+        resolved = Path(raw).resolve()
+        if resolved.is_file():
+            resolved = resolved.parent
+        root = find_project_root_strict(resolved)
+        if root is None and _is_reserved_path(resolved):
+            return _unattributed_fingerprint(session)
+        canonical = str(_true_case(root if root is not None else resolved))
+    except Exception:
+        canonical = raw
 
     project_id = _project_id_for(canonical)
     display_name = _display_name(canonical)

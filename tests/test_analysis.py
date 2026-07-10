@@ -10,7 +10,7 @@ from longhand.analysis.project_inference import infer_project
 from longhand.types import Event, EventType, FileOperation, Session
 
 
-def _session(cwd: str = "/tmp/cosmic-game") -> Session:
+def _session(cwd: str = "/Users/tester/cosmic-game") -> Session:
     return Session(
         session_id="test-session",
         project_path=cwd,
@@ -61,7 +61,7 @@ def _event(
 
 
 def test_infer_project_basic():
-    session = _session("/tmp/cosmic-game")
+    session = _session("/Users/tester/cosmic-game")
     events = [
         _event("e1", EventType.USER_MESSAGE, 1, "I'm building a game with phaser"),
         _event(
@@ -81,7 +81,7 @@ def test_infer_project_basic():
 
 
 def test_infer_project_category_from_keywords():
-    session = _session("/tmp/my-thing")
+    session = _session("/Users/tester/my-thing")
     events = [
         _event("e1", EventType.USER_MESSAGE, 1, "Fix the phaser sprite rendering bug"),
         _event(

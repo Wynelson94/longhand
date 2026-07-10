@@ -1036,23 +1036,52 @@ def analyze(
 
 @app.command(rich_help_panel="Data")
 def reattribute(
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Apply the moves. Without it, print what would change (dry-run).",
+    ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """Repair project misattribution.
 
     Re-derives each session's project from its events in the database (not the
-    transcript file, which may have been rotated away) and re-attaches it. Fixes
-    sessions that drifted to the wrong project — e.g. work filed under the home
-    catch-all because cwd and project_id desynced. Idempotent.
+    transcript file, which may have been rotated away). Fixes sessions that
+    drifted to the wrong project — the home catch-all, monorepo splits,
+    case-duplicate paths, and junk projects minted from temp dirs. Idempotent.
+
+    DRY-RUN BY DEFAULT: prints the moves grouped by destination and touches
+    nothing. Review, then re-run with --fix to apply.
     """
     store = _get_store(data_dir)
-    console.print("[cyan]Re-attributing sessions from the events table...[/cyan]")
-    result = store.reattribute_sessions()
+    mode = "Re-attributing" if fix else "Dry-run: re-deriving"
+    console.print(f"[cyan]{mode} sessions from the events table...[/cyan]")
+    result = store.reattribute_sessions(apply=fix)
     console.print(
         f"[bold]Scanned {result['scanned']}[/bold] sessions, "
-        f"[bold]{result['reattributed']}[/bold] re-attributed "
+        f"[bold]{result['reattributed']}[/bold] "
+        f"{'re-attributed' if fix else 'would move'} "
         f"([dim]{result['skipped']} skipped — no events[/dim])"
     )
+
+    if result["changes"]:
+        by_move: dict[tuple[str | None, str], int] = {}
+        names: dict[str, str] = {}
+        for c in result["changes"]:
+            key = (c["old_project_id"], c["new_project_id"])
+            by_move[key] = by_move.get(key, 0) + 1
+            names[c["new_project_id"]] = c["new_display_name"]
+        for (old_pid, new_pid), n in sorted(by_move.items(), key=lambda kv: -kv[1]):
+            old_proj = store.sqlite.get_project(old_pid) if old_pid else None
+            old_name = (old_proj or {}).get("display_name") or old_pid or "(none)"
+            console.print(f"  {n:>4} session(s): {old_name} → {names[new_pid]}")
+
+    if result["pruned"]:
+        verb = "pruned" if fix else "would be pruned"
+        console.print(f"  [dim]{result['pruned']} emptied project row(s) {verb}[/dim]")
+
+    if not fix and result["changes"]:
+        console.print("\n[dim]Run with --fix to apply.[/dim]")
 
 
 def _deprecated(old: str, new: str) -> None:

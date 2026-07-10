@@ -132,15 +132,23 @@ class LonghandStore:
         self.sqlite.recompute_project_stats(project["project_id"])
         return project
 
-    def reattribute_sessions(self, session_ids: list[str] | None = None) -> dict:
+    def reattribute_sessions(
+        self, session_ids: list[str] | None = None, apply: bool = True
+    ) -> dict:
         """Re-derive each session's project (and corrected cwd) from its events in
         the events table — independent of the transcript file, which may have been
         rotated off disk — and re-attach it.
 
         Repairs project_id↔cwd drift (the F2 misattribution bug, where sessions
-        ended up filed under the home catch-all). Returns counts:
-        ``{scanned, reattributed, skipped}``.
+        ended up filed under the home catch-all). With ``apply=False`` nothing
+        is written — the returned ``changes`` list shows what would move.
+
+        Returns ``{scanned, reattributed, skipped, applied, changes, pruned}``;
+        ``changes`` is ``[{session_id, old_project_id, new_project_id,
+        new_display_name}]``, ``pruned`` counts project rows deleted because
+        the moves left them with zero sessions (dry-run: would-be count).
         """
+        from longhand.analysis.project_inference import infer_project
         from longhand.parser import _pick_best_project_cwd
 
         rows = self.sqlite.list_sessions(limit=1_000_000)
@@ -148,7 +156,8 @@ class LonghandStore:
             wanted = set(session_ids)
             rows = [r for r in rows if r["session_id"] in wanted]
 
-        scanned = reattributed = skipped = 0
+        scanned = skipped = 0
+        changes: list[dict] = []
         for row in rows:
             sid = row["session_id"]
             events = self._events_for_session(sid)
@@ -158,24 +167,57 @@ class LonghandStore:
             best_cwd = _pick_best_project_cwd(events) or row.get("cwd") or row.get("project_path")
             session = self._session_from_row(row, best_cwd)
             old_pid = row.get("project_id")
-            project = self.attribute_session_project(session, events)
-            if best_cwd and best_cwd != row.get("cwd"):
-                with self.sqlite.connect() as conn:
-                    conn.execute(
-                        "UPDATE sessions SET cwd = ? WHERE session_id = ?", (best_cwd, sid)
-                    )
+
+            if apply:
+                project = self.attribute_session_project(session, events)
+                if best_cwd and best_cwd != row.get("cwd"):
+                    with self.sqlite.connect() as conn:
+                        conn.execute(
+                            "UPDATE sessions SET cwd = ? WHERE session_id = ?", (best_cwd, sid)
+                        )
+            else:
+                project = infer_project(session, events)
+
             scanned += 1
             if project["project_id"] != old_pid:
-                reattributed += 1
+                changes.append(
+                    {
+                        "session_id": sid,
+                        "old_project_id": old_pid,
+                        "new_project_id": project["project_id"],
+                        "new_display_name": project["display_name"],
+                    }
+                )
 
-        # Sessions may have moved between projects — re-derive every project's
-        # rollups so counts stay accurate (emptied projects drop to 0).
-        with self.sqlite.connect() as conn:
-            pids = [r[0] for r in conn.execute("SELECT project_id FROM projects").fetchall()]
-        for pid in pids:
-            self.sqlite.recompute_project_stats(pid)
+        pruned = 0
+        if apply:
+            # Sessions may have moved between projects — re-derive every project's
+            # rollups so counts stay accurate, then drop rows the moves emptied
+            # (completes case-dupe/junk-project merges).
+            with self.sqlite.connect() as conn:
+                pids = [r[0] for r in conn.execute("SELECT project_id FROM projects").fetchall()]
+            for pid in pids:
+                self.sqlite.recompute_project_stats(pid)
+            pruned = self.sqlite.prune_empty_projects()
+        elif changes:
+            moved_from = {c["old_project_id"] for c in changes if c["old_project_id"]}
+            with self.sqlite.connect() as conn:
+                for pid in moved_from:
+                    remaining = conn.execute(
+                        "SELECT COUNT(*) FROM sessions WHERE project_id = ?", (pid,)
+                    ).fetchone()[0]
+                    moving = sum(1 for c in changes if c["old_project_id"] == pid)
+                    if remaining - moving <= 0:
+                        pruned += 1
 
-        return {"scanned": scanned, "reattributed": reattributed, "skipped": skipped}
+        return {
+            "scanned": scanned,
+            "reattributed": len(changes),
+            "skipped": skipped,
+            "applied": apply,
+            "changes": changes,
+            "pruned": pruned,
+        }
 
     def _events_for_session(self, session_id: str) -> list[Event]:
         """Rebuild Event objects from the events table — only the fields project
