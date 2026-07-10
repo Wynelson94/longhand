@@ -61,6 +61,12 @@ include = ["longhand*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+filterwarnings = [
+    # Third-party deprecation noise, triaged 2026-07-10 (audit P3). Both come
+    # from chromadb's internals, not our code; re-check on chromadb upgrades.
+    "ignore:asyncio.iscoroutinefunction:DeprecationWarning",
+    "ignore:Accessing the 'model_fields' attribute:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

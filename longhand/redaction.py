@@ -59,6 +59,9 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+_CARD_PRECHECK = re.compile(r"\d(?:[ -]?\d){12}")
+
+
 def _luhn_ok(digits: str) -> bool:
     total = 0
     for i, ch in enumerate(reversed(digits)):
@@ -96,6 +99,11 @@ def redact_text(text: str) -> tuple[str, int]:
     count = 0
 
     for name, pattern in PATTERNS:
+        # The card pattern is the CPU hog on numeric-heavy transcripts; a
+        # cheap pre-check (is there any 13-digit-ish run at all?) skips it
+        # for the overwhelmingly common case.
+        if name == "credit_card" and not _CARD_PRECHECK.search(text):
+            continue
 
         def _sub(m: re.Match[str], _name: str = name) -> str:
             nonlocal count

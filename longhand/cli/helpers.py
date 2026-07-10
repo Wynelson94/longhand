@@ -20,12 +20,20 @@ def _get_store(data_dir: str | None = None) -> LonghandStore:
 
 
 def _resolve_prefix(store: LonghandStore, prefix: str) -> str | None:
-    """Resolve a session ID prefix to a full session ID."""
-    rows = store.sqlite.list_sessions(limit=1000)
-    for row in rows:
-        if row["session_id"].startswith(prefix):
-            return row["session_id"]
-    return None
+    """Resolve a session ID prefix to a full session ID.
+
+    SQL LIKE over the whole table — the old approach scanned only the 1,000
+    most recent sessions in Python, so prefixes of older sessions silently
+    failed to resolve. Most-recent match wins on ambiguity (unchanged).
+    """
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    with store.sqlite.connect() as conn:
+        row = conn.execute(
+            "SELECT session_id FROM sessions WHERE session_id LIKE ? ESCAPE '\\'"
+            " ORDER BY started_at DESC LIMIT 1",
+            (escaped + "%",),
+        ).fetchone()
+    return row[0] if row else None
 
 
 def _format_timestamp(iso: str) -> str:

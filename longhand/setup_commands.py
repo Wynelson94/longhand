@@ -115,7 +115,7 @@ def hook_install() -> None:
     settings = _load_json(CLAUDE_SETTINGS_PATH)
     backup = _backup(CLAUDE_SETTINGS_PATH)
 
-    longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
+    longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand"
     # Bare commands — both read `transcript_path` from stdin JSON.
     session_end_cmd = f"{longhand_bin} ingest-session"
     stop_cmd = f"{longhand_bin} ingest-live"
@@ -193,7 +193,7 @@ def prompt_hook_install() -> None:
     settings = _load_json(CLAUDE_SETTINGS_PATH)
     backup = _backup(CLAUDE_SETTINGS_PATH)
 
-    longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand.cli"
+    longhand_bin = shutil.which("longhand") or f"{sys.executable} -m longhand"
     command = f"{longhand_bin} __prompt-hook-run"
 
     hooks = settings.setdefault("hooks", {})

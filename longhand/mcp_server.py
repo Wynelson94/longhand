@@ -707,6 +707,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "fully_indexed": {"type": "integer"},
                     "partially_indexed": {"type": "integer"},
+                    "skipped_oversize": {"type": "integer"},
                     "null_project": {"type": "integer"},
                     "missing": {"type": "integer"},
                     "ingested": {"type": "integer"},
@@ -1789,13 +1790,30 @@ _DISPATCH: dict[str, Any] = {
 }
 
 
+_STORE: LonghandStore | None = None
+
+
+def _shared_store() -> LonghandStore:
+    """One store for the server's lifetime — constructing per call re-ran
+    migrations and re-opened ChromaDB on every tool invocation."""
+    global _STORE
+    if _STORE is None:
+        _STORE = LonghandStore()
+    return _STORE
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     handler = _DISPATCH.get(name)
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
-    store = LonghandStore()
-    return await handler(store, arguments)
+    try:
+        return await handler(_shared_store(), arguments)
+    except Exception as e:
+        # Top-level envelope: a failing tool must hand the agent a readable
+        # error instead of surfacing a raw traceback through the MCP layer.
+        payload = {"error": f"{type(e).__name__}: {e}", "tool": name}
+        return [TextContent(type="text", text=json.dumps(payload))]
 
 
 async def main():
