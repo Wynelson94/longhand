@@ -389,7 +389,7 @@ class VectorStore:
         seen_ids: set[str] = set()
         deduped: list[dict[str, Any]] = []
         for item in items:
-            sid = item.get("segment_id")
+            sid = str(item.get("segment_id") or "")
             if sid in seen_ids:
                 continue
             seen_ids.add(sid)
