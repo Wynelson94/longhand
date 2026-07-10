@@ -787,6 +787,14 @@ async def list_tools() -> list[Tool]:
                         "default": True,
                         "description": "If True, return only episodes that have a resolved fix",
                     },
+                    "min_confidence": {
+                        "type": "number",
+                        "default": 0.5,
+                        "description": (
+                            "Minimum extraction confidence (0-1). Low-confidence "
+                            "episodes are noise-prone probes; pass 0 to include all."
+                        ),
+                    },
                     "limit": {
                         "type": "integer",
                         "default": 20,
@@ -1611,12 +1619,19 @@ async def _tool_match_project(store: LonghandStore, arguments: dict[str, Any]) -
 async def _tool_find_episodes(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
     # has_fix=True (the default) filters in SQL; False means "no filter",
     # matching the old post-filter semantics (include fixless episodes too).
+    # min_confidence defaults to 0.5 — the extractor's floor for episodes
+    # with real structural evidence; pass 0 to see everything.
+    try:
+        min_conf = float(arguments.get("min_confidence", 0.5))
+    except (TypeError, ValueError):
+        min_conf = 0.5
     episodes = store.sqlite.query_episodes(
         project_ids=arguments.get("project_ids"),
         since=arguments.get("since"),
         until=arguments.get("until"),
         keyword=arguments.get("keyword"),
         has_fix=True if _bool(arguments.get("has_fix"), True) else None,
+        min_confidence=min_conf if min_conf > 0 else None,
         limit=_limit(arguments.get("limit"), 20),
     )
     return [TextContent(type="text", text=json.dumps(episodes, indent=2, default=str))]

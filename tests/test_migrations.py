@@ -421,3 +421,28 @@ def test_fresh_store_has_analysis_stage(tmp_path: Path):
     with store.connect() as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(ingestion_log)")}
     assert "analysis_stage" in cols
+
+
+def test_v8_strips_ask_prefix_from_problem_descriptions(tmp_path: Path):
+    """Migration 8 removes the leaked 'Ask: ' scaffold from stored episodes
+    (same class as the v4 'Intent: ' strip)."""
+    store = SQLiteStore(tmp_path / "lh" / "longhand.db")
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO episodes (episode_id, session_id, started_at, ended_at,"
+            " problem_event_id, problem_description, confidence, status)"
+            " VALUES ('ep-a', 's1', '2026-01-01', '2026-01-01', 'pe',"
+            " 'Ask: fix the bug. Error: boom', 0.8, 'resolved'),"
+            " ('ep-b', 's1', '2026-01-01', '2026-01-01', 'pe',"
+            " 'Task keeps failing', 0.8, 'resolved')"
+        )
+        # Roll back v8 so we can watch it apply to the seeded rows.
+        conn.execute("DELETE FROM schema_version WHERE version = 8")
+        conn.execute(
+            "UPDATE episodes SET problem_description = 'Ask: fix the bug. Error: boom'"
+            " WHERE episode_id = 'ep-a'"
+        )
+        apply_migrations(conn)
+        rows = dict(conn.execute("SELECT episode_id, problem_description FROM episodes").fetchall())
+    assert rows["ep-a"] == "fix the bug. Error: boom"
+    assert rows["ep-b"] == "Task keeps failing"  # untouched

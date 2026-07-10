@@ -803,3 +803,33 @@ def test_query_is_bounded_and_coerced():
 
 # ensure pytest doesn't collect the Any import as a test
 _ = pytest, Any
+
+
+def test_tool_find_episodes_default_filters_low_confidence(temp_store):
+    """min_confidence (default 0.5) keeps extraction noise out of the default
+    call; min_confidence=0 opts back in to everything."""
+    base = {
+        "session_id": "s-conf",
+        "project_id": "p1",
+        "started_at": "2026-06-01T10:00:00Z",
+        "ended_at": "2026-06-01T10:30:00Z",
+        "problem_event_id": "pe",
+        "fix_event_id": "fe",
+        "problem_description": "text",
+        "fix_summary": "fixed",
+        "touched_files": [],
+        "tags": [],
+        "status": "resolved",
+    }
+    temp_store.sqlite.insert_episodes(
+        [
+            {**base, "episode_id": "ep-solid", "confidence": 0.8},
+            {**base, "episode_id": "ep-noise", "confidence": 0.3},
+        ]
+    )
+
+    default = _payload(_call(mcp_server._tool_find_episodes, temp_store, {}))
+    assert {e["episode_id"] for e in default} == {"ep-solid"}
+
+    everything = _payload(_call(mcp_server._tool_find_episodes, temp_store, {"min_confidence": 0}))
+    assert {e["episode_id"] for e in everything} == {"ep-solid", "ep-noise"}

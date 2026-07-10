@@ -37,6 +37,7 @@ def _event(
     tool_use_id: str | None = None,
     old_content: str | None = None,
     new_content: str | None = None,
+    tool_success: bool | None = None,
 ) -> Event:
     return Event(
         event_id=event_id,
@@ -47,6 +48,7 @@ def _event(
         content=content,
         tool_name=tool_name,
         tool_use_id=tool_use_id,
+        tool_success=tool_success,
         file_path=file_path,
         file_operation=file_operation,
         old_content=old_content,
@@ -228,7 +230,16 @@ def test_extract_episode_with_full_chain():
             old_content="x.foo()",
             new_content="x?.foo()",
         ),
-        _event("r2", EventType.TOOL_RESULT, 6, content="All tests passed"),
+        # Verification must come from an execution-shaped tool (or carry an
+        # explicit success flag) — a bare unpaired result no longer counts.
+        _event("c3", EventType.TOOL_CALL, 6, tool_name="Bash", tool_use_id="bash-1"),
+        _event(
+            "r2",
+            EventType.TOOL_RESULT,
+            7,
+            content="All tests passed",
+            tool_use_id="bash-1",
+        ),
     ]
     episodes = extract_episodes("sess1", "proj1", events)
     assert len(episodes) == 1
@@ -268,3 +279,129 @@ def test_no_episodes_for_clean_session():
     ]
     episodes = extract_episodes("sess1", "proj1", events)
     assert episodes == []
+
+
+# ─── v0.12 episode precision ─────────────────────────────────────────────────
+
+
+def _error_fix_events(verify_events: list[Event]) -> list[Event]:
+    """error in main.ts → thinking → Edit fix, then caller-supplied tail."""
+    return [
+        _event("u1", EventType.USER_MESSAGE, 1, "Fix the crash"),
+        _event("c1", EventType.TOOL_CALL, 2, tool_name="Bash", tool_use_id="bash-0"),
+        _event(
+            "r1",
+            EventType.TOOL_RESULT,
+            3,
+            content="FAIL /tmp/game/src/main.ts: TypeError",
+            error_detected=True,
+            error_category="test",
+            tool_use_id="bash-0",
+        ),
+        _event("t1", EventType.ASSISTANT_THINKING, 4, "main.ts is missing a null check"),
+        _event(
+            "c2",
+            EventType.TOOL_CALL,
+            5,
+            tool_name="Edit",
+            file_path="/tmp/game/src/main.ts",
+            file_operation=FileOperation.EDIT,
+        ),
+        *verify_events,
+    ]
+
+
+def test_read_result_does_not_verify():
+    """Read/Grep results (tool_success=None, not execution-shaped) must not
+    mark an episode resolved — the old `is not False` gate let them."""
+    events = _error_fix_events(
+        [
+            _event("c3", EventType.TOOL_CALL, 6, tool_name="Read", tool_use_id="read-1"),
+            _event(
+                "r2",
+                EventType.TOOL_RESULT,
+                7,
+                content="def main(): ...",
+                tool_use_id="read-1",
+            ),
+        ]
+    )
+    episodes = extract_episodes("sess1", "proj1", events)
+    assert len(episodes) == 1
+    assert episodes[0]["verification_event_id"] is None
+    assert episodes[0]["status"] == "partial"
+
+
+def test_explicit_success_flag_verifies():
+    events = _error_fix_events(
+        [
+            _event(
+                "r2",
+                EventType.TOOL_RESULT,
+                6,
+                content="file updated",
+                tool_success=True,
+            ),
+        ]
+    )
+    episodes = extract_episodes("sess1", "proj1", events)
+    assert episodes[0]["verification_event_id"] == "r2"
+    assert episodes[0]["status"] == "resolved"
+
+
+def test_new_error_opens_new_episode():
+    """A later error — even in the SAME file — closes the episode and opens a
+    new one. The old same-file exemption swallowed every follow-on error."""
+    events = _error_fix_events(
+        [
+            _event("c3", EventType.TOOL_CALL, 6, tool_name="Bash", tool_use_id="bash-2"),
+            _event(
+                "r2",
+                EventType.TOOL_RESULT,
+                7,
+                content="FAIL /tmp/game/src/main.ts: still TypeError",
+                error_detected=True,
+                tool_use_id="bash-2",
+            ),
+        ]
+    )
+    episodes = extract_episodes("sess1", "proj1", events)
+    assert len(episodes) == 2
+    assert episodes[0]["verification_event_id"] is None  # first ended at error #2
+    assert episodes[1]["problem_event_id"] == "r2"
+
+
+def test_plumbing_user_message_not_problem_anchor():
+    """Harness plumbing (<task-notification> etc.) is never a human ask —
+    the problem anchors to the nearest REAL user message instead."""
+    events = [
+        _event("u1", EventType.USER_MESSAGE, 1, "Fix the login timeout bug"),
+        _event(
+            "u2",
+            EventType.USER_MESSAGE,
+            2,
+            "<task-notification>\n<task-id>abc</task-id>\ncompleted\n</task-notification>",
+        ),
+        _event("c1", EventType.TOOL_CALL, 3, tool_name="Bash", tool_use_id="bash-0"),
+        _event(
+            "r1",
+            EventType.TOOL_RESULT,
+            4,
+            content="error: timeout in auth.py",
+            error_detected=True,
+            tool_use_id="bash-0",
+        ),
+    ]
+    episodes = extract_episodes("sess1", "proj1", events)
+    assert len(episodes) == 1
+    desc = episodes[0]["problem_description"]
+    assert "task-notification" not in desc
+    assert "login timeout" in desc
+
+
+def test_problem_description_has_no_ask_scaffold():
+    events = _error_fix_events([])
+    episodes = extract_episodes("sess1", "proj1", events)
+    desc = episodes[0]["problem_description"]
+    assert not desc.startswith("Ask: ")
+    assert desc.startswith("Fix the crash")
