@@ -238,8 +238,9 @@ async def list_tools() -> list[Tool]:
                 "Returns events matching a natural language query, with optional "
                 "filters by event type, session, project, tool, or file path. "
                 "IMPORTANT: Always pass session_id when you know which session to search — "
-                "unscoped search returns noisy results. For finding a discussion WITH "
-                "surrounding conversation context, use search_in_context instead."
+                "unscoped search returns noisy results. To read matches WITH their "
+                "surrounding conversation, pass context_events (requires session_id): "
+                "each match comes back with N events before and after it."
             ),
             inputSchema={
                 "type": "object",
@@ -253,6 +254,10 @@ async def list_tools() -> list[Tool]:
                     "session_id": {
                         "type": "string",
                         "description": "Scope search to a single session (prefix match — first 8 chars usually enough)",
+                    },
+                    "context_events": {
+                        "type": "integer",
+                        "description": "With session_id: return each match wrapped in N surrounding events (the old search_in_context)",
                     },
                     "project_id": {
                         "type": "string",
@@ -293,6 +298,7 @@ async def list_tools() -> list[Tool]:
             name="search_in_context",
             title="Search a Session With Surrounding Context",
             description=(
+                "[DEPRECATED — use search with context_events] "
                 "Search within a specific session and return matches WITH surrounding "
                 "conversation context. This is the tool you want when you know WHICH "
                 "session to look in but need to FIND a specific discussion or event. "
@@ -358,7 +364,9 @@ async def list_tools() -> list[Tool]:
                 "'which sessions touched this project last week?' Filter by project "
                 "path substring to narrow results. NOT for searching content — use "
                 "`search` or `recall` for that. NOT for cross-session git history — "
-                "use `find_commits`. When a `project` filter matches a known project "
+                "use `find_commits`. Pass project_id (with optional since/until) for a "
+                "project's session timeline enriched with outcomes — the old "
+                "get_project_timeline. When a `project` filter matches a known project "
                 "and its on-disk transcripts exceed what's indexed, the response wraps "
                 "a `{stale, stale_reason, sessions}` envelope — call the `reconcile` "
                 "tool to catch up."
@@ -369,6 +377,18 @@ async def list_tools() -> list[Tool]:
                     "project": {
                         "type": "string",
                         "description": "Filter by project path substring (e.g. 'longhand', 'bsoi')",
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Exact project_id — returns that project's session timeline enriched with outcomes",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "ISO date — only sessions after this (with project_id)",
+                    },
+                    "until": {
+                        "type": "string",
+                        "description": "ISO date — only sessions before this (with project_id)",
                     },
                     "limit": {
                         "type": "integer",
@@ -402,8 +422,9 @@ async def list_tools() -> list[Tool]:
             title="Session Event Timeline",
             description=(
                 "Get a chronological timeline of events in a session. Supports session "
-                "id prefix match. Use 'tail' to get only the last N events (great for "
-                "checking how a session ended). Use 'offset' to paginate through long sessions. "
+                "id prefix match. Use 'tail' to get only the last N events — how a "
+                "session ended, the latest user message, the most recent tool call "
+                "(this replaces get_latest_events). Use 'offset' to paginate through long sessions. "
                 "NOT for searching — if you're looking for something specific in a session, "
                 "use search_in_context instead of paginating this tool in a loop."
             ),
@@ -460,6 +481,7 @@ async def list_tools() -> list[Tool]:
             name="get_latest_events",
             title="Latest Events in a Session",
             description=(
+                "[DEPRECATED — use get_session_timeline with tail] "
                 "Get the N most recent events in a session, in reverse chronological order "
                 "(sequence DESC). Use this when you need 'what was the latest X' — e.g., "
                 "the last user message, the last tool call, the last assistant response. "
@@ -619,9 +641,11 @@ async def list_tools() -> list[Tool]:
             description=(
                 "PROACTIVE MEMORY — START HERE for any 'do you remember...' question. "
                 "Handles fuzzy time references ('a couple months ago'), project matching "
-                "('that game project'), and episode retrieval in ONE call. Returns: matched "
-                "projects, relevant episodes (problem→fix pairs), diffs, verbatim thinking "
-                "blocks, reconstructed file states, and a prebuilt markdown narrative. "
+                "('that game project'), and retrieval in ONE call. Returns a prebuilt "
+                "markdown narrative from conversation segments and session timelines, "
+                "plus matched projects and — when the work left clean problem→fix "
+                "evidence — high-precision episodes with diffs, verbatim thinking "
+                "blocks, and reconstructed file states. "
                 "Do NOT manually search and paginate — use this tool first."
             ),
             inputSchema={
@@ -695,7 +719,8 @@ async def list_tools() -> list[Tool]:
                 "and errors. Idempotent — re-running with the same on-disk state is a "
                 "no-op. Acquires the ingest lock — serialized with concurrent ingestion. "
                 "May take 30s+ on cold state because it runs embeddings and episode "
-                "extraction during re-ingest. Pass `fix=false` for a dry-run summary."
+                "extraction during re-ingest. Pass `fix` EXPLICITLY: the implicit "
+                "default is true today but flips to false (dry-run) at v1.0."
             ),
             inputSchema={
                 "type": "object",
@@ -729,6 +754,7 @@ async def list_tools() -> list[Tool]:
             name="match_project",
             title="Fuzzy Project Match",
             description=(
+                "[DEPRECATED — use list_projects with match] "
                 "Fuzzy project matching. Given a partial project name, category, or "
                 "description, returns candidate projects with match reasons. Useful for "
                 "confirming 'which game did you mean?' before drilling into episodes."
@@ -767,14 +793,18 @@ async def list_tools() -> list[Tool]:
             title="Find Problem→Fix Episodes",
             description=(
                 "Structured search for problem→fix episodes. Filters: project_ids, time "
-                "range, keyword, has_fix. Returns raw episode rows. Use this when you "
-                "already know the project or want raw data instead of narrative. NOT "
-                "for narrative recall — use `recall` for that. NOT for full episode "
-                "detail — pass an episode_id to `get_episode` after this."
+                "range, keyword, has_fix. Returns raw episode rows. Pass episode_id "
+                "instead for FULL detail on one episode — referenced events, diff, and "
+                "post-fix file state (the old get_episode). NOT for narrative recall — "
+                "use `recall` for that."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "episode_id": {
+                        "type": "string",
+                        "description": "Detail mode: return full detail for exactly this episode (all other filters ignored)",
+                    },
                     "project_ids": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -835,6 +865,7 @@ async def list_tools() -> list[Tool]:
             name="get_episode",
             title="Full Episode Detail (Problem → Fix → Verify)",
             description=(
+                "[DEPRECATED — use find_episodes with episode_id] "
                 "Full detail for one episode by episode_id. Includes all referenced events "
                 "(problem, diagnosis thinking block, fix edit, verification), the diff, "
                 "and the reconstructed file state after the fix. NOT for browsing — call "
@@ -869,6 +900,7 @@ async def list_tools() -> list[Tool]:
             name="get_session_commits",
             title="Get Git Operations from a Session",
             description=(
+                "[DEPRECATED — use find_commits with session_id and no query] "
                 "Returns every git operation (commit, push, pull, checkout, merge, etc.) "
                 "captured during a single Claude Code session, in chronological order. "
                 "Each row carries the timestamp, operation type, branch, hash, and "
@@ -914,17 +946,17 @@ async def list_tools() -> list[Tool]:
             name="find_commits",
             title="Find Commits Across Sessions",
             description=(
-                "Search across all sessions for git commits matching a query — by commit "
-                "message, hash prefix, or branch name. Great for 'find that commit where "
-                "we fixed the parser' queries. NOT for getting every operation in a known "
-                "session — use `get_session_commits` for that."
+                "Search git history captured from sessions. With a query: match commits "
+                "across all sessions by message, hash prefix, or branch name. Without a "
+                "query but with a session_id: every git operation in that session in "
+                "chronological order (the old get_session_commits)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Commit message substring, hash prefix, or branch name",
+                        "description": "Optional: commit message substring, hash prefix, or branch name. Omit (with session_id) to list a session's git operations chronologically.",
                     },
                     "session_id": {
                         "type": "string",
@@ -945,7 +977,6 @@ async def list_tools() -> list[Tool]:
                         "description": "Max output characters",
                     },
                 },
-                "required": ["query"],
             },
             outputSchema={
                 "type": "array",
@@ -961,15 +992,19 @@ async def list_tools() -> list[Tool]:
                 "Browse all projects Longhand has inferred from your session history. "
                 "Returns project ID, display name, canonical path, category (cli tool / "
                 "web app / library / etc.), and session count. Filter by keyword (matches "
-                "name, path, aliases) or category. Use this to find a project_id before "
-                "calling get_project_timeline or recall_project_status. Set verbose=true "
-                "to include full metadata (aliases, languages, keywords arrays). NOT for "
-                "session-level activity — use `get_project_timeline` after you have a "
-                "project_id."
+                "name, path, aliases) or category. Pass match for fuzzy matching with "
+                "scored reasons — 'which project did you mean?' (the old match_project). "
+                "Use this to find a project_id before calling recall_project_status or "
+                "list_sessions(project_id=...). Set verbose=true for full metadata "
+                "(aliases, languages, keywords arrays)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "match": {
+                        "type": "string",
+                        "description": "Fuzzy-match mode: partial name/category/description → scored candidates with reasons",
+                    },
                     "keyword": {
                         "type": "string",
                         "description": "Filter: matches project name, path, or aliases",
@@ -1012,6 +1047,7 @@ async def list_tools() -> list[Tool]:
             name="get_project_timeline",
             title="Project Session Timeline",
             description=(
+                "[DEPRECATED — use list_sessions with project_id] "
                 "Session-level timeline for a project — bird's-eye view of what's been "
                 "happening. Returns each session's start/end time, event count, outcome "
                 "(shipped / fixed / stuck / exploratory), and a summary line. Use this "
@@ -1089,6 +1125,10 @@ async def list_tools() -> list[Tool]:
 
 
 async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # Context mode absorbs the old search_in_context: same params, 1:1.
+    if arguments.get("context_events") and arguments.get("session_id"):
+        return await _tool_search_in_context(store, arguments)
+
     limit = _limit(arguments.get("limit"), 10)
     max_chars = _max_chars(arguments.get("max_chars"), 12000)
     query = _query(arguments.get("query"))
@@ -1304,6 +1344,11 @@ async def _tool_search_in_context(
 
 
 async def _tool_list_sessions(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # project_id mode absorbs the old get_project_timeline: same params, 1:1,
+    # outcome enrichment included.
+    if arguments.get("project_id"):
+        return await _tool_get_project_timeline(store, arguments)
+
     project_filter = arguments.get("project")
     rows = store.sqlite.list_sessions(
         project_path=project_filter,
@@ -1627,6 +1672,10 @@ async def _tool_match_project(store: LonghandStore, arguments: dict[str, Any]) -
 
 
 async def _tool_find_episodes(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # episode_id detail mode absorbs the old get_episode.
+    if arguments.get("episode_id"):
+        return await _tool_get_episode(store, arguments)
+
     # has_fix=True (the default) filters in SQL; False means "no filter",
     # matching the old post-filter semantics (include fixless episodes too).
     # min_confidence defaults to 0.5 — the extractor's floor for episodes
@@ -1707,6 +1756,12 @@ async def _tool_get_session_commits(
 
 
 async def _tool_find_commits(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # No query + session_id absorbs the old get_session_commits (chronological).
+    if not (arguments.get("query") or "").strip():
+        if not arguments.get("session_id"):
+            return [TextContent(type="text", text="Pass a query, a session_id, or both.")]
+        return await _tool_get_session_commits(store, arguments)
+
     search_session_id = None
     if arguments.get("session_id"):
         search_session_id = _resolve_prefix(store, arguments["session_id"])
@@ -1722,6 +1777,12 @@ async def _tool_find_commits(store: LonghandStore, arguments: dict[str, Any]) ->
 
 
 async def _tool_list_projects(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+    # match mode absorbs the old match_project (fuzzy, with scored reasons).
+    if arguments.get("match"):
+        return await _tool_match_project(
+            store, {"query": arguments["match"], "top_k": arguments.get("limit", 5)}
+        )
+
     rows = store.sqlite.list_projects(
         keyword=arguments.get("keyword"),
         category=arguments.get("category"),
@@ -1767,7 +1828,15 @@ async def _tool_reconcile(store: LonghandStore, arguments: dict[str, Any]) -> li
     """
     fix = _bool(arguments.get("fix"), True)
     report = run_reconcile(store, fix=fix)
-    output = json.dumps(report.to_dict(), indent=2, default=str)
+    payload = report.to_dict()
+    if "fix" not in arguments:
+        # The implicit default flips to fix=false (dry-run) at v1.0 — nudge
+        # callers to say what they mean while both behaviors still work.
+        payload["deprecation_warning"] = (
+            "reconcile ran with the implicit default fix=true; at v1.0 the "
+            "default flips to fix=false (dry-run). Pass fix explicitly."
+        )
+    output = json.dumps(payload, indent=2, default=str)
     return [TextContent(type="text", text=output)]
 
 
@@ -1776,25 +1845,50 @@ async def _tool_list_plans(store: LonghandStore, arguments: dict[str, Any]) -> l
     return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
 
 
+# Retired tool → the surviving call shape that replaces it. Through 0.13 the
+# retired names stay in list_tools() with a [DEPRECATED] description prefix;
+# at 1.0 they leave the listing but KEEP answering here forever (with the
+# migration preamble) so stale user CLAUDE.md files never hard-fail.
+_RETIRED_TOOLS: dict[str, str] = {
+    "search_in_context": "search (pass context_events with session_id)",
+    "get_project_timeline": "list_sessions (pass project_id, optionally since/until)",
+    "get_latest_events": "get_session_timeline (pass tail)",
+    "get_session_commits": "find_commits (pass session_id, omit query)",
+    "get_episode": "find_episodes (pass episode_id)",
+    "match_project": "list_projects (pass match)",
+}
+
+
+def _deprecated_tool(name: str, handler: Any) -> Any:
+    """Wrap a retired tool: same behavior, plus a one-line migration preamble."""
+
+    async def _wrapped(store: LonghandStore, arguments: dict[str, Any]) -> list[TextContent]:
+        result = await handler(store, arguments)
+        preamble = f"[DEPRECATED] {name} is retired — use {_RETIRED_TOOLS[name]} instead.\n"
+        return [TextContent(type="text", text=preamble + tc.text) for tc in result]
+
+    return _wrapped
+
+
 _DISPATCH: dict[str, Any] = {
     "search": _tool_search,
-    "search_in_context": _tool_search_in_context,
+    "search_in_context": _deprecated_tool("search_in_context", _tool_search_in_context),
     "list_sessions": _tool_list_sessions,
     "get_session_timeline": _tool_get_session_timeline,
-    "get_latest_events": _tool_get_latest_events,
+    "get_latest_events": _deprecated_tool("get_latest_events", _tool_get_latest_events),
     "replay_file": _tool_replay_file,
     "get_file_history": _tool_get_file_history,
     "get_stats": _tool_get_stats,
     "recall": _tool_recall,
     "recall_project_status": _tool_recall_project_status,
     "reconcile": _tool_reconcile,
-    "match_project": _tool_match_project,
+    "match_project": _deprecated_tool("match_project", _tool_match_project),
     "find_episodes": _tool_find_episodes,
-    "get_episode": _tool_get_episode,
-    "get_session_commits": _tool_get_session_commits,
+    "get_episode": _deprecated_tool("get_episode", _tool_get_episode),
+    "get_session_commits": _deprecated_tool("get_session_commits", _tool_get_session_commits),
     "find_commits": _tool_find_commits,
     "list_projects": _tool_list_projects,
-    "get_project_timeline": _tool_get_project_timeline,
+    "get_project_timeline": _deprecated_tool("get_project_timeline", _tool_get_project_timeline),
     "list_plans": _tool_list_plans,
 }
 

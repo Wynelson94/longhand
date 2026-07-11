@@ -190,7 +190,7 @@ Longhand reads those files. Then it gives you:
 - **Conversation segments** — topic-level clustering (stories, design discussions, debugging, planning) so recall finds the *why*, not just the *what*
 - **Git-aware project recall** — ask "where did we leave off on X" and get recent commits, unresolved issues, last session outcome in one call
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
-- **MCP server** — 19 tools that let Claude query Longhand directly during live conversations
+- **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
 - **Live ingestion** — optional `Stop` hook tails the active transcript between turns so in-flight sessions show up in `recall` immediately
 - **Plan history** — every Write/Edit to `~/.claude/plans/*.md` is captured as a first-class entity, queryable via `longhand plans list` and the `list_plans` MCP tool
@@ -337,34 +337,30 @@ That's one local command. No API call. The fix came from a session file Claude C
 
 ## MCP Integration (Claude Desktop)
 
-Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has nineteen tools:
+Run `longhand mcp install` to wire Longhand into Claude Desktop's config. After you restart Claude Desktop, it has thirteen tools:
 
 **Core (searchable archive):**
-- `search` — semantic search with session, project, tool, file, and event_type filters (all combinable)
-- `list_sessions` — recent sessions with project/time filters
-- `get_session_timeline` — chronological view with offset/tail pagination and summary-only scan mode
-- `get_latest_events` — most recent events across all sessions, project- and tool-filterable
+- `search` — semantic search with session, project, tool, file, and event_type filters (all combinable); pass `context_events` with a `session_id` to get each match wrapped in its surrounding conversation
+- `list_sessions` — recent sessions with project/time filters; pass `project_id` (plus optional `since`/`until`) for a project's outcome-enriched session timeline
+- `get_session_timeline` — chronological view with offset/tail pagination and summary-only scan mode (`tail: N` covers "the latest events / how did it end")
 - `replay_file` — reconstruct file state at a point in time
 - `get_file_history` — every edit to a file across all sessions
 - `get_stats` — storage statistics
 
 **Proactive memory:**
-- `recall` — fuzzy natural-language recall (use this first)
+- `recall` — fuzzy natural-language recall (use this first): a narrative built from conversation segments and session timelines, with high-precision problem→fix episodes when the work left clean evidence
 - `recall_project_status` — "where did we leave off on X?" — git-aware project summary with commits, issues, last outcome
-- `search_in_context` — find something in a session and get the surrounding conversation
-- `match_project` — find projects by partial name / category / description
-- `find_episodes` — structured search for problem→fix pairs
-- `get_episode` — full detail for one episode including diff + file state
-- `list_projects` — browse inferred projects (compact by default, verbose optional)
-- `get_project_timeline` — session-level timeline for one project
+- `find_episodes` — structured search for problem→fix pairs; pass `episode_id` for full detail on one episode (referenced events, diff, post-fix file state)
+- `list_projects` — browse inferred projects; pass `match` for fuzzy candidates with scored reasons
 - `list_plans` — every Write/Edit to `~/.claude/plans/*.md` across your entire history
 
 **Git history:**
-- `get_session_commits` — all git operations in a session (commits, pushes, checkouts, merges)
-- `find_commits` — search across all sessions by commit message, hash prefix, or branch name
+- `find_commits` — search across all sessions by commit message, hash prefix, or branch name; or pass a `session_id` without a query for one session's chronological git story
 
 **Self-healing:**
-- `reconcile` — wraps `longhand reconcile --fix` so Claude can re-attribute and re-ingest from inside a session after a staleness banner
+- `reconcile` — wraps `longhand reconcile` so Claude can re-attribute and re-ingest from inside a session after a staleness banner; pass `fix` explicitly (the implicit default flips to dry-run at v1.0)
+
+**Deprecated (still answer through 0.x, with a migration preamble; leave the listing at v1.0):** `search_in_context` → `search(context_events)` · `get_latest_events` → `get_session_timeline(tail)` · `get_project_timeline` → `list_sessions(project_id)` · `get_session_commits` → `find_commits(session_id)` · `get_episode` → `find_episodes(episode_id)` · `match_project` → `list_projects(match)`
 
 All tools support `max_chars` output capping with pagination hints. No more 96k dumps crashing your context.
 
@@ -416,7 +412,7 @@ longhand/
 ├── analysis/              — per-session (project, outcomes, episodes, embeddings)
 ├── recall/                — per-query (time parsing, project match, narrative)
 ├── cli.py                 — Typer CLI with Rich output
-├── mcp_server.py          — Model Context Protocol server (19 tools)
+├── mcp_server.py          — Model Context Protocol server (13 tools)
 └── setup_commands.py      — hook install, mcp install, config, doctor
 ```
 
@@ -477,8 +473,8 @@ The single most common question: *does Longhand consume a lot of tokens when Cla
 | Tool | Default output cap | Rough token equivalent |
 |---|---:|---:|
 | `search` | 12,000 chars | ~3,000 tokens |
-| `recall`, `get_session_timeline`, `get_latest_events`, `get_session_commits`, `find_commits` | 12,000–16,000 chars | ~3,000–4,000 tokens |
-| `search_in_context` | 20,000 chars | ~5,000 tokens |
+| `recall`, `get_session_timeline`, `find_commits` | 12,000–16,000 chars | ~3,000–4,000 tokens |
+| `search` in context mode (`context_events`) | 20,000 chars | ~5,000 tokens |
 | Absolute ceiling (`MAX_OUTPUT_CHARS`) | 200,000 chars | ~50,000 tokens |
 
 **Why this matters — the comparison:**
