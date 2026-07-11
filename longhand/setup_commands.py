@@ -564,7 +564,7 @@ def mcp_install() -> None:
             f"[dim]Config:[/dim] {CLAUDE_DESKTOP_CONFIG_PATH}\n"
             f"[dim]Backup:[/dim] {backup or 'n/a'}\n\n"
             f"Restart Claude Desktop to activate. After restart, Claude will have "
-            f"access to [bold]recall[/bold], [bold]match_project[/bold], "
+            f"access to [bold]recall[/bold], [bold]recall_project_status[/bold], "
             f"[bold]find_episodes[/bold], and more.",
             title="MCP installed",
             border_style="green",

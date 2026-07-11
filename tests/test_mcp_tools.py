@@ -40,6 +40,148 @@ def _payload(result):
         return text
 
 
+# ─── MCP 19→13: absorptions + deprecation mechanics (v0.13) ──────────────────
+#
+# Six tools retire into six survivors via strict 1:1 parameter maps. Through
+# 0.13 the retired names stay listed with a [DEPRECATED — use …] description
+# prefix and every payload they return carries a one-line migration preamble.
+# At 1.0 they leave list_tools(); _DISPATCH keeps delegating aliases forever.
+
+RETIRED = {
+    "search_in_context": "search",
+    "get_project_timeline": "list_sessions",
+    "get_latest_events": "get_session_timeline",
+    "get_session_commits": "find_commits",
+    "get_episode": "find_episodes",
+    "match_project": "list_projects",
+}
+
+
+def _tools():
+    return {t.name: t for t in asyncio.run(mcp_server.list_tools())}
+
+
+def test_retired_tools_stay_listed_with_deprecated_prefix():
+    tools = _tools()
+    assert len(tools) == 19  # nothing leaves list_tools() until 1.0
+    for name, survivor in RETIRED.items():
+        assert tools[name].description.startswith("[DEPRECATED — use "), name
+        assert survivor in tools[name].description.splitlines()[0], name
+    for name in set(tools) - set(RETIRED):
+        assert not tools[name].description.startswith("[DEPRECATED"), name
+
+
+def test_retired_payloads_carry_migration_preamble(temp_store, sample_session_file):
+    _ingest(sample_session_file, temp_store)
+
+    result = _call(mcp_server._DISPATCH["match_project"], temp_store, {"query": "test-project"})
+
+    first_line = result[0].text.splitlines()[0]
+    assert first_line.startswith("[DEPRECATED]")
+    assert "list_projects" in first_line
+
+
+def test_search_absorbs_context_mode(temp_store, sample_session_file):
+    session = _ingest(sample_session_file, temp_store)
+
+    result = _call(
+        mcp_server._DISPATCH["search"],
+        temp_store,
+        {"query": "readme", "session_id": session.session_id, "context_events": 2},
+    )
+    payload = _payload(result)
+
+    assert isinstance(payload, dict)
+    assert "context_windows" in payload  # the search_in_context shape
+
+
+def test_list_sessions_absorbs_project_timeline(temp_store, sample_session_file):
+    _ingest(sample_session_file, temp_store)
+    with temp_store.sqlite.connect() as conn:
+        pid = conn.execute("SELECT project_id FROM sessions").fetchone()[0]
+    assert pid, "sample fixture should infer a project"
+
+    payload = _payload(
+        _call(mcp_server._DISPATCH["list_sessions"], temp_store, {"project_id": pid})
+    )
+
+    assert isinstance(payload, list) and payload
+    assert "outcome" in payload[0]  # timeline enrichment came along
+
+
+def test_find_commits_query_is_optional_and_absorbs_session_commits(
+    temp_store, sample_session_file
+):
+    session = _ingest(sample_session_file, temp_store)
+
+    assert _tools()["find_commits"].inputSchema.get("required", []) == []
+
+    payload = _payload(
+        _call(
+            mcp_server._DISPATCH["find_commits"],
+            temp_store,
+            {"session_id": session.session_id},
+        )
+    )
+    assert isinstance(payload, list)  # chronological ops for the session
+
+
+def test_find_episodes_absorbs_episode_detail(temp_store):
+    temp_store.sqlite.insert_episodes(
+        [
+            {
+                "episode_id": "ep-absorb",
+                "session_id": "s-absorb",
+                "project_id": "p-absorb",
+                "started_at": "2026-07-01T10:00:00Z",
+                "ended_at": "2026-07-01T10:30:00Z",
+                "problem_event_id": "pe",
+                "fix_event_id": "fe",
+                "problem_description": "the widget broke",
+                "fix_summary": "reattached the widget",
+                "touched_files": [],
+                "tags": [],
+                "status": "resolved",
+            }
+        ]
+    )
+
+    payload = _payload(
+        _call(mcp_server._DISPATCH["find_episodes"], temp_store, {"episode_id": "ep-absorb"})
+    )
+
+    assert isinstance(payload, dict)
+    assert payload["episode"]["episode_id"] == "ep-absorb"
+
+
+def test_list_projects_absorbs_match(temp_store, sample_session_file):
+    _ingest(sample_session_file, temp_store)
+
+    payload = _payload(
+        _call(mcp_server._DISPATCH["list_projects"], temp_store, {"match": "test-project"})
+    )
+
+    assert isinstance(payload, list) and payload
+    assert "reasons" in payload[0]  # the match_project shape
+
+
+def test_reconcile_implicit_fix_carries_deprecation_warning(temp_store, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        mcp_server,
+        "run_reconcile",
+        lambda store, fix: SimpleNamespace(to_dict=lambda: {"missing": 0, "ingested": 0}),
+    )
+
+    implicit = _payload(_call(mcp_server._DISPATCH["reconcile"], temp_store, {}))
+    assert "deprecation_warning" in implicit
+    assert "fix" in implicit["deprecation_warning"]
+
+    explicit = _payload(_call(mcp_server._DISPATCH["reconcile"], temp_store, {"fix": True}))
+    assert "deprecation_warning" not in explicit
+
+
 # ─── auto-scope threshold + observability ────────────────────────────────────
 
 
