@@ -6,6 +6,84 @@ from longhand.extractors.errors import detect_error
 from longhand.extractors.file_refs import extract_file_references
 from longhand.extractors.topics import extract_extensions, extract_keywords
 
+# ─── Error detection: command-context suppressions (v0.13) ──────────────────
+#
+# The paired Bash command tells us whether error-shaped output is noise:
+# probing a maybe-missing path, grepping for the word "Error:", or reading
+# git history that mentions failures. Suppression is per-pattern — every
+# other pattern keeps scanning, so a real error later still registers.
+
+PROBE_ENOENT = "ls: /tmp/definitely-missing: No such file or directory"
+TRACEBACK = (
+    'Traceback (most recent call last):\n  File "/tmp/app.py", line 42, in main\nValueError: boom'
+)
+
+
+def test_probe_command_suppresses_errno_noise():
+    assert (
+        detect_error(PROBE_ENOENT, tool_name="Bash", command="ls /tmp/definitely-missing") is None
+    )
+
+
+def test_no_context_backward_compatible():
+    # The same content with no command context keeps the old behavior.
+    sig = detect_error(PROBE_ENOENT)
+    assert sig is not None and sig.pattern == "bash_common"
+
+
+def test_dev_null_redirect_marks_probe_intent():
+    out = "stat: cannot stat '/x': No such file or directory"
+    assert detect_error(out, command="stat /x 2>/dev/null || echo absent") is None
+
+
+def test_read_probe_suppresses_errno():
+    out = "cat: /etc/missing.conf: No such file or directory"
+    assert detect_error(out, command="cat /etc/missing.conf") is None
+
+
+def test_search_command_suppresses_error_words():
+    # grep-style file:line: prefixes defeat the ^-anchored patterns already;
+    # the unanchored ones (AssertionError, ENOENT text) are what false-fire.
+    out = (
+        "src/retry.py:7:# retries on AssertionError from the flaky mock\n"
+        'src/probe.py:12:msg = "No such file or directory"'
+    )
+    assert detect_error(out, command="rg 'Error' src/") is None
+    assert detect_error(out) is not None  # no context → detected, as before
+
+
+def test_git_read_suppresses_error_words_but_keeps_fatal():
+    log_out = (
+        "commit abc1234\n"
+        "    fix the flaky test\n"
+        "\n"
+        "    AssertionError: boom was showing up in CI logs\n"
+        "    ValueError: now handled gracefully"
+    )
+    assert detect_error(log_out) is not None  # content alone looks like an error
+    assert detect_error(log_out, command="git log") is None
+
+    fatal_out = "fatal: not a git repository (or any of the parent directories): .git"
+    sig = detect_error(fatal_out, command="git log")
+    assert sig is not None and sig.pattern == "panic_fatal"
+
+
+def test_real_error_after_suppressed_noise_still_detected():
+    out = PROBE_ENOENT + "\n" + TRACEBACK
+    sig = detect_error(out, command="ls /tmp/definitely-missing")
+    assert sig is not None and sig.pattern == "python_traceback"
+
+
+def test_non_probe_command_keeps_errno_detection():
+    sig = detect_error(PROBE_ENOENT, command="python3 build.py")
+    assert sig is not None and sig.pattern == "bash_common"
+
+
+def test_path_prefixed_search_binary_is_recognized():
+    out = "src/retry.py:7:# retries on AssertionError from the flaky mock"
+    assert detect_error(out, command="/opt/homebrew/bin/rg 'Error' src/") is None
+
+
 # ─── Error detection ───────────────────────────────────────────────────────
 
 

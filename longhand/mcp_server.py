@@ -79,6 +79,15 @@ _HINT_PROJECTS = "Use a smaller `limit`, a `keyword`, or a `category` filter."
 
 
 MAX_LIMIT = 1000
+
+# Fuzzy-match score at or above which a tool trusts match_projects enough to
+# act on the top hit without an explicit project filter (search auto-scoping,
+# list_sessions staleness banners). Trade-off: higher and literal project
+# names get buried under cross-project noise; lower and vague queries get
+# wrongly pinned to one project. 0.8 = a strong name/alias/keyword hit,
+# below exact-path certainty. Every auto-scope decision is surfaced via
+# `auto_scoped_to` in the payload — the evidence channel for tuning this.
+AUTO_SCOPE_MIN_SCORE = 0.8
 MAX_OUTPUT_CHARS = 200000
 MAX_QUERY_CHARS = 2000
 
@@ -1102,7 +1111,7 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     if not project_id and not project_name:
         try:
             matches = match_projects(store, query, top_k=1)
-            if matches and matches[0].score >= 0.8:
+            if matches and matches[0].score >= AUTO_SCOPE_MIN_SCORE:
                 project_name = matches[0].display_name
                 auto_scoped_to = matches[0].display_name
         except Exception:
@@ -1307,7 +1316,7 @@ async def _tool_list_sessions(store: LonghandStore, arguments: dict[str, Any]) -
     if project_filter:
         try:
             matches = match_projects(store, project_filter, top_k=1)
-            if matches and matches[0].score >= 0.8:
+            if matches and matches[0].score >= AUTO_SCOPE_MIN_SCORE:
                 proj = store.sqlite.get_project(matches[0].project_id)
                 if proj:
                     banner = staleness_banner(
