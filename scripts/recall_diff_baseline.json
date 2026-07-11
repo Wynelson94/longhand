@@ -26,8 +26,8 @@
         "session_id": "8eea2770-97b6-45e2-90b6-7fe275bf6ac7"
       },
       {
-        "distance": 1.1403,
-        "episode_id": "ep_4b1f9d109afc9a6d",
+        "distance": 1.4846,
+        "episode_id": "ep_8443b840bc68edc4",
         "rank": 4,
         "session_id": "503c2815-8c7f-46ca-acd9-fe62ae0ea4e9"
       }
@@ -80,28 +80,28 @@
         "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
       },
       {
+        "distance": 1.3121,
+        "episode_id": "ep_590554e6bca3e5ef",
+        "rank": 1,
+        "session_id": "a353ccfe-136d-416b-968f-2b3af45ee427"
+      },
+      {
+        "distance": 1.5532,
+        "episode_id": "ep_5d7d98e3fe5a6850",
+        "rank": 2,
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
+      },
+      {
         "distance": 1.4312,
         "episode_id": "ep_e45f43c7ee62b83a",
-        "rank": 1,
+        "rank": 3,
         "session_id": "316fd0da-03de-4b75-8d28-c486d98d3376"
       },
       {
         "distance": 1.5168,
         "episode_id": "ep_9d5fed895a1a6dc5",
-        "rank": 2,
-        "session_id": "e5012482-e3ed-4fe3-898d-b5c2231f2a0e"
-      },
-      {
-        "distance": 1.534,
-        "episode_id": "ep_308506d64b7d98a4",
-        "rank": 3,
-        "session_id": "17c2aa16-f72e-4fcb-b64b-1e45c02a2b5b"
-      },
-      {
-        "distance": 1.0862,
-        "episode_id": "ep_3d51f14d9ba6db54",
         "rank": 4,
-        "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
+        "session_id": "e5012482-e3ed-4fe3-898d-b5c2231f2a0e"
       }
     ],
     "narrative_session_prefixes": [
@@ -158,58 +158,57 @@
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       },
       {
-        "distance": 1.6434,
-        "episode_id": "ep_6c148edf718e7076",
+        "distance": 1.3856,
+        "episode_id": "ep_e21bf66150586bf8",
         "rank": 2,
         "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
       },
       {
-        "distance": 1.5959,
-        "episode_id": "ep_f70c47245e676b50",
+        "distance": 1.5261,
+        "episode_id": "ep_decea735a79b3e86",
         "rank": 3,
-        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
       },
       {
-        "distance": 1.6333,
-        "episode_id": "ep_e2c93fb4b330c4e7",
+        "distance": 1.5959,
+        "episode_id": "ep_f70c47245e676b50",
         "rank": 4,
         "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
       }
     ],
     "narrative_session_prefixes": [
-      "0b810af9",
       "58df5093"
     ],
     "segments": [
       {
-        "distance": 1.1575,
+        "distance": 0.9959,
         "rank": 0,
+        "segment_id": "seg_f30d14e6fcd0a1f0",
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
+      },
+      {
+        "distance": 1.0845,
+        "rank": 1,
+        "segment_id": "seg_85babee3f1d170f4",
+        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
+      },
+      {
+        "distance": 1.1575,
+        "rank": 2,
         "segment_id": "seg_b1609151490a2785",
         "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
       },
       {
         "distance": 1.1755,
-        "rank": 1,
+        "rank": 3,
         "segment_id": "seg_4d97fc404f707a31",
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       },
       {
         "distance": 1.1831,
-        "rank": 2,
+        "rank": 4,
         "segment_id": "seg_ea183a988404f350",
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
-      },
-      {
-        "distance": 1.2042,
-        "rank": 3,
-        "segment_id": "seg_62ded8c52d40b01e",
-        "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
-      },
-      {
-        "distance": 1.2136,
-        "rank": 4,
-        "segment_id": "seg_f9e73ea491f98d1a",
-        "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
       }
     ]
   },
@@ -405,22 +404,22 @@
         "session_id": "0b810af9-3eda-468a-b138-3022a5f61601"
       },
       {
+        "distance": 1.2882,
+        "episode_id": "ep_9ee180e4eb02d6e3",
+        "rank": 1,
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
+      },
+      {
         "distance": 1.4521,
         "episode_id": "ep_2e6a7d90ffc3a02d",
-        "rank": 1,
+        "rank": 2,
         "session_id": "bb5117ab-7c57-4f76-a77f-cb7102283527"
       },
       {
         "distance": 1.1401,
         "episode_id": "ep_50b4f4cd354cbf5b",
-        "rank": 2,
-        "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
-      },
-      {
-        "distance": 1.4577,
-        "episode_id": "ep_4501792bdfac082e",
         "rank": 3,
-        "session_id": "7c9e5393-a25a-4132-91ce-15394c92ca27"
+        "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
       },
       {
         "distance": 1.1339,
@@ -455,16 +454,16 @@
         "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
       },
       {
-        "distance": 1.0687,
+        "distance": 1.0683,
         "rank": 3,
-        "segment_id": "seg_89ebc2538fc34ca6",
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+        "segment_id": "seg_4a88b3a2ab62bc74",
+        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
       },
       {
-        "distance": 1.0725,
+        "distance": 1.0687,
         "rank": 4,
-        "segment_id": "seg_1cbb3d442be271ad",
-        "session_id": "65e3c3ee-f95e-493c-a6f4-21f2eabfe10d"
+        "segment_id": "seg_89ebc2538fc34ca6",
+        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       }
     ]
   },
