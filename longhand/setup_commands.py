@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
@@ -577,17 +578,48 @@ def mcp_uninstall() -> None:
 # ─── Ingest single session (for hook) ──────────────────────────────────────
 
 
+def _hook_data_dir(data_dir: str | None) -> Path:
+    """Mirror LonghandStore's data-dir choice without constructing a store —
+    store-open failures still need somewhere to leave a breadcrumb."""
+    from longhand.storage.store import DEFAULT_DATA_DIR
+
+    return Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+
+
+def _log_hook_error(data_dir: Path, message: str) -> None:
+    """Append one line to the daily hook-error log. Never raises — the log is
+    best-effort breadcrumbs for doctor, not another way for a hook to fail."""
+    try:
+        logs = data_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True, mode=0o700)
+        now = datetime.now(timezone.utc)
+        line = f"{now.isoformat(timespec='seconds')} {message}\n"
+        with (logs / f"hook-errors-{now.strftime('%Y-%m-%d')}.log").open("a") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
 def ingest_single_session(
     transcript: str,
     data_dir: str | None = None,
     run_analysis: bool = True,
+    hook_mode: bool = False,
 ) -> None:
     """Ingest a single Claude Code JSONL file.
 
-    Called by the SessionEnd hook. Non-blocking, fast (~1-2s) when analysis
-    runs; even faster when skipped. Pass ``run_analysis=False`` to populate
-    SQLite only (no episodes, segments, or vectors). Power users can defer
-    the analysis pass via ``longhand analyze --all``.
+    Called by the SessionEnd hook (``hook_mode=True``, transcript from stdin)
+    and by humans passing an explicit ``--transcript`` (``hook_mode=False``).
+    Non-blocking, fast (~1-2s) when analysis runs; even faster when skipped.
+    Pass ``run_analysis=False`` to populate SQLite only (no episodes,
+    segments, or vectors). Power users can defer the analysis pass via
+    ``longhand analyze --all``.
+
+    Hook mode never exits nonzero: a failing hook must not crash the Claude
+    Code hook chain, so every failure becomes a one-line stderr note plus a
+    breadcrumb in ``logs/hook-errors-YYYY-MM-DD.log`` (surfaced by ``longhand
+    doctor``), and the transcript is left for reconcile to heal. Explicit CLI
+    use keeps loud exit-1 failures — human misuse deserves an error.
 
     Takes the ingest lock: parallel sessions ending together would otherwise
     open concurrent ChromaDB writers on the same directory, which ChromaDB
@@ -599,14 +631,26 @@ def ingest_single_session(
         release_ingest_lock,
     )
 
+    def _hook_fail(bucket: str, detail: str) -> None:
+        """One stderr line + one log breadcrumb; the caller returns exit-0."""
+        line = f"ingest-session {bucket}: {detail}"
+        print(f"longhand: {line}", file=sys.stderr)
+        _log_hook_error(_hook_data_dir(data_dir), line)
+
     path = Path(transcript).expanduser()
     if not path.exists():
+        if hook_mode:
+            _hook_fail("missing-transcript", str(path))
+            return
         console.print(f"[red]Transcript not found: {transcript}[/red]")
         raise typer.Exit(1)
 
     try:
         store = LonghandStore(data_dir=data_dir)
     except Exception as e:
+        if hook_mode:
+            _hook_fail("store-open-failed", f"{type(e).__name__}: {e}")
+            return
         console.print(f"[red]✗[/red] Could not open the Longhand store: {e}")
         raise typer.Exit(1) from e
 
@@ -618,7 +662,17 @@ def ingest_single_session(
         return
 
     try:
-        parser = JSONLParser(path)
+        try:
+            # The parser constructor enforces the oversize cap (ValueError).
+            # Distinct bucket: reconcile books these under skipped_oversize,
+            # and the breadcrumb should say why the session never appears.
+            parser = JSONLParser(path)
+        except ValueError as e:
+            if hook_mode:
+                _hook_fail("oversize-transcript", str(e))
+                return
+            console.print(f"[red]✗[/red] {e}")
+            raise typer.Exit(1) from e
         events = list(parser.parse_events())
         if not events:
             console.print(f"[yellow]No events in {path.name}[/yellow]")
@@ -630,7 +684,12 @@ def ingest_single_session(
             f"{result['events_stored']} events, "
             f"{result['episodes']} episodes"
         )
+    except typer.Exit:
+        raise
     except Exception as e:
+        if hook_mode:
+            _hook_fail("ingest-failed", f"{path.name}: {type(e).__name__}: {e}")
+            return
         console.print(f"[red]✗[/red] Failed to ingest {path.name}: {e}")
         raise typer.Exit(1) from e
     finally:
@@ -965,6 +1024,37 @@ def _freshness_status(store: LonghandStore) -> str | None:
     )
 
 
+def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
+    """Rich-formatted count of hook-error breadcrumbs in the last `days` days.
+
+    Complements _freshness_status: freshness says "something is missing";
+    this row says why — every hook-mode ingest failure leaves one line in
+    logs/hook-errors-YYYY-MM-DD.log (see _log_hook_error).
+    """
+    logs = store.data_dir / "logs"
+    window_start = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
+    count = 0
+    for f in logs.glob("hook-errors-*.log"):
+        try:
+            day = date.fromisoformat(f.stem.removeprefix("hook-errors-"))
+        except ValueError:
+            continue  # unrecognized filename — not ours to count
+        if day < window_start:
+            continue
+        try:
+            with f.open() as fh:
+                count += sum(1 for line in fh if line.strip())
+        except OSError:
+            continue
+    if count == 0:
+        return f"[green]✓[/green] none in the last {days} days"
+    return (
+        f"[yellow]⚠[/yellow] {count} in the last {days} days — see "
+        f"[bold]{logs}/hook-errors-*.log[/bold]; "
+        "[bold]longhand reconcile --fix[/bold] heals missed ingests"
+    )
+
+
 def _human_size(n: int) -> str:
     size = float(n)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -1112,6 +1202,10 @@ def doctor() -> None:
     freshness_row = _freshness_status(store)
     if freshness_row:
         table.add_row("Recent ingest (7d)", freshness_row)
+
+    # 5b. Hook failures breadcrumbed by ingest-session's hook mode — freshness
+    # says "something is missing"; this row says why.
+    table.add_row("Hook errors (7d)", _hook_errors_status(store))
 
     # 6. Stats
     stats = store.stats()

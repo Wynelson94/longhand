@@ -248,6 +248,45 @@ def test_cli_reconcile_detects_null_project_rows(
     assert "1 ingested but project_id IS NULL" in result.stdout
 
 
+# ─── doctor hook-error visibility ───────────────────────────────────────────
+
+
+def test_hook_errors_status_green_when_no_errors(tmp_path: Path):
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    status = _hook_errors_status(store)
+    assert "green" in status
+    assert "none" in status
+
+
+def test_hook_errors_status_counts_recent_and_ignores_old(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    logs = store.data_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+
+    today = datetime.now(timezone.utc).date()
+    recent = logs / f"hook-errors-{today.isoformat()}.log"
+    recent.write_text(
+        "2026-07-11T18:00:00+00:00 ingest-session missing-transcript: /tmp/gone.jsonl\n"
+        "2026-07-11T18:05:00+00:00 ingest-session ingest-failed: boom\n"
+    )
+    old = logs / f"hook-errors-{(today - timedelta(days=30)).isoformat()}.log"
+    old.write_text("ancient failure, outside the window\n")
+    (logs / "hook-errors-not-a-date.log").write_text("garbage name, must not crash\n")
+
+    status = _hook_errors_status(store)
+    assert "yellow" in status
+    assert "2 in the last 7 days" in status
+    assert "hook-errors-*.log" in status
+
+
 # ─── doctor freshness ──────────────────────────────────────────────────────
 
 

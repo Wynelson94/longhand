@@ -2538,7 +2538,10 @@ def ingest_session_cmd(
     Dual-mode: accepts `--transcript <path>` for direct CLI use, OR reads
     `{"transcript_path": "..."}` JSON from stdin when invoked by Claude Code's
     SessionEnd hook (modern Claude Code passes hook data via stdin, not env vars).
+    Stdin-invoked runs are hook mode: they never exit nonzero — failures become
+    hook-error log breadcrumbs (see `longhand doctor`) for reconcile to heal.
     """
+    hook_mode = transcript is None
     if not transcript:
         import json as _json
         import sys as _sys
@@ -2557,7 +2560,7 @@ def ingest_session_cmd(
             # crash the Claude Code hook chain.
             return
 
-    _ingest_single(transcript, data_dir)
+    _ingest_single(transcript, data_dir, hook_mode=hook_mode)
 
 
 @app.command("ingest-live", hidden=True)
