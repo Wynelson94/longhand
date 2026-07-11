@@ -424,9 +424,15 @@ class JSONLParser:
                 error_signal = None
                 git_signal = None
                 if paired_tool in COMMAND_EXECUTING_TOOLS:
-                    error_signal = detect_error(result_content)
-                    # Extract structured git data from Bash git commands
                     paired_input = self._tool_input_by_id.get(tool_use_id or "", {})
+                    # Thread the command so probe/search/git-read noise is
+                    # suppressed at the source (honest error counts).
+                    error_signal = detect_error(
+                        result_content,
+                        tool_name=paired_tool,
+                        command=paired_input.get("command", ""),
+                    )
+                    # Extract structured git data from Bash git commands
                     git_signal = extract_git_signal(
                         command=paired_input.get("command", ""),
                         output=result_content,

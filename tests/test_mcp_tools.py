@@ -40,6 +40,45 @@ def _payload(result):
         return text
 
 
+# ─── auto-scope threshold + observability ────────────────────────────────────
+
+
+def test_search_auto_scope_is_observable_in_payload(temp_store, sample_session_file, monkeypatch):
+    """When search silently narrows to a matched project, the payload must say
+    so (auto_scoped_to) — the cheap evidence channel for tuning the threshold."""
+    from types import SimpleNamespace
+
+    _ingest(sample_session_file, temp_store)
+    fake = SimpleNamespace(
+        score=mcp_server.AUTO_SCOPE_MIN_SCORE,
+        display_name="test-project",
+        project_id="p_canary",
+    )
+    monkeypatch.setattr(mcp_server, "match_projects", lambda *a, **k: [fake])
+
+    payload = _payload(_call(mcp_server._tool_search, temp_store, {"query": "test-project auth"}))
+
+    assert isinstance(payload, dict)
+    assert payload.get("auto_scoped_to") == "test-project"
+
+
+def test_auto_scope_below_threshold_does_not_scope(temp_store, sample_session_file, monkeypatch):
+    from types import SimpleNamespace
+
+    _ingest(sample_session_file, temp_store)
+    fake = SimpleNamespace(
+        score=mcp_server.AUTO_SCOPE_MIN_SCORE - 0.01,
+        display_name="test-project",
+        project_id="p_canary",
+    )
+    monkeypatch.setattr(mcp_server, "match_projects", lambda *a, **k: [fake])
+
+    payload = _payload(_call(mcp_server._tool_search, temp_store, {"query": "test-project auth"}))
+
+    if isinstance(payload, dict):
+        assert "auto_scoped_to" not in payload
+
+
 # ─── Helpers / dispatch wiring ──────────────────────────────────────────────
 
 
