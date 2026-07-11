@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -101,6 +103,15 @@ def infer_missing_projects(store: LonghandStore) -> list[dict[str, Any]]:
 
     Returns the list of project fingerprints that were upserted.
     """
+    # This runs inside the UserPromptSubmit hook: never claim, never wait.
+    # When a live ingest holds the lock, the projects it is building will be
+    # visible on the next query anyway — defer rather than stack writers.
+    lock = _lock_path(store)
+    if lock.exists():
+        holder = _read_lock_pid(lock)
+        if holder and holder != os.getpid() and _lock_holder_alive(holder):
+            return []
+
     files = discover_sessions()
     if not files:
         return []
@@ -201,6 +212,38 @@ def trigger_background_episode_backfill(store: LonghandStore) -> bool:
     happens in a detached process that claims the ingest lock.
     """
     return spawn_background(store, ["backfill-episodes"], "background-backfill")
+
+
+def claim_ingest_lock_with_wait(
+    store: LonghandStore,
+    timeout_s: float = 15.0,
+    interval_s: float = 0.5,
+    on_wait: Callable[[], None] | None = None,
+) -> bool:
+    """Claim the ingest lock, waiting up to `timeout_s` for a live holder.
+
+    CLI commands use this where hooks use the non-blocking claim_ingest_lock:
+    a human running `analyze` wants the command to run when the current
+    ingest finishes, not to be told "try again later". `on_wait` fires once,
+    the first time waiting actually begins, so callers can print a note.
+
+    Returns True when the lock is ours; False when the timeout expired.
+    Same-PID claims are idempotent (inherited from claim_ingest_lock), so
+    nested wait-claims by one process return immediately instead of
+    deadlocking against themselves.
+    """
+    deadline = time.monotonic() + timeout_s
+    waited = False
+    while True:
+        if claim_ingest_lock(store):
+            return True
+        if not waited:
+            waited = True
+            if on_wait is not None:
+                on_wait()
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval_s)
 
 
 def claim_ingest_lock(store: LonghandStore) -> bool:
