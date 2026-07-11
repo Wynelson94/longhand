@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from longhand.cli import app
@@ -89,3 +90,155 @@ def test_hook_command_is_stale_detects_env_var_version() -> None:
 
     unrelated = {"hooks": [{"type": "command", "command": "echo hello"}]}
     assert _hook_command_is_stale(unrelated) is False
+
+
+# ─── hook mode never exits nonzero (v0.13 hardening) ─────────────────────────
+#
+# stdin-invoked = hook mode: every failure becomes a one-line stderr note plus
+# a breadcrumb in logs/hook-errors-YYYY-MM-DD.log (surfaced by doctor), and the
+# command exits 0 so it can never crash the SessionEnd hook chain. Explicit
+# --transcript keeps loud exit-1 failures — human misuse deserves an error.
+
+
+def _stdin_payload(path: Path) -> str:
+    return json.dumps({"transcript_path": str(path), "session_id": "s-hook"})
+
+
+def _hook_error_lines(data_dir: Path) -> list[str]:
+    logs = data_dir / "logs"
+    lines: list[str] = []
+    for f in sorted(logs.glob("hook-errors-*.log")):
+        lines.extend(f.read_text().splitlines())
+    return lines
+
+
+def test_hook_mode_missing_transcript_exits_zero_and_logs(tmp_path: Path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / "lh"
+
+    result = runner.invoke(
+        app,
+        ["ingest-session", "--data-dir", str(data_dir)],
+        input=_stdin_payload(tmp_path / "gone.jsonl"),
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _hook_error_lines(data_dir)
+    assert len(lines) == 1
+    assert "missing-transcript" in lines[0]
+    assert "gone.jsonl" in lines[0]
+
+
+def test_hook_mode_too_new_db_exits_zero_and_logs(tmp_path: Path) -> None:
+    """Store-open failures (incl. SchemaTooNewError from the downgrade guard)
+    must never crash the hook — the breadcrumb carries the upgrade advice."""
+    from longhand.storage.migrations import MAX_KNOWN_MIGRATION
+    from longhand.storage.sqlite_store import SQLiteStore
+
+    data_dir = tmp_path / "lh"
+    seeded = SQLiteStore(data_dir / "longhand.db")
+    with seeded.connect() as conn:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            (MAX_KNOWN_MIGRATION + 1, "2027-01-01T00:00:00Z"),
+        )
+        conn.commit()
+
+    transcript = tmp_path / "some.jsonl"
+    transcript.write_text(json.dumps({"type": "user", "uuid": "u1"}) + "\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["ingest-session", "--data-dir", str(data_dir)],
+        input=_stdin_payload(transcript),
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _hook_error_lines(data_dir)
+    assert len(lines) == 1
+    assert "store-open-failed" in lines[0]
+    assert "SchemaTooNewError" in lines[0]
+
+
+def test_hook_mode_oversize_transcript_exits_zero_and_logs(
+    sample_session_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parser's size cap becomes a distinct breadcrumb, not a crash."""
+    import longhand.parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "MAX_FILE_SIZE_BYTES", 1)
+
+    runner = CliRunner()
+    data_dir = tmp_path / "lh"
+    result = runner.invoke(
+        app,
+        ["ingest-session", "--data-dir", str(data_dir)],
+        input=_stdin_payload(sample_session_file),
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _hook_error_lines(data_dir)
+    assert len(lines) == 1
+    assert "oversize-transcript" in lines[0]
+
+
+def test_hook_mode_ingest_failure_exits_zero_logs_and_releases_lock(
+    sample_session_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exploding pipeline stage becomes a breadcrumb; reconcile heals later."""
+    from longhand.storage import LonghandStore
+
+    def _boom(self, *args, **kwargs):
+        raise RuntimeError("pipeline exploded mid-ingest")
+
+    monkeypatch.setattr(LonghandStore, "ingest_session", _boom)
+
+    runner = CliRunner()
+    data_dir = tmp_path / "lh"
+    result = runner.invoke(
+        app,
+        ["ingest-session", "--data-dir", str(data_dir)],
+        input=_stdin_payload(sample_session_file),
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _hook_error_lines(data_dir)
+    assert len(lines) == 1
+    assert "ingest-failed" in lines[0]
+    assert "RuntimeError" in lines[0]
+    assert not (data_dir / ".ingest.lock").exists()  # released in the finally
+
+
+def test_explicit_transcript_missing_still_exits_one(tmp_path: Path) -> None:
+    """Human misuse keeps its loud exit — only hook mode is silenced."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "ingest-session",
+            "--transcript",
+            str(tmp_path / "gone.jsonl"),
+            "--data-dir",
+            str(tmp_path / "lh"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert not (tmp_path / "lh" / "logs").exists()  # breadcrumbs are hook-mode only
+
+
+def test_hook_error_logging_failure_is_swallowed(tmp_path: Path) -> None:
+    """Even when the breadcrumb log cannot be written, hook mode exits 0."""
+    data_dir = tmp_path / "lh"
+    data_dir.mkdir(parents=True)
+    (data_dir / "logs").write_text("i am a file, not a directory")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["ingest-session", "--data-dir", str(data_dir)],
+        input=_stdin_payload(tmp_path / "gone.jsonl"),
+    )
+
+    assert result.exit_code == 0, result.output
