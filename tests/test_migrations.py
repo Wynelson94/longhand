@@ -5,7 +5,14 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from longhand.storage.migrations import MIGRATIONS, apply_migrations
+import pytest
+
+from longhand.storage.migrations import (
+    MAX_KNOWN_MIGRATION,
+    MIGRATIONS,
+    SchemaTooNewError,
+    apply_migrations,
+)
 from longhand.storage.sqlite_store import SQLiteStore
 
 
@@ -446,3 +453,53 @@ def test_v8_strips_ask_prefix_from_problem_descriptions(tmp_path: Path):
         rows = dict(conn.execute("SELECT episode_id, problem_description FROM episodes").fetchall())
     assert rows["ep-a"] == "fix the bug. Error: boom"
     assert rows["ep-b"] == "Task keeps failing"  # untouched
+
+
+# ─── downgrade guard: refuse databases written by a newer longhand ────────────
+
+
+def test_apply_migrations_refuses_too_new_schema(tmp_path: Path):
+    """A DB stamped by a newer longhand refuses loudly instead of operating blind."""
+    conn = sqlite3.connect(str(tmp_path / "future.db"))
+    conn.execute(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+        (MAX_KNOWN_MIGRATION + 1, "2027-01-01T00:00:00Z"),
+    )
+    conn.commit()
+
+    with pytest.raises(SchemaTooNewError) as excinfo:
+        apply_migrations(conn)
+
+    msg = str(excinfo.value)
+    assert "written by a newer longhand" in msg
+    assert "pip install -U longhand" in msg
+    conn.close()
+
+
+def test_store_construction_refuses_too_new_db(tmp_path: Path):
+    """The guard covers every construction path — SQLiteStore init raises too."""
+    db = tmp_path / "future-store.db"
+    store = SQLiteStore(db)
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            (MAX_KNOWN_MIGRATION + 1, "2027-01-01T00:00:00Z"),
+        )
+        conn.commit()
+
+    with pytest.raises(SchemaTooNewError):
+        SQLiteStore(db)
+
+
+def test_equal_version_db_reopens_fine(tmp_path: Path):
+    """A DB at exactly the newest known version opens without complaint."""
+    db = tmp_path / "current.db"
+    SQLiteStore(db)
+
+    store = SQLiteStore(db)  # second open: fully migrated, must not raise
+    with store.connect() as conn:
+        newest = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert newest == MAX_KNOWN_MIGRATION

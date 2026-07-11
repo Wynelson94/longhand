@@ -191,6 +191,13 @@ MIGRATIONS: dict[int, str] = {
 }
 
 
+class SchemaTooNewError(RuntimeError):
+    """The database schema is newer than this longhand understands."""
+
+
+MAX_KNOWN_MIGRATION = max(MIGRATIONS)
+
+
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(r[1] == column for r in rows)
@@ -275,9 +282,22 @@ def _applied_versions(conn: sqlite3.Connection) -> set[int]:
 
 
 def apply_migrations(conn: sqlite3.Connection) -> list[int]:
-    """Apply any unapplied migrations. Returns the list of versions applied this run."""
+    """Apply any unapplied migrations. Returns the list of versions applied this run.
+
+    Raises SchemaTooNewError when the database records a migration this build
+    has never heard of: operating blind against a newer schema risks silent
+    data damage, so downgraded code must refuse loudly instead.
+    """
     _ensure_version_table(conn)
     applied = _applied_versions(conn)
+
+    newest = max(applied, default=0)
+    if newest > MAX_KNOWN_MIGRATION:
+        raise SchemaTooNewError(
+            f"This database is at schema version {newest}, but this longhand only "
+            f"knows version {MAX_KNOWN_MIGRATION} — it was written by a newer longhand. "
+            "Refusing to operate blind. Upgrade with: pip install -U longhand"
+        )
 
     newly_applied: list[int] = []
     for version in sorted(MIGRATIONS.keys()):
