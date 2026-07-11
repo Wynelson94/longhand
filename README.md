@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-316%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-524%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -30,6 +30,15 @@ longhand recall "that stripe webhook bug from last week"
 pip install longhand
 longhand demo         # sandboxed; cleans up afterwards (pass --keep to explore)
 ```
+
+**Upgrading to 0.13.0?** Nothing breaks — this release opens the v1.0 deprecation window, so every old name keeps working while pointing at its replacement:
+
+- `status` is now the single resume command: bare `status` = recent digest (was `recap`), `status <project>` unchanged, `status --session <prefix>` = session tail (was `continue`). The old commands still run and print a pointer; they're removed at v1.0.
+- Six MCP tools folded into six survivors with identical parameters (`search_in_context` → `search` + `context_events`, `get_episode` → `find_episodes` + `episode_id`, etc. — full table in the CHANGELOG). The retired names still answer, prefixed with a migration note.
+- Hooks can no longer exit nonzero — failures become breadcrumbs in `~/.longhand/logs/` and two new `doctor` rows (`Hook errors`, `Transcript format`) keep them visible.
+- "Today"/"yesterday" recall windows now follow your local calendar day instead of UTC's; rankings may shift once if you're not in UTC.
+- Windows users: this release fixes a serious bug where the ingest-lock liveness check could terminate other longhand processes.
+- New: `LONGHAND_DATA_DIR` relocates the store for the CLI, hooks, and MCP server in one move; `status --json` / `doctor --json` for scripting.
 
 **Upgrading to 0.9.0?** Live ingestion captures sessions in flight, plan history is preserved as first-class data, and an optional reconciler job keeps the index honest in the background:
 
@@ -67,7 +76,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 281 real Claude Code sessions across 67 inferred projects. 323 unit tests passing.*
+> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 339 real Claude Code sessions across 35 inferred projects. 524 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -247,13 +256,14 @@ longhand stats
 longhand sessions
 longhand projects
 
-# Daily-use commands
-longhand recap                              # what have I been up to
-longhand recap --days 30 --project bsoi     # filtered recap
-longhand continue <session-id>              # pick up where I left off (session-scoped)
+# Daily-use commands — status is the single resume command (git-status shape)
+longhand status                             # what have I been up to (recent digest)
+longhand status --days 30 -p bsoi           # filtered digest
 longhand status <project-name>              # where did we leave off on a project (git-aware)
-longhand patterns                           # what bugs do I keep fixing
+longhand status --session <session-id>      # pick up where a session left off
 longhand history src/app/route.ts           # every edit ever to a file
+# (recap / continue / patterns still work through 0.x — they print a pointer
+#  to their status/recall replacements and are removed at v1.0)
 
 # Semantic search
 longhand search "race condition"
