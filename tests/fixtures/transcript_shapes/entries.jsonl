@@ -1,0 +1,16 @@
+{"type":"user","uuid":"shape-user-1","parentUuid":null,"sessionId":"s-shapes","timestamp":"2026-07-01T10:00:00.000Z","cwd":"/tmp/shapes-project","isSidechain":false,"version":"1.0.44","message":{"role":"user","content":"run the tests and fix whatever breaks"}}
+{"type":"assistant","uuid":"shape-asst-1","parentUuid":"shape-user-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:05.000Z","cwd":"/tmp/shapes-project","isSidechain":false,"message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Running the suite."},{"type":"thinking","thinking":"Start with the failing module."},{"type":"tool_use","id":"toolu_shape_01","name":"Bash","input":{"command":"pytest -q"}}]}}
+{"type":"user","uuid":"shape-toolres-1","parentUuid":"shape-asst-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:09.000Z","cwd":"/tmp/shapes-project","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_shape_01","content":"4 passed in 0.21s"}]}}
+{"type":"system","uuid":"shape-system-1","parentUuid":null,"sessionId":"s-shapes","timestamp":"2026-07-01T10:00:10.000Z","cwd":"/tmp/shapes-project","isSidechain":false,"content":"Compacted conversation history.","level":"info"}
+{"type":"file-history-snapshot","messageId":"shape-fhs-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:11.000Z","snapshot":{"trackedFileBackups":{}},"isSnapshotUpdate":false}
+{"type":"queue-operation","uuid":"shape-queue-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:12.000Z","operation":"enqueue","prompt":"next task"}
+{"type":"progress","uuid":"shape-progress-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:13.000Z","data":{"type":"agent_progress","message":"working"}}
+{"type":"last-prompt","uuid":"shape-lastprompt-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:14.000Z","prompt":"run the tests"}
+{"type":"mode","uuid":"shape-mode-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:15.000Z","mode":"default"}
+{"type":"permission-mode","uuid":"shape-permmode-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:16.000Z","permissionMode":"acceptEdits"}
+{"type":"attachment","uuid":"shape-attach-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:17.000Z","attachment":{"type":"queued_command","prompt":"and lint"}}
+{"type":"ai-title","uuid":"shape-aititle-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:18.000Z","title":"Fix failing tests"}
+{"type":"agent-name","uuid":"shape-agentname-1","sessionId":"s-shapes","timestamp":"2026-07-01T10:00:19.000Z","name":"tester"}
+{"type":"summary","summary":"Fixed the auth token refresh by adding a mutex around the cache","leafUuid":"shape-asst-1"}
+{"type":"pr-link","sessionId":"s-shapes","prNumber":42,"prUrl":"https://github.com/example/repo/pull/42","prRepository":"example/repo","timestamp":"2026-07-01T10:00:20.000Z"}
+{"type":"worktree-state","sessionId":"s-shapes","worktreeSession":{"originalCwd":"/tmp/shapes-project","worktreePath":"/tmp/shapes-project/.claude/worktrees/wt-1","worktreeName":"wt-1","worktreeBranch":"worktree-wt-1","originalBranch":"main","originalHeadCommit":"0000000000000000000000000000000000000000","sessionId":"s-shapes"}}

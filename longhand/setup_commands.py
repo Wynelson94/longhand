@@ -1023,6 +1023,58 @@ def _freshness_status(store: LonghandStore) -> str | None:
     )
 
 
+def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
+    """Rich-formatted upstream-drift check: unknown transcript entry types.
+
+    Claude Code adds entry types without notice; the parser preserves them as
+    event_type='unknown' rows with raw_json intact. A pile of one NEW type
+    means the transcript format drifted — a newer longhand probably reads it.
+    Types already dispositioned (KNOWN_SKIP_ENTRY_TYPES members stored before
+    the skip existed, or deliberately-preserved TRIAGED_UNKNOWN_ENTRY_TYPES)
+    are excluded — alarming on understood types forever would train users to
+    ignore the row. The fixture corpus in tests/fixtures/transcript_shapes/
+    regression-gates every known type; this row is how new drift surfaces on
+    a live store.
+    """
+    from collections import Counter
+
+    from longhand.parser import KNOWN_SKIP_ENTRY_TYPES, TRIAGED_UNKNOWN_ENTRY_TYPES
+
+    cutoff = (utcnow() - timedelta(days=days)).isoformat()
+    try:
+        with store.sqlite.connect() as conn:
+            rows = conn.execute(
+                "SELECT raw_json FROM events "
+                "WHERE event_type = 'unknown' AND timestamp >= ? LIMIT 500",
+                (cutoff,),
+            ).fetchall()
+    except Exception:
+        return "[dim]—[/dim] could not inspect events"
+
+    # Counter over the raw type in Python — JSON1 availability varies across
+    # bundled SQLites, so no json_extract in the query.
+    dispositioned = KNOWN_SKIP_ENTRY_TYPES | TRIAGED_UNKNOWN_ENTRY_TYPES
+    counter: Counter[str] = Counter()
+    for row in rows:
+        try:
+            entry_type = str(json.loads(row["raw_json"]).get("type", "?"))
+        except Exception:
+            entry_type = "?"
+        if entry_type not in dispositioned:
+            counter[entry_type] += 1
+
+    if not counter:
+        return f"[green]✓[/green] no undispositioned entry types in the last {days} days"
+
+    top = ", ".join(f"{name} ×{n}" for name, n in counter.most_common(3))
+    capped = "+" if len(rows) == 500 else ""
+    return (
+        f"[yellow]⚠[/yellow] {sum(counter.values())}{capped} unrecognized entries in the "
+        f"last {days} days ({top}) — the transcript format may have drifted; "
+        "try [bold]pip install -U longhand[/bold]"
+    )
+
+
 def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
     """Rich-formatted count of hook-error breadcrumbs in the last `days` days.
 
@@ -1205,6 +1257,11 @@ def doctor() -> None:
     # 5b. Hook failures breadcrumbed by ingest-session's hook mode — freshness
     # says "something is missing"; this row says why.
     table.add_row("Hook errors (7d)", _hook_errors_status(store))
+
+    # 5c. Upstream-drift canary: unknown transcript entry types accumulating
+    # means Claude Code's format moved and this longhand can't read the new
+    # entries yet.
+    table.add_row("Transcript format", _transcript_format_status(store))
 
     # 6. Stats
     stats = store.stats()
