@@ -10,12 +10,27 @@ permissions:
 
 jobs:
   test:
-    name: Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Tests (Python ${{ matrix.python-version }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        os: [ubuntu-latest]
+        include:
+          # Windows evidence leg (v0.13): non-blocking, cloned from the 3.14
+          # pattern. Safe to run only because the lock-liveness probe no longer
+          # routes through os.kill(pid, 0) — on Windows that TERMINATES the
+          # target, so the pre-v0.13 code would have killed pytest's parent.
+          # Expected discoveries (do NOT pre-fix; tier the support claim by
+          # what the evidence shows): start_new_session ignored on Windows,
+          # tmp-file unlink flakes, onnxruntime/chromadb wheel pain, cp1252
+          # default-encoding open() in tests.
+          # Evidence rule: ~3 weeks green → README may claim "CI-tested
+          # (best-effort)"; red only in native deps → "core tested, semantic
+          # recall untested"; red in core → keep the job, claim nothing.
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -33,7 +48,8 @@ jobs:
         # heterogeneous runner CPUs. The CPython code is fine (3.14 passes locally
         # and on most runners); only the native embedding lib is unstable. Keep
         # 3.10–3.13 gated; surface 3.14 without letting a native crash block PRs.
-        continue-on-error: ${{ matrix.python-version == '3.14' }}
+        # The Windows leg is likewise non-blocking while it gathers evidence.
+        continue-on-error: ${{ matrix.python-version == '3.14' || matrix.os == 'windows-latest' }}
         run: pytest -q --cov=longhand --cov-report=term-missing --cov-fail-under=60
       - name: Surface non-blocking 3.14 failure
         # continue-on-error hides a red 3.14 job behind a green check; make the
@@ -43,6 +59,14 @@ jobs:
         run: |
           echo "::warning title=Python 3.14 tests failed (non-blocking)::pytest failed on 3.14. The job is continue-on-error (onnxruntime cp314 SIGILL, issue #40), so this does NOT block the merge — but look before releasing."
           echo "### :warning: Python 3.14 tests FAILED (non-blocking — issue #40)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Surface non-blocking Windows failure
+        # Same loud-warning pattern as 3.14: never block the merge, never let
+        # a red Windows run hide behind a green check either.
+        if: matrix.os == 'windows-latest' && steps.pytest.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Windows tests failed (non-blocking)::pytest failed on windows-latest. This leg is evidence-gathering (v0.13) — tier the Windows support claim by what actually broke; do not pre-fix blind."
+          echo "### :warning: Windows tests FAILED (non-blocking — evidence leg)" >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     name: Ruff
