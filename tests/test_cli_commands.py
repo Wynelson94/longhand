@@ -440,6 +440,71 @@ def test_hook_errors_status_counts_recent_and_ignores_old(tmp_path: Path):
     assert "hook-errors-*.log" in status
 
 
+# ─── doctor transcript-format drift ──────────────────────────────────────────
+
+
+def test_transcript_format_status_green_when_no_unknowns(tmp_path: Path):
+    from longhand.setup_commands import _transcript_format_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    status = _transcript_format_status(store)
+    assert "green" in status
+
+
+def test_transcript_format_status_yellow_names_the_drifting_type(tmp_path: Path):
+    from longhand.setup_commands import _transcript_format_status
+    from longhand.storage import LonghandStore
+    from longhand.timeutil import utcnow
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    recent = utcnow().isoformat()
+    with store.sqlite.connect() as conn:
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO events (event_id, session_id, event_type, sequence,"
+                " timestamp, content, raw_json) VALUES (?, 's-drift', 'unknown', ?, ?, '', ?)",
+                (f"unk-{i}", i, recent, json.dumps({"type": "flux-capacitor"})),
+            )
+        # An old unknown outside the 30-day window must not count.
+        conn.execute(
+            "INSERT INTO events (event_id, session_id, event_type, sequence,"
+            " timestamp, content, raw_json) VALUES ('unk-old', 's-drift', 'unknown',"
+            " 99, '2020-01-01T00:00:00+00:00', '', ?)",
+            (json.dumps({"type": "ancient"}),),
+        )
+        conn.commit()
+
+    status = _transcript_format_status(store)
+    assert "yellow" in status
+    assert "flux-capacitor" in status
+    assert "ancient" not in status
+    assert "pip install -U longhand" in status
+
+
+def test_transcript_format_status_ignores_dispositioned_types(tmp_path: Path):
+    """Skip-set rows stored before the skip existed, and deliberately-preserved
+    triaged types, are understood — alarming on them forever would train users
+    to ignore the drift row."""
+    from longhand.setup_commands import _transcript_format_status
+    from longhand.storage import LonghandStore
+    from longhand.timeutil import utcnow
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    recent = utcnow().isoformat()
+    with store.sqlite.connect() as conn:
+        for i, entry_type in enumerate(["attachment", "summary", "pr-link"]):
+            conn.execute(
+                "INSERT INTO events (event_id, session_id, event_type, sequence,"
+                " timestamp, content, raw_json) VALUES (?, 's-known', 'unknown', ?, ?, '', ?)",
+                (f"known-{i}", i, recent, json.dumps({"type": entry_type})),
+            )
+        conn.commit()
+
+    status = _transcript_format_status(store)
+    assert "green" in status
+
+
 # ─── doctor freshness ──────────────────────────────────────────────────────
 
 

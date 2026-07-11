@@ -5,8 +5,8 @@ references:
 - advisory: false
   lines: null
   path: longhand/parser.py
-  pinned_at: '2026-07-11T19:15:34.126886Z'
-  sha: 611c83dca0c9894243068be02cc1955e13a3f72de9c7f075e63aa732c301d5e4
+  pinned_at: '2026-07-11T19:29:10.325279Z'
+  sha: c4e50bbda7b0b0a3c6ed239ba30888a54235aaf5102389c4b15d52d6422574f5
   symbol: null
 session_id: null
 superseded_by: '0006'

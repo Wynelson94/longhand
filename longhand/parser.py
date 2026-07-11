@@ -25,6 +25,38 @@ from longhand.types import Event, EventType, FileOperation, Session
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500MB per session file
 MAX_LINE_LENGTH = 50 * 1024 * 1024  # 50MB per JSONL line
 
+# Internal orchestration and auxiliary UI entry types — deliberately not
+# ingested. Each would otherwise be stored as an "unknown" event carrying its
+# full raw_json (12,238 rows — the 3rd-largest event type on a real corpus)
+# while containing nothing recallable. Every member must have a fixture line
+# in tests/fixtures/transcript_shapes/entries.jsonl; real-but-not-ingested
+# types are triaged there instead (TRIAGED_UNKNOWN).
+KNOWN_SKIP_ENTRY_TYPES = frozenset(
+    {
+        "queue-operation",
+        "progress",
+        "last-prompt",
+        "mode",
+        "permission-mode",
+        "attachment",
+        "ai-title",
+        "agent-name",
+    }
+)
+
+# Real upstream entry types we deliberately do NOT parse yet, but preserve as
+# unknown events (raw intact) instead of skipping — visible to doctor, cheap
+# to promote later. Every member needs a fixture line and a reason:
+# - summary: UI-side conversation summary ({"summary": ..., "leafUuid": ...});
+#   duplicative of transcript content, no timeline position. Triaged 2026-07-11.
+# - pr-link: PR created during the session ({"prNumber", "prUrl", ...}).
+#   Genuinely recallable — a promotion candidate for a future git-ops tie-in —
+#   preserved until then. Triaged 2026-07-11 (found by the doctor drift row
+#   on the live corpus the day the row shipped).
+# - worktree-state: worktree orchestration snapshot; cwd/branch data already
+#   lives on events. Triaged 2026-07-11 (same harvest as pr-link).
+TRIAGED_UNKNOWN_ENTRY_TYPES = frozenset({"summary", "pr-link", "worktree-state"})
+
 
 _MAX_UNIQUE_CWDS_SCANNED = 20
 
@@ -353,20 +385,9 @@ class JSONLParser:
         if entry_type == "file-history-snapshot":
             return [self._file_snapshot_event(entry, base_sequence)]
 
-        # Internal orchestration and auxiliary UI state — skip. Each of these
-        # would otherwise be stored as an "unknown" event carrying its full
-        # raw_json (12,238 rows — the 3rd-largest event type on a real
-        # corpus) while containing nothing recallable.
-        if entry_type in {
-            "queue-operation",
-            "progress",
-            "last-prompt",
-            "mode",
-            "permission-mode",
-            "attachment",
-            "ai-title",
-            "agent-name",
-        }:
+        # Internal orchestration and auxiliary UI state — skip (see the
+        # constant's docs and the transcript_shapes fixture corpus).
+        if entry_type in KNOWN_SKIP_ENTRY_TYPES:
             return []
 
         # User messages
