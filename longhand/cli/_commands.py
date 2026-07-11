@@ -78,10 +78,13 @@ _UPDATE_CHECK_EXCLUDED = {
     "__prompt-hook-run",
     "backfill-episodes",
     "context",
+    "continue",
     "ingest-live",
     "ingest-session",
     "mcp-server",
+    "patterns",
     "reanalyze",
+    "recap",
 }
 
 
@@ -448,7 +451,12 @@ def ingest(
 # -----------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Data")
+@app.command(
+    rich_help_panel="Data",
+    epilog="See also: longhand reattribute — re-derives project ownership for "
+    "sessions already in the database; reconcile re-ingests transcripts that "
+    "never made it in.",
+)
 def reconcile(
     data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     fix: bool = typer.Option(
@@ -1070,7 +1078,12 @@ def analyze(
         release_ingest_lock(store)
 
 
-@app.command(rich_help_panel="Data")
+@app.command(
+    rich_help_panel="Data",
+    epilog="See also: longhand reconcile — re-ingests transcripts missing from "
+    "the database; reattribute re-derives project ownership for sessions "
+    "already in it.",
+)
 def reattribute(
     fix: bool = typer.Option(
         False,
@@ -2031,16 +2044,17 @@ def _session_to_markdown(store, session_id: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Browse & insights")
+@app.command(hidden=True, rich_help_panel="Browse & insights")
 def patterns(
     limit: int = typer.Option(10, "--limit", "-n", help="Top N pattern groups to show"),
     min_count: int = typer.Option(2, "--min", help="Minimum episode count per pattern"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
-    """Show recurring fix patterns across all episodes — bugs you keep fixing.
+    """Deprecated — use `longhand recall "<topic>"`. Removed in v1.0.
 
     Groups episodes by error category and shared keywords from problem descriptions.
     """
+    _deprecated("patterns", 'recall "<topic>"')
     import json as _json
     import re as _re
     from collections import defaultdict
@@ -2159,19 +2173,17 @@ def patterns(
 # -----------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Recall")
-def recap(
-    days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
-    limit: int = typer.Option(10, "--limit", "-n"),
-    project: str | None = typer.Option(
-        None, "--project", "-p", help="Filter by project id or name"
-    ),
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-):
-    """Show what you've been working on recently — sessions + outcomes + latest context."""
+def _recap_digest(
+    store,
+    days: int,
+    limit: int,
+    project: str | None,
+    json_out: bool = False,
+) -> None:
+    """Recent-work digest — the body behind bare `status` (and the deprecated
+    `recap` alias until it is removed at 1.0)."""
+    import json as _json
     from datetime import timedelta, timezone
-
-    store = _get_store(data_dir)
 
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
@@ -2192,6 +2204,9 @@ def recap(
     )
 
     if not sessions:
+        if json_out:
+            print(_json.dumps({"mode": "digest", "days": days, "sessions": []}))
+            return
         console.print(
             f"[yellow]No sessions in the last {days} days"
             + (f" for project '{project}'" if project else "")
@@ -2201,23 +2216,10 @@ def recap(
 
     sessions = sessions[:limit]
 
-    header_title = f"Recap — last {days} days"
-    if project:
-        header_title += f" · {project}"
-    console.print(Panel.fit(f"[bold]{header_title}[/bold]", border_style="cyan"))
-    console.print()
-
+    entries: list[dict] = []
     for s in sessions:
         sid = s["session_id"]
         outcome = store.sqlite.get_outcome(sid)
-        outcome_str = outcome["outcome"] if outcome else "—"
-        outcome_color = {
-            "shipped": "green",
-            "fixed": "green",
-            "stuck": "red",
-            "abandoned": "dim",
-            "exploratory": "blue",
-        }.get(outcome_str, "white")
 
         # Get project info if available
         project_name = "—"
@@ -2237,32 +2239,80 @@ def recap(
 
         # Episode count for this session
         eps = store.sqlite.query_episodes(session_id=sid, limit=100)
-        resolved = sum(1 for e in eps if e.get("status") == "resolved")
 
-        # Header line
-        header = Text()
-        header.append(f"{_format_timestamp(s['started_at'])}  ", style="dim")
-        header.append(f"{sid[:8]}  ", style="cyan")
-        header.append(f"[{outcome_str}]", style=outcome_color)
-        header.append(f"  {project_name}", style="magenta")
-        if eps:
-            header.append(f"  {resolved}/{len(eps)} episodes", style="yellow")
-        console.print(header)
-
-        if first_user_msg:
-            console.print(f"  [dim]>[/dim] {first_user_msg}")
-
+        topics: list[str] = []
         if outcome and outcome.get("topics_json"):
-            import json as _json
-
             try:
                 topics = _json.loads(outcome["topics_json"])[:5]
-                if topics:
-                    console.print(f"  [dim]topics:[/dim] {', '.join(topics)}")
             except Exception:
                 pass
 
+        entries.append(
+            {
+                "session_id": sid,
+                "started_at": s["started_at"],
+                "outcome": outcome["outcome"] if outcome else None,
+                "project": project_name,
+                "episodes_total": len(eps),
+                "episodes_resolved": sum(1 for e in eps if e.get("status") == "resolved"),
+                "first_user_message": first_user_msg,
+                "topics": topics,
+            }
+        )
+
+    if json_out:
+        print(_json.dumps({"mode": "digest", "days": days, "sessions": entries}, indent=2))
+        return
+
+    header_title = f"Status — last {days} days"
+    if project:
+        header_title += f" · {project}"
+    console.print(Panel.fit(f"[bold]{header_title}[/bold]", border_style="cyan"))
+    console.print()
+
+    for entry in entries:
+        outcome_str = entry["outcome"] or "—"
+        outcome_color = {
+            "shipped": "green",
+            "fixed": "green",
+            "stuck": "red",
+            "abandoned": "dim",
+            "exploratory": "blue",
+        }.get(outcome_str, "white")
+
+        header = Text()
+        header.append(f"{_format_timestamp(entry['started_at'])}  ", style="dim")
+        header.append(f"{entry['session_id'][:8]}  ", style="cyan")
+        header.append(f"[{outcome_str}]", style=outcome_color)
+        header.append(f"  {entry['project']}", style="magenta")
+        if entry["episodes_total"]:
+            header.append(
+                f"  {entry['episodes_resolved']}/{entry['episodes_total']} episodes",
+                style="yellow",
+            )
+        console.print(header)
+
+        if entry["first_user_message"]:
+            console.print(f"  [dim]>[/dim] {entry['first_user_message']}")
+
+        if entry["topics"]:
+            console.print(f"  [dim]topics:[/dim] {', '.join(entry['topics'])}")
+
         console.print()
+
+
+@app.command(hidden=True, rich_help_panel="Recall")
+def recap(
+    days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
+    limit: int = typer.Option(10, "--limit", "-n"),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help="Filter by project id or name"
+    ),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Deprecated alias for `longhand status`. Removed in v1.0."""
+    _deprecated("recap", "status --days N")
+    _recap_digest(_get_store(data_dir), days, limit, project)
 
 
 # -----------------------------------------------------------------------------
@@ -2272,26 +2322,67 @@ def recap(
 
 @app.command("status", rich_help_panel="Recall")
 def status_cmd(
-    project: str = typer.Argument(..., help="Project name (fuzzy match)"),
-    commits: int = typer.Option(10, "--commits", "-c", help="Max recent commits to show"),
-    episodes: int = typer.Option(5, "--episodes", "-e", help="Max recent episodes"),
+    project: str | None = typer.Argument(
+        None, help="Project name (fuzzy match) — where that project left off"
+    ),
+    session: str | None = typer.Option(
+        None, "--session", "-s", help="Session ID prefix — resume one session"
+    ),
+    days: int = typer.Option(7, "--days", "-d", help="Digest window for bare `status`"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Digest session cap for bare `status`"),
+    digest_project: str | None = typer.Option(
+        None, "--project", "-p", help="Filter the bare-status digest by project"
+    ),
+    events: int = typer.Option(10, "--events", help="Events to show with --session"),
+    commits: int = typer.Option(10, "--commits", "-c", help="Max recent commits (project mode)"),
+    episodes: int = typer.Option(5, "--episodes", "-e", help="Max recent episodes (project mode)"),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
-    """Show where a project left off — recent commits, issues, and context."""
-    from longhand.recall.recall_pipeline import recall_project_status
+    """Where things stand — the single resume command (git-status shape).
+
+    Bare `status`: recent-work digest. `status <project>`: where that project
+    left off (commits, issues, context). `status --session <prefix>`: the tail
+    of one session so you can pick up where you left off.
+    """
+    import json as _json
+
+    if project and session:
+        console.print("[red]Pass a project OR --session, not both.[/red]")
+        raise typer.Exit(2)
 
     store = _get_store(data_dir)
-    result = recall_project_status(
-        store,
-        project,
-        max_commits=commits,
-        max_episodes=episodes,
-    )
-    if not result:
-        console.print(f"[red]No project matching: {project}[/red]")
-        raise typer.Exit(1)
 
-    console.print(Markdown(result.narrative))
+    if session:
+        _session_tail(store, session, events, json_out=json_out)
+        return
+
+    if project:
+        from longhand.recall.recall_pipeline import recall_project_status
+
+        result = recall_project_status(
+            store,
+            project,
+            max_commits=commits,
+            max_episodes=episodes,
+        )
+        if not result:
+            console.print(f"[red]No project matching: {project}[/red]")
+            raise typer.Exit(1)
+
+        if json_out:
+            import dataclasses
+
+            try:
+                payload: dict = dataclasses.asdict(result)
+            except TypeError:
+                payload = {"narrative": result.narrative}
+            print(_json.dumps({"mode": "project", **payload}, indent=2, default=str))
+            return
+        console.print(Markdown(result.narrative))
+        return
+
+    _recap_digest(store, days, limit, digest_project, json_out=json_out)
 
 
 # -----------------------------------------------------------------------------
@@ -2299,14 +2390,9 @@ def status_cmd(
 # -----------------------------------------------------------------------------
 
 
-@app.command("continue", rich_help_panel="Recall")
-def continue_cmd(
-    session_id: str = typer.Argument(..., help="Session ID prefix"),
-    n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-):
-    """Show the last N events of a session so you can pick up where you left off."""
-    store = _get_store(data_dir)
+def _session_tail(store, session_id: str, n: int, json_out: bool = False) -> None:
+    """Tail one session — the body behind `status --session` (and the
+    deprecated `continue` alias until it is removed at 1.0)."""
 
     sessions_rows = store.sqlite.list_sessions(limit=1000)
     full_id = None
@@ -2330,6 +2416,33 @@ def continue_cmd(
 
     outcome = store.sqlite.get_outcome(full_id)
 
+    # Grab all events then take the last n (excluding thinking for readability)
+    all_events = store.sqlite.get_events(session_id=full_id, limit=10000)
+    visible_events = [
+        e
+        for e in all_events
+        if e["event_type"] not in ("assistant_thinking", "file_snapshot", "system")
+    ]
+    recent = visible_events[-n:]
+
+    if json_out:
+        import json as _json
+
+        print(
+            _json.dumps(
+                {
+                    "mode": "session",
+                    "session": dict(session_row),
+                    "project": project_name,
+                    "outcome": dict(outcome) if outcome else None,
+                    "events": [dict(e) for e in recent],
+                },
+                indent=2,
+                default=str,
+            )
+        )
+        return
+
     header_lines = [
         f"[bold]{full_id}[/bold]",
         f"[dim]Project:[/dim] {project_name}",
@@ -2341,15 +2454,6 @@ def continue_cmd(
         header_lines.append(f"[dim]Outcome:[/dim] {outcome['outcome']}")
     console.print(Panel.fit("\n".join(header_lines), title="Session", border_style="cyan"))
     console.print()
-
-    # Grab all events then take the last n (excluding thinking for readability)
-    all_events = store.sqlite.get_events(session_id=full_id, limit=10000)
-    visible_events = [
-        e
-        for e in all_events
-        if e["event_type"] not in ("assistant_thinking", "file_snapshot", "system")
-    ]
-    recent = visible_events[-n:]
 
     if not recent:
         console.print("[yellow]No visible events in session.[/yellow]")
@@ -2400,6 +2504,17 @@ def continue_cmd(
                 border_style="yellow",
             )
         )
+
+
+@app.command("continue", hidden=True, rich_help_panel="Recall")
+def continue_cmd(
+    session_id: str = typer.Argument(..., help="Session ID prefix"),
+    n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+):
+    """Deprecated alias for `longhand status --session`. Removed in v1.0."""
+    _deprecated("continue", "status --session <prefix>")
+    _session_tail(_get_store(data_dir), session_id, n)
 
 
 # -----------------------------------------------------------------------------
@@ -2574,25 +2689,25 @@ def mcp_uninstall_cmd():
     _mcp_uninstall()
 
 
-@mcp_app.command("serve")
-def mcp_serve_cmd():
-    """Run the MCP server (stdio). Used by Claude Desktop."""
+def _run_mcp_server() -> None:
     import asyncio
 
     from longhand.mcp_server import main as mcp_main
 
     asyncio.run(mcp_main())
+
+
+@mcp_app.command("serve")
+def mcp_serve_cmd():
+    """Run the MCP server (stdio). Used by Claude Desktop."""
+    _run_mcp_server()
 
 
 # Short alias so `longhand mcp-server` also works (matches install command)
 @app.command("mcp-server", hidden=True)
 def mcp_server_cmd():
     """Run the MCP server (stdio). Used by Claude Desktop."""
-    import asyncio
-
-    from longhand.mcp_server import main as mcp_main
-
-    asyncio.run(mcp_main())
+    _run_mcp_server()
 
 
 @app.command("ingest-session", hidden=True)
@@ -2672,9 +2787,11 @@ def ingest_live_cmd(
 
 
 @app.command(rich_help_panel="Setup & health")
-def doctor():
+def doctor(
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output"),
+):
     """Diagnose Longhand installation and data."""
-    _doctor()
+    _doctor(json_out=json_out)
 
 
 @app.command("reanalyze", hidden=True)

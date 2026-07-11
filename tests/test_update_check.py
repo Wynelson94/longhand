@@ -175,6 +175,11 @@ def test_after_command_never_raises(enabled, monkeypatch):
     update_check.after_command()  # must swallow, not raise
 
 
+def test_cache_path_honors_data_dir_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "env"))
+    assert update_check.cache_path() == tmp_path / "env" / "update-check.json"
+
+
 # ─── structural exclusion: hooks and MCP never run the check ─────────────────
 
 

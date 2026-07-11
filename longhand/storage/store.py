@@ -7,6 +7,7 @@ SQLite is the source of truth. ChromaDB is the search index.
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +25,31 @@ from longhand.storage.vector_store import CHROMA_BATCH_SIZE, VectorStore
 from longhand.types import Event, Session
 
 DEFAULT_DATA_DIR = Path.home() / ".longhand"
+
+
+def resolve_data_dir(flag_value: str | Path | None = None) -> Path:
+    """Longhand's data directory — the single resolution rule.
+
+    Precedence: explicit flag/argument > LONGHAND_DATA_DIR env var >
+    ~/.longhand. The env var is what carries a relocated store into hooks,
+    spawned workers, and the MCP server: child processes inherit it, so
+    nothing else needs a flag.
+    """
+    if flag_value:
+        return Path(flag_value)
+    env = os.environ.get("LONGHAND_DATA_DIR", "").strip()
+    if env:
+        return Path(env)
+    return DEFAULT_DATA_DIR
+
+
+def data_dir_source(flag_value: str | Path | None = None) -> str:
+    """Which precedence level won — doctor prints this next to the path."""
+    if flag_value:
+        return "--data-dir flag"
+    if os.environ.get("LONGHAND_DATA_DIR", "").strip():
+        return "LONGHAND_DATA_DIR"
+    return "default"
 
 
 def _build_episode_text(episode: dict) -> str:
@@ -50,7 +76,7 @@ class LonghandStore:
     """Combined storage for Longhand: SQLite (truth) + ChromaDB (search)."""
 
     def __init__(self, data_dir: str | Path | None = None):
-        self.data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+        self.data_dir = resolve_data_dir(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
         self.sqlite = SQLiteStore(self.data_dir / "longhand.db")

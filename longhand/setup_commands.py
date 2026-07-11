@@ -264,7 +264,9 @@ def _load_hook_config() -> dict:
     """Load hook configuration from ~/.longhand/config.json, falling back to defaults."""
     import json as _json
 
-    config_path = Path.home() / ".longhand" / "config.json"
+    from longhand.storage.store import resolve_data_dir
+
+    config_path = resolve_data_dir() / "config.json"
     config = dict(_DEFAULT_HOOK_CONFIG)
     try:
         if config_path.exists():
@@ -410,6 +412,11 @@ RECONCILER_INTERVAL_SECONDS = 30 * 60  # 30 minutes
 
 
 def _reconciler_plist_xml(longhand_bin: str, log_path: Path) -> str:
+    # launchd does not inherit shell env: bake the resolved data dir in, or a
+    # LONGHAND_DATA_DIR-relocated store would be invisible to the reconciler.
+    from longhand.storage.store import resolve_data_dir
+
+    data_dir = resolve_data_dir()
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -432,6 +439,11 @@ def _reconciler_plist_xml(longhand_bin: str, log_path: Path) -> str:
     <string>{log_path}</string>
     <key>ProcessType</key>
     <string>Background</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LONGHAND_DATA_DIR</key>
+        <string>{data_dir}</string>
+    </dict>
 </dict>
 </plist>
 """
@@ -462,7 +474,9 @@ def schedule_install_reconciler() -> None:
         )
         raise typer.Exit(1)
 
-    logs_dir = Path.home() / ".longhand" / "logs"
+    from longhand.storage.store import resolve_data_dir as _resolve
+
+    logs_dir = _resolve() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = logs_dir / "reconcile.log"
 
@@ -580,11 +594,11 @@ def mcp_uninstall() -> None:
 
 
 def _hook_data_dir(data_dir: str | None) -> Path:
-    """Mirror LonghandStore's data-dir choice without constructing a store —
+    """LonghandStore's data-dir choice without constructing a store —
     store-open failures still need somewhere to leave a breadcrumb."""
-    from longhand.storage.store import DEFAULT_DATA_DIR
+    from longhand.storage.store import resolve_data_dir
 
-    return Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    return resolve_data_dir(data_dir)
 
 
 def _log_hook_error(data_dir: Path, message: str) -> None:
@@ -1115,18 +1129,19 @@ def _human_size(n: int) -> str:
     return f"{size:.1f} TB"
 
 
-def doctor() -> None:
+def doctor(json_out: bool = False) -> None:
     """Diagnose Longhand installation and data."""
-    table = Table(title="Longhand Doctor", show_header=False, border_style="cyan")
-    table.add_column("Check", style="bold")
-    table.add_column("Status")
+    rows: list[tuple[str, str]] = []
+
+    def _row(label: str, value: str) -> None:
+        rows.append((label, value))
 
     # 1. longhand on PATH?
     longhand_bin = shutil.which("longhand")
     if longhand_bin:
-        table.add_row("longhand CLI", f"[green]✓[/green] {longhand_bin}")
+        _row("longhand CLI", f"[green]✓[/green] {longhand_bin}")
     else:
-        table.add_row(
+        _row(
             "longhand CLI",
             "[yellow]⚠[/yellow] not on PATH (run [bold]pip install longhand[/bold])",
         )
@@ -1135,7 +1150,7 @@ def doctor() -> None:
     # HTTPS GET to pypi.org; opt-out via LONGHAND_NO_UPDATE_CHECK=1).
     from longhand import update_check
 
-    table.add_row("Version", update_check.doctor_status())
+    _row("Version", update_check.doctor_status())
 
     # 2. SessionEnd + Stop + UserPromptSubmit hooks installed?
     hook_installed = False
@@ -1160,32 +1175,32 @@ def doctor() -> None:
                 break
 
     if hook_stale:
-        table.add_row(
+        _row(
             "SessionEnd hook",
             "[red]✗[/red] stale — uses pre-0.5.2 $CLAUDE_TRANSCRIPT_PATH "
             "(silently failing). Run [bold]longhand hook install[/bold] to upgrade.",
         )
     elif hook_installed:
-        table.add_row("SessionEnd hook", "[green]✓[/green] installed (final/full ingest)")
+        _row("SessionEnd hook", "[green]✓[/green] installed (final/full ingest)")
     else:
-        table.add_row(
+        _row(
             "SessionEnd hook",
             "[yellow]⚠[/yellow] not installed (run [bold]longhand hook install[/bold])",
         )
 
     if stop_hook_installed:
-        table.add_row("Stop hook", "[green]✓[/green] installed (live tail per turn)")
+        _row("Stop hook", "[green]✓[/green] installed (live tail per turn)")
     else:
-        table.add_row(
+        _row(
             "Stop hook",
             "[yellow]⚠[/yellow] not installed — in-progress sessions invisible. "
             "Run [bold]longhand hook install[/bold].",
         )
 
     if prompt_hook_installed:
-        table.add_row("UserPromptSubmit hook", "[green]✓[/green] installed (auto-context)")
+        _row("UserPromptSubmit hook", "[green]✓[/green] installed (auto-context)")
     else:
-        table.add_row(
+        _row(
             "UserPromptSubmit hook",
             "[yellow]⚠[/yellow] not installed (run [bold]longhand prompt-hook install[/bold])",
         )
@@ -1193,12 +1208,12 @@ def doctor() -> None:
     # 2b. Reconciler launchd job (macOS only)
     if sys.platform == "darwin":
         if RECONCILER_PLIST_PATH.exists():
-            table.add_row(
+            _row(
                 "Reconciler job",
                 "[green]✓[/green] installed (launchd, every 30 min)",
             )
         else:
-            table.add_row(
+            _row(
                 "Reconciler job",
                 "[dim]—[/dim] not installed "
                 "(run [bold]longhand schedule install-reconciler[/bold])",
@@ -1212,9 +1227,9 @@ def doctor() -> None:
             mcp_installed = True
 
     if mcp_installed:
-        table.add_row("Claude Desktop MCP", "[green]✓[/green] installed")
+        _row("Claude Desktop MCP", "[green]✓[/green] installed")
     else:
-        table.add_row(
+        _row(
             "Claude Desktop MCP",
             "[dim]—[/dim] not installed (run [bold]longhand mcp install[/bold])",
         )
@@ -1232,9 +1247,9 @@ def doctor() -> None:
             pass
 
     if cc_mcp_installed:
-        table.add_row("Claude Code MCP", "[green]✓[/green] installed")
+        _row("Claude Code MCP", "[green]✓[/green] installed")
     else:
-        table.add_row(
+        _row(
             "Claude Code MCP",
             "[dim]—[/dim] not installed (run [bold]claude mcp add longhand -s user -- longhand mcp-server[/bold])",
         )
@@ -1242,9 +1257,12 @@ def doctor() -> None:
     # 4. Data directory
     store = LonghandStore()
     data_ok = store.data_dir.exists() and store.data_dir.is_dir()
-    table.add_row(
+    from longhand.storage.store import data_dir_source
+
+    _row(
         "Data directory",
-        f"[green]✓[/green] {store.data_dir}" if data_ok else f"[red]✗[/red] {store.data_dir}",
+        (f"[green]✓[/green] {store.data_dir}" if data_ok else f"[red]✗[/red] {store.data_dir}")
+        + f" [dim](source: {data_dir_source()})[/dim]",
     )
 
     # 5. Recent ingest freshness — detects silently broken hooks. If Claude
@@ -1252,27 +1270,27 @@ def doctor() -> None:
     # the hook is either misconfigured or failing quietly.
     freshness_row = _freshness_status(store)
     if freshness_row:
-        table.add_row("Recent ingest (7d)", freshness_row)
+        _row("Recent ingest (7d)", freshness_row)
 
     # 5b. Hook failures breadcrumbed by ingest-session's hook mode — freshness
     # says "something is missing"; this row says why.
-    table.add_row("Hook errors (7d)", _hook_errors_status(store))
+    _row("Hook errors (7d)", _hook_errors_status(store))
 
     # 5c. Upstream-drift canary: unknown transcript entry types accumulating
     # means Claude Code's format moved and this longhand can't read the new
     # entries yet.
-    table.add_row("Transcript format", _transcript_format_status(store))
+    _row("Transcript format", _transcript_format_status(store))
 
     # 6. Stats
     stats = store.stats()
-    table.add_row("Sessions ingested", f"{stats.get('sessions', 0):,}")
-    table.add_row("Events stored", f"{stats.get('events', 0):,}")
-    table.add_row("Projects inferred", f"{stats.get('projects', 0):,}")
-    table.add_row("Episodes extracted", f"{stats.get('episodes', 0):,}")
+    _row("Sessions ingested", f"{stats.get('sessions', 0):,}")
+    _row("Events stored", f"{stats.get('events', 0):,}")
+    _row("Projects inferred", f"{stats.get('projects', 0):,}")
+    _row("Episodes extracted", f"{stats.get('episodes', 0):,}")
 
     sessions_needing_analysis = max(0, stats.get("sessions", 0) - stats.get("outcomes", 0))
     if sessions_needing_analysis > 0:
-        table.add_row(
+        _row(
             "Sessions needing analysis",
             f"[yellow]{sessions_needing_analysis}[/yellow] (run [bold]longhand analyze --all[/bold])",
         )
@@ -1287,17 +1305,30 @@ def doctor() -> None:
         if chroma_dir.exists()
         else 0
     )
-    table.add_row("Storage", f"SQLite {_human_size(db_size)} · vectors {_human_size(chroma_size)}")
+    _row("Storage", f"SQLite {_human_size(db_size)} · vectors {_human_size(chroma_size)}")
 
     with store.sqlite.connect() as conn:
         aux_events = conn.execute(
             "SELECT COUNT(*) FROM events WHERE event_type = 'unknown'"
         ).fetchone()[0]
     if aux_events > 0:
-        table.add_row(
+        _row(
             "Aux/unknown events",
             f"[yellow]{aux_events:,}[/yellow] stored orchestration noise "
             "(reclaim: [bold]longhand db vacuum --prune-aux[/bold])",
         )
 
+    if json_out:
+        from rich.text import Text as _Text
+
+        print(
+            json.dumps({label: _Text.from_markup(value).plain for label, value in rows}, indent=2)
+        )
+        return
+
+    table = Table(title="Longhand Doctor", show_header=False, border_style="cyan")
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    for label, value in rows:
+        table.add_row(label, value)
     console.print(table)
