@@ -12,11 +12,12 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from longhand.storage.migrations import apply_migrations
+from longhand.timeutil import utcnow
 from longhand.types import Event, EventType, Session
 
 SCHEMA = """
@@ -82,6 +83,10 @@ CREATE TABLE IF NOT EXISTS ingestion_log (
 
 
 def _iso(dt: datetime) -> str:
+    """ISO-8601 with an explicit offset — naive input is stamped as UTC so
+    no writer can regress to ambiguous local-clock strings."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.isoformat()
 
 
@@ -186,7 +191,7 @@ class SQLiteStore:
                     session.git_branch,
                     session.cwd,
                     session.model,
-                    _iso(datetime.now()),
+                    _iso(utcnow()),
                 ),
             )
 
@@ -286,7 +291,7 @@ class SQLiteStore:
                     session_id = excluded.session_id,
                     analysis_stage = 'pending'
                 """,
-                (transcript_path, session_id, _iso(datetime.now())),
+                (transcript_path, session_id, _iso(utcnow())),
             )
 
     def log_ingestion(
@@ -316,7 +321,7 @@ class SQLiteStore:
                 (
                     transcript_path,
                     session_id,
-                    _iso(datetime.now()),
+                    _iso(utcnow()),
                     file_size,
                     event_count,
                     file_size,
@@ -393,7 +398,7 @@ class SQLiteStore:
                 (
                     transcript_path,
                     session_id,
-                    _iso(datetime.now()),
+                    _iso(utcnow()),
                     event_count,
                     last_offset,
                 ),
@@ -848,7 +853,7 @@ class SQLiteStore:
                     outcome.get("resolution_event_id"),
                     outcome.get("summary", ""),
                     json.dumps(outcome.get("topics", [])),
-                    datetime.now().isoformat(),
+                    utcnow().isoformat(),
                 ),
             )
 

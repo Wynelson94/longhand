@@ -494,6 +494,20 @@ def test_store_construction_refuses_too_new_db(tmp_path: Path):
         SQLiteStore(db)
 
 
+def test_migration_stamps_are_utc_aware(tmp_path: Path):
+    """schema_version.applied_at carries a UTC offset (v0.13 normalization);
+    legacy naive stamps are read as UTC — metadata-grade, no backfill."""
+    from datetime import datetime
+
+    store = SQLiteStore(tmp_path / "aware.db")
+    with store.connect() as conn:
+        stamps = [r[0] for r in conn.execute("SELECT applied_at FROM schema_version")]
+
+    assert stamps
+    for stamp in stamps:
+        assert datetime.fromisoformat(stamp).tzinfo is not None, stamp
+
+
 def test_equal_version_db_reopens_fine(tmp_path: Path):
     """A DB at exactly the newest known version opens without complaint."""
     db = tmp_path / "current.db"

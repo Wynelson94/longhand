@@ -166,7 +166,10 @@ def recall(
     6. Build narrative
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        # The user's wall clock, tz-aware: time phrases like "today" anchor
+        # to the local calendar day (see time_parser); recency arithmetic is
+        # offset-aware either way.
+        now = datetime.now().astimezone()
 
     # 0. First-run backfill — after an upgrade the episodes vector collection
     # can be empty while SQLite is populated. Embedding the whole corpus
@@ -705,7 +708,7 @@ def _detect_project_drift(
 
     last_transcript_mtime_iso: str | None = None
     if max_mtime > 0.0:
-        last_transcript_mtime_iso = _dt.fromtimestamp(max_mtime).isoformat()
+        last_transcript_mtime_iso = _dt.fromtimestamp(max_mtime, tz=timezone.utc).isoformat()
 
     stale = len(truly_missing) > 0
     stale_reason: str | None = None

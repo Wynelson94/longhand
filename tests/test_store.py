@@ -2,7 +2,40 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from longhand.parser import JSONLParser
+
+
+def test_iso_attaches_utc_to_naive_input():
+    """_iso hardens naive datetimes to UTC so no writer can regress to
+    local-clock stamps (v0.13 datetime normalization)."""
+    from longhand.storage.sqlite_store import _iso
+
+    assert _iso(datetime(2026, 7, 11, 12, 0)) == "2026-07-11T12:00:00+00:00"
+    aware = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    assert _iso(aware) == "2026-07-11T12:00:00+00:00"
+
+
+def test_ingest_timestamps_are_utc_aware(sample_session_file, temp_store):
+    """sessions.ingested_at and ingestion_log.ingested_at carry a UTC offset.
+
+    Legacy naive rows (pre-v0.13 local-clock stamps) stay readable — readers
+    interpret naive values as UTC; no backfill migration.
+    """
+    parser = JSONLParser(sample_session_file)
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    temp_store.ingest_session(session, events, run_analysis=False)
+
+    with temp_store.sqlite.connect() as conn:
+        session_stamp = conn.execute("SELECT ingested_at FROM sessions").fetchone()[0]
+        log_stamp = conn.execute("SELECT ingested_at FROM ingestion_log").fetchone()[0]
+
+    for stamp in (session_stamp, log_stamp):
+        parsed = datetime.fromisoformat(stamp)
+        assert parsed.tzinfo is not None, f"naive timestamp written: {stamp}"
+        assert parsed.utcoffset() == timezone.utc.utcoffset(None)
 
 
 def test_ingest_and_query_roundtrip(sample_session_file, temp_store):

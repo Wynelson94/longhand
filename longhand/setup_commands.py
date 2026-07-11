@@ -21,6 +21,7 @@ from rich.table import Table
 
 from longhand.parser import JSONLParser, discover_sessions
 from longhand.storage import LonghandStore
+from longhand.timeutil import utcnow
 
 console = Console()
 
@@ -752,8 +753,6 @@ def ingest_live_tail(
     Returns a small dict with counts. Never raises — designed to be called
     from a hook chain that must not crash Claude Code.
     """
-    from datetime import datetime as _dt
-
     from longhand.recall.project_fallback import (
         claim_ingest_lock,
         release_ingest_lock,
@@ -897,9 +896,9 @@ def ingest_live_tail(
             ).fetchone()
 
         started_at = (agg["started_at"] if agg and agg["started_at"] else None) or (
-            existing_session["started_at"] if existing_session else _dt.now().isoformat()
+            existing_session["started_at"] if existing_session else utcnow().isoformat()
         )
-        ended_at = agg["ended_at"] if agg and agg["ended_at"] else _dt.now().isoformat()
+        ended_at = agg["ended_at"] if agg and agg["ended_at"] else utcnow().isoformat()
 
         # Derive cwd the same way build_session does (mode of project-resolving
         # cwds), not MAX(cwd). None → the UPSERT's COALESCE preserves the existing
@@ -941,7 +940,7 @@ def ingest_live_tail(
                     agg["git_branch"] if agg else None,
                     best_cwd,
                     agg["model"] if agg else None,
-                    _dt.now().isoformat(),
+                    utcnow().isoformat(),
                 ),
             )
 
