@@ -13,7 +13,7 @@ No dateparser dependency. ~100 lines of rules.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 
 def _utc(dt: datetime) -> datetime:
@@ -61,17 +61,28 @@ _UNIT_TO_DAYS = {
 def parse_time_phrase(
     query: str,
     now: datetime | None = None,
+    *,
+    tz: tzinfo | None = None,
 ) -> tuple[datetime | None, datetime | None, str]:
     """Parse time phrases out of a query.
 
     Returns (since, until, cleaned_query) where:
     - since/until are tz-aware UTC datetimes (or None if no phrase matched)
     - cleaned_query has the matched time phrase removed
+
+    Day boundaries anchor to the wall clock of `now`'s timezone — the
+    system-local zone by default. A UTC-7 evening is already "tomorrow" in
+    UTC, so anchoring at UTC midnight made "today" exclude the user's whole
+    day. Pass an aware `now` to anchor in its zone, or `tz` to place a
+    naive/omitted `now`; naive `now` without `tz` keeps the old UTC anchor.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
-    else:
-        now = _utc(now)
+        # The user's wall clock, tz-aware: "today" means their calendar day.
+        now = datetime.now(tz) if tz is not None else datetime.now().astimezone()
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=tz if tz is not None else timezone.utc)
+    elif tz is not None:
+        now = now.astimezone(tz)
 
     # Numeric phrase first (more specific)
     match = _NUMERIC_PHRASE.search(query)
@@ -85,7 +96,7 @@ def parse_time_phrase(
         since = _day_start(target - timedelta(days=window))
         until = target + timedelta(days=window)
         cleaned = query[: match.start()] + query[match.end() :]
-        return since, until, cleaned.strip()
+        return _utc(since), _utc(until), cleaned.strip()
 
     # Fixed phrases
     for pattern, (days_start, days_end) in _FIXED_PHRASES:
@@ -94,6 +105,6 @@ def parse_time_phrase(
             since = _day_start(now - timedelta(days=days_start))
             until = now - timedelta(days=days_end) if days_end > 0 else now
             cleaned = query[: match.start()] + query[match.end() :]
-            return since, until, cleaned.strip()
+            return _utc(since), _utc(until), cleaned.strip()
 
     return None, None, query

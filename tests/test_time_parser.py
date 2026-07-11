@@ -7,7 +7,7 @@ incidentally (the no-match return); these tests pin the actual phrase semantics.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -119,3 +119,61 @@ def test_default_now_uses_current_time():
     assert since is not None and until is not None
     assert since <= until
     assert "yesterday" not in cleaned
+
+
+# ─── user-local day anchoring (v0.13) ─────────────────────────────────────────
+#
+# "today" means the user's calendar day. Anchoring day boundaries at UTC
+# midnight cut local evenings off: at 5:30pm in UTC-7 the UTC date has already
+# flipped, so a "today" query excluded everything the user did that day.
+
+MST = timezone(timedelta(hours=-7))  # fixed offset, no DST — deterministic
+
+
+def test_today_anchors_to_local_midnight_not_utc():
+    # 2026-07-11 17:30 in UTC-7 == 2026-07-12 00:30 UTC: the UTC date flipped.
+    local_evening = datetime(2026, 7, 11, 17, 30, tzinfo=MST)
+
+    since, until, _ = parse_time_phrase("what did I do today", now=local_evening)
+
+    # "today" = (1, 0): window starts at the LOCAL day-start of (now - 1d),
+    # i.e. Jul 10 00:00-07:00 = Jul 10 07:00 UTC. The old UTC anchor placed
+    # it at Jul 11 00:00 UTC — 5pm local the previous day — silently cutting
+    # local mornings out of every "today" query for UTC-minus users.
+    assert since == datetime(2026, 7, 10, 7, 0, tzinfo=timezone.utc)
+    assert until == local_evening  # same instant
+    assert since.utcoffset() == timedelta(0)  # edges are UTC-normalized
+    assert until.utcoffset() == timedelta(0)
+
+
+def test_yesterday_covers_the_local_calendar_day():
+    local_evening = datetime(2026, 7, 11, 17, 30, tzinfo=MST)
+
+    since, until, _ = parse_time_phrase("yesterday", now=local_evening)
+
+    # (days_ago_start, days_ago_end) = (2, 1) anchored on the LOCAL day.
+    assert since == datetime(2026, 7, 9, 7, 0, tzinfo=timezone.utc)
+    assert until == datetime(2026, 7, 10, 17, 30, tzinfo=MST)
+
+
+def test_tz_kwarg_anchors_a_naive_now():
+    naive = datetime(2026, 7, 11, 17, 30)  # frozen wall clock, zone via tz=
+    since, _, _ = parse_time_phrase("today", now=naive, tz=MST)
+    assert since == datetime(2026, 7, 10, 7, 0, tzinfo=timezone.utc)
+
+
+def test_default_anchor_is_local_and_aware():
+    since, _, _ = parse_time_phrase("today")
+    assert since is not None and since.tzinfo is not None
+    # "today" = (1, 0): local day-start of (now - 1d), in the system zone.
+    expected = (datetime.now().astimezone() - timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    assert since == expected  # aware comparison — instant equality
+
+
+def test_explicit_utc_now_keeps_utc_anchoring():
+    """Regression: aware-UTC `now` (every existing caller) anchors in UTC."""
+    since, until, _ = parse_time_phrase("yesterday", now=NOW)
+    assert since == _dt(2026, 5, 26)
+    assert until == _dt(2026, 5, 27, 12, 0)

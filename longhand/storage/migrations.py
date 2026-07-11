@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime
+
+from longhand.timeutil import utcnow
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -310,7 +311,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[int]:
             _apply_alters(conn, version)
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                (version, datetime.now().isoformat()),
+                (version, utcnow().isoformat()),
             )
         except (sqlite3.IntegrityError, sqlite3.OperationalError):
             # Two processes can race the same migration right after an
