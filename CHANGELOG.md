@@ -9,6 +9,125 @@ commits and tag annotations of those releases.
 
 ---
 
+## [0.13.0] — 2026-07-11
+
+Hardening release, and the v1.0 deprecation window opens. Ten PRs (#57–#66):
+the hooks become crash-proof with every failure leaving a visible breadcrumb,
+timestamps normalize to tz-aware UTC with recall windows anchored to *your*
+calendar day, error counts stop lying, upstream format drift becomes a doctor
+row instead of silent bloat, and the CLI + MCP surfaces consolidate — every
+old name keeps working through 0.x with a deprecation notice, then is removed
+at 1.0. One serious cross-platform bug fixed: on Windows, the ingest-lock
+liveness probe was *terminating* the processes it checked. Dogfooded on a
+real 338-session corpus before release (which promptly proved the new drift
+canary by catching two unknown upstream entry types on day one).
+
+### Added
+
+- **Never-crash hooks, with receipts.** stdin-invoked `ingest-session` (the
+  SessionEnd hook) now exits 0 on *every* failure — missing transcript,
+  store-open failure, oversize transcript, mid-pipeline raise — leaving a
+  one-line breadcrumb in `logs/hook-errors-YYYY-MM-DD.log`. `doctor` gains a
+  **Hook errors (7d)** row so failures stay loud without ever being fatal.
+  Explicit `--transcript` use keeps its loud exit 1. (#58)
+- **The hook guarantees are now CI-gated.** New `tests/test_hook_guarantees.py`
+  enforces all three invariants end-to-end for all three hooks: never raise
+  (13 injected-failure cases), never touch the network (record-and-raise
+  socket fixture; SessionEnd runs full analysis under it), never block the
+  prompt inline (the UserPromptSubmit hook may only spawn detached work and
+  never claims the ingest lock). (#59)
+- **Upstream drift is never silent.** The parser exports its skip-list and a
+  new triage registry; a fixture corpus (`tests/fixtures/transcript_shapes/`)
+  fails the build the moment an entry type lacks a disposition; `doctor`
+  gains a **Transcript format** row that alarms only on *new* unknown types;
+  and `scripts/harvest_entry_shapes.py` closes the loop. First run caught
+  `pr-link` and `worktree-state` — two real entry types nobody knew about.
+  (#63)
+- **`LONGHAND_DATA_DIR`.** One resolution rule everywhere (flag > env >
+  `~/.longhand`) covering the store, update-check cache, `config.json`
+  readers, and hook breadcrumbs. Child processes inherit it, so hooks,
+  spawned workers, and the MCP server follow a relocated store with no
+  flags; the launchd reconciler bakes it into the plist (launchd doesn't
+  inherit your shell env). `doctor` prints which source won, and the demo's
+  suggested env var now actually exists. (#64)
+- **Downgrade guard.** A database written by a newer longhand now refuses to
+  open with clear upgrade advice (`SchemaTooNewError`) instead of operating
+  blind against an unknown schema. Hooks still exit 0 against a too-new DB.
+  (#57)
+- **Wait-claim for the heavy writers.** `analyze`, `reattribute --fix`, and
+  `redact --apply` now wait (up to 15s) for a running ingest instead of
+  racing it, hold the ingest lock while they rewrite, and abort loudly on
+  timeout. Read-only modes stay lock-free; `redact` claims only *after* the
+  irreversibility confirm. (#60)
+- **`status --json` and `doctor --json`** for scripting. (#64)
+- **Windows CI leg** (non-blocking, evidence-gathering): `windows-latest` ×
+  py3.12 — green on both of its first two runs, full suite including
+  embeddings. (#66)
+
+### Changed
+
+- **`status` is the single resume command** (git-status shape): bare
+  `status` = recent-work digest, `status <project>` = where that project
+  left off, `status --session <prefix>` = one session's tail. (#64)
+- **MCP surface: 19 → 13 tools** via strict 1:1 absorptions — `search`
+  gains `context_events`; `list_sessions` gains `project_id`/`since`/`until`
+  (outcome-enriched); `get_session_timeline`'s `tail` covers "latest
+  events"; `find_commits`' query becomes optional (session git story);
+  `find_episodes` gains `episode_id` detail mode; `list_projects` gains
+  `match`. Docs rewritten around the survivors (repo CLAUDE.md, README —
+  including the long-wrong `get_latest_events` description — server.json,
+  install panel). (#65)
+- **Honest error counts.** `detect_error` now knows what command produced
+  the output: search hits quoting error words (the #1 false-positive source),
+  git history mentioning failures, and ENOENT from existence probes no longer
+  count as session errors — while `fatal:` from git itself and anything
+  after the noise still does. A new canary fixture pins a probe-heavy session
+  to exactly one real error. (#62)
+- **Timestamps are tz-aware UTC everywhere** (ten naive write sites fixed;
+  legacy naive rows read as UTC, no backfill), and **recall windows anchor
+  to your local calendar day** — at 5:30pm in UTC-7 the UTC date has already
+  flipped, so "today" used to silently cut your morning out. One-time
+  expectation: recall_diff rankings can shift once for non-UTC users. (#61)
+- **`recall` describes itself honestly**: the narrative comes from
+  conversation segments and session timelines; problem→fix episodes are the
+  high-precision extra when the work left clean evidence. (#65)
+
+### Fixed
+
+- **Windows: the lock-liveness probe killed the lock holder.** `os.kill(pid,
+  0)` on Windows maps to `TerminateProcess` — the "existence check" was
+  lethal on Windows installs shipping today via pip. Now probed via
+  `OpenProcess`/`GetExitCodeProcess`. This had to precede the Windows CI leg:
+  the old code would have killed pytest's own parent process. (#57)
+- The UserPromptSubmit fallback (`infer_missing_projects`) now defers
+  immediately when a live ingest holds the lock — never claims, never waits,
+  never stacks writers inside your prompt. (#60)
+- `mcp serve` / `mcp-server` share one body; `reconcile` and `reattribute`
+  cross-reference each other in `--help`. (#64)
+
+### Deprecated — removed at v1.0 (everything below still works through 0.x)
+
+| Deprecated | Use instead |
+|---|---|
+| `longhand recap` | `longhand status` (bare; `--days N`) |
+| `longhand continue <prefix>` | `longhand status --session <prefix>` |
+| `longhand patterns` | `longhand recall "<topic>"` |
+| `longhand reanalyze` | `longhand analyze --all` (deprecated since 0.12) |
+| MCP `search_in_context` | `search` + `context_events` (with `session_id`) |
+| MCP `get_project_timeline` | `list_sessions` + `project_id` (+ `since`/`until`) |
+| MCP `get_latest_events` | `get_session_timeline` + `tail` |
+| MCP `get_session_commits` | `find_commits` + `session_id` (omit `query`) |
+| MCP `get_episode` | `find_episodes` + `episode_id` |
+| MCP `match_project` | `list_projects` + `match` |
+| MCP `reconcile` with implicit `fix` | pass `fix` explicitly — the default flips to dry-run at 1.0 |
+
+Deprecated CLI commands are hidden and print a pointer; deprecated MCP tools
+stay listed with a `[DEPRECATED — use …]` prefix and prepend a one-line
+migration note to their payloads. At 1.0 the retired MCP names leave the
+tool listing but keep answering forever, so saved instructions never break.
+
+---
+
 ## [0.12.0] — 2026-07-10
 
 Feature release: the update channel, cleaner attribution, sharper episodes,
