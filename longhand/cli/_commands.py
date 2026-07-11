@@ -971,7 +971,17 @@ def analyze(
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
-    """Re-run analysis (projects, outcomes, episodes) on already-ingested sessions."""
+    """Re-run analysis (projects, outcomes, episodes) on already-ingested sessions.
+
+    Holds the ingest lock while it runs: analysis rewrites episodes, segments,
+    and embeddings — the same stores the session hooks write — so hooks defer
+    until it finishes (their reconcile heal path picks up anything deferred).
+    """
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock_with_wait,
+        release_ingest_lock,
+    )
+
     store = _get_store(data_dir)
 
     if not all_sessions and not session:
@@ -986,66 +996,78 @@ def analyze(
         console.print("[yellow]No matching sessions.[/yellow]")
         return
 
-    console.print(f"[cyan]Analyzing {len(sessions)} session(s)...[/cyan]")
-    analyzed = 0
-    errors = 0
-    total_episodes = 0
+    if not claim_ingest_lock_with_wait(
+        store,
+        on_wait=lambda: console.print(
+            "[yellow]Waiting for a running Longhand ingest to finish...[/yellow]"
+        ),
+    ):
+        console.print("[red]✗[/red] Another Longhand ingest is still running — try again shortly.")
+        raise typer.Exit(1)
 
-    fallback_used = 0
-    for sess_row in sessions:
-        try:
-            transcript_path = sess_row["transcript_path"]
-            if transcript_path and Path(transcript_path).exists():
-                # Re-parse the transcript file for full event objects
-                parser = JSONLParser(transcript_path)
-                events = list(parser.parse_events())
-                if not events:
-                    continue
-                session_obj = parser.build_session(events)
-            else:
-                # Transcript rotated off disk — rebuild from the events table
-                # (the same source reattribute uses), so old sessions still
-                # get re-analyzed with current extractors.
-                loaded = store.load_session_from_db(sess_row)
-                if loaded is None:
-                    errors += 1
-                    continue
-                session_obj, events = loaded
-                fallback_used += 1
-            result = store.analyze_session(session_obj, events)
-            total_episodes += result.get("episodes", 0)
-            analyzed += 1
-            if analyzed % 20 == 0:
-                console.print(f"  [dim]{analyzed}/{len(sessions)}...[/dim]")
-        except Exception as e:
-            errors += 1
-            console.print(f"  [red]✗[/red] {sess_row['session_id'][:8]}: {e}")
+    try:
+        console.print(f"[cyan]Analyzing {len(sessions)} session(s)...[/cyan]")
+        analyzed = 0
+        errors = 0
+        total_episodes = 0
 
-    console.print()
-    console.print(
-        f"[bold]Analyzed {analyzed}[/bold] sessions, "
-        f"[bold]{total_episodes}[/bold] episodes "
-        f"([dim]{errors} errors; {fallback_used} rebuilt from the events table[/dim])"
-    )
+        fallback_used = 0
+        for sess_row in sessions:
+            try:
+                transcript_path = sess_row["transcript_path"]
+                if transcript_path and Path(transcript_path).exists():
+                    # Re-parse the transcript file for full event objects
+                    parser = JSONLParser(transcript_path)
+                    events = list(parser.parse_events())
+                    if not events:
+                        continue
+                    session_obj = parser.build_session(events)
+                else:
+                    # Transcript rotated off disk — rebuild from the events table
+                    # (the same source reattribute uses), so old sessions still
+                    # get re-analyzed with current extractors.
+                    loaded = store.load_session_from_db(sess_row)
+                    if loaded is None:
+                        errors += 1
+                        continue
+                    session_obj, events = loaded
+                    fallback_used += 1
+                result = store.analyze_session(session_obj, events)
+                total_episodes += result.get("episodes", 0)
+                analyzed += 1
+                if analyzed % 20 == 0:
+                    console.print(f"  [dim]{analyzed}/{len(sessions)}...[/dim]")
+            except Exception as e:
+                errors += 1
+                console.print(f"  [red]✗[/red] {sess_row['session_id'][:8]}: {e}")
 
-    # A full re-analysis can shift episode boundaries, leaving stale
-    # embeddings under old episode_ids. Clear and rebuild the collection
-    # from the now-current SQLite rows (formerly `reanalyze`'s job).
-    if all_sessions:
-        console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
-        try:
-            store.vectors.client.delete_collection(name="episodes")
-            store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
-                name="episodes"
-            )
-        except Exception:
-            pass
+        console.print()
+        console.print(
+            f"[bold]Analyzed {analyzed}[/bold] sessions, "
+            f"[bold]{total_episodes}[/bold] episodes "
+            f"([dim]{errors} errors; {fallback_used} rebuilt from the events table[/dim])"
+        )
 
-        def _progress(done: int, total: int) -> None:
-            console.print(f"   {done}/{total}...", end="\r")
+        # A full re-analysis can shift episode boundaries, leaving stale
+        # embeddings under old episode_ids. Clear and rebuild the collection
+        # from the now-current SQLite rows (formerly `reanalyze`'s job).
+        if all_sessions:
+            console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
+            try:
+                store.vectors.client.delete_collection(name="episodes")
+                store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
+                    name="episodes"
+                )
+            except Exception:
+                pass
 
-        embedded = store.backfill_episode_embeddings(progress=_progress)
-        console.print(f"[green]✓[/green] Embedded {embedded} episode(s).")
+            def _progress(done: int, total: int) -> None:
+                console.print(f"   {done}/{total}...", end="\r")
+
+            embedded = store.backfill_episode_embeddings(progress=_progress)
+            console.print(f"[green]✓[/green] Embedded {embedded} episode(s).")
+    finally:
+        release_ingest_lock(store)
 
 
 @app.command(rich_help_panel="Data")
@@ -1065,37 +1087,57 @@ def reattribute(
     case-duplicate paths, and junk projects minted from temp dirs. Idempotent.
 
     DRY-RUN BY DEFAULT: prints the moves grouped by destination and touches
-    nothing. Review, then re-run with --fix to apply.
+    nothing. Review, then re-run with --fix to apply. --fix holds the ingest
+    lock while it rewrites; the dry-run stays lock-free.
     """
-    store = _get_store(data_dir)
-    mode = "Re-attributing" if fix else "Dry-run: re-deriving"
-    console.print(f"[cyan]{mode} sessions from the events table...[/cyan]")
-    result = store.reattribute_sessions(apply=fix)
-    console.print(
-        f"[bold]Scanned {result['scanned']}[/bold] sessions, "
-        f"[bold]{result['reattributed']}[/bold] "
-        f"{'re-attributed' if fix else 'would move'} "
-        f"([dim]{result['skipped']} skipped — no events[/dim])"
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock_with_wait,
+        release_ingest_lock,
     )
 
-    if result["changes"]:
-        by_move: dict[tuple[str | None, str], int] = {}
-        names: dict[str, str] = {}
-        for c in result["changes"]:
-            key = (c["old_project_id"], c["new_project_id"])
-            by_move[key] = by_move.get(key, 0) + 1
-            names[c["new_project_id"]] = c["new_display_name"]
-        for (old_pid, new_pid), n in sorted(by_move.items(), key=lambda kv: -kv[1]):
-            old_proj = store.sqlite.get_project(old_pid) if old_pid else None
-            old_name = (old_proj or {}).get("display_name") or old_pid or "(none)"
-            console.print(f"  {n:>4} session(s): {old_name} → {names[new_pid]}")
+    store = _get_store(data_dir)
 
-    if result["pruned"]:
-        verb = "pruned" if fix else "would be pruned"
-        console.print(f"  [dim]{result['pruned']} emptied project row(s) {verb}[/dim]")
+    if fix and not claim_ingest_lock_with_wait(
+        store,
+        on_wait=lambda: console.print(
+            "[yellow]Waiting for a running Longhand ingest to finish...[/yellow]"
+        ),
+    ):
+        console.print("[red]✗[/red] Another Longhand ingest is still running — try again shortly.")
+        raise typer.Exit(1)
 
-    if not fix and result["changes"]:
-        console.print("\n[dim]Run with --fix to apply.[/dim]")
+    try:
+        mode = "Re-attributing" if fix else "Dry-run: re-deriving"
+        console.print(f"[cyan]{mode} sessions from the events table...[/cyan]")
+        result = store.reattribute_sessions(apply=fix)
+        console.print(
+            f"[bold]Scanned {result['scanned']}[/bold] sessions, "
+            f"[bold]{result['reattributed']}[/bold] "
+            f"{'re-attributed' if fix else 'would move'} "
+            f"([dim]{result['skipped']} skipped — no events[/dim])"
+        )
+
+        if result["changes"]:
+            by_move: dict[tuple[str | None, str], int] = {}
+            names: dict[str, str] = {}
+            for c in result["changes"]:
+                key = (c["old_project_id"], c["new_project_id"])
+                by_move[key] = by_move.get(key, 0) + 1
+                names[c["new_project_id"]] = c["new_display_name"]
+            for (old_pid, new_pid), n in sorted(by_move.items(), key=lambda kv: -kv[1]):
+                old_proj = store.sqlite.get_project(old_pid) if old_pid else None
+                old_name = (old_proj or {}).get("display_name") or old_pid or "(none)"
+                console.print(f"  {n:>4} session(s): {old_name} → {names[new_pid]}")
+
+        if result["pruned"]:
+            verb = "pruned" if fix else "would be pruned"
+            console.print(f"  [dim]{result['pruned']} emptied project row(s) {verb}[/dim]")
+
+        if not fix and result["changes"]:
+            console.print("\n[dim]Run with --fix to apply.[/dim]")
+    finally:
+        if fix:
+            release_ingest_lock(store)
 
 
 def _deprecated(old: str, new: str) -> None:
@@ -1476,6 +1518,10 @@ def redact(
     --apply, matches are masked in SQLite and changed vector documents are
     re-embedded.
     """
+    from longhand.recall.project_fallback import (
+        claim_ingest_lock_with_wait,
+        release_ingest_lock,
+    )
     from longhand.redaction import redact_text, scan_text
 
     store = _get_store(data_dir)
@@ -1488,67 +1534,90 @@ def redact(
             console.print("[yellow]Aborted — nothing changed.[/yellow]")
             return
 
-    pattern_counts: dict[str, int] = {}
-    rows_touched: dict[str, int] = {}
-
-    with store.sqlite.connect() as conn:
-        for table, (pk, columns) in _REDACT_TABLES.items():
-            try:
-                rows = conn.execute(f"SELECT {pk}, {', '.join(columns)} FROM {table}").fetchall()  # noqa: S608 — identifiers are from the hardcoded _REDACT_TABLES map
-            except Exception:
-                continue  # table may not exist on older schemas
-            touched = 0
-            for row in rows:
-                updates: dict[str, str] = {}
-                row_matched = False
-                for col in columns:
-                    val = row[col]
-                    if not val:
-                        continue
-                    found = scan_text(val)
-                    if not found:
-                        continue
-                    row_matched = True
-                    for name, n in found.items():
-                        pattern_counts[name] = pattern_counts.get(name, 0) + n
-                    if apply:
-                        new_val, _ = redact_text(val)
-                        updates[col] = new_val
-                if updates:
-                    set_clause = ", ".join(f"{c} = ?" for c in updates)
-                    conn.execute(
-                        f"UPDATE {table} SET {set_clause} WHERE {pk} = ?",  # noqa: S608
-                        (*updates.values(), row[pk]),
-                    )
-                if row_matched:
-                    touched += 1
-            if touched:
-                rows_touched[table] = touched
-
-    if not pattern_counts:
-        console.print("[green]No secret-shaped strings found. Store is clean.[/green]")
-        return
-
-    table_out = Table(
-        title="Secrets masked" if apply else "Secrets found (scan only — nothing changed)"
-    )
-    table_out.add_column("Pattern", style="cyan")
-    table_out.add_column("Matches", style="yellow", justify="right")
-    for name in sorted(pattern_counts):
-        table_out.add_row(name, str(pattern_counts[name]))
-    console.print(table_out)
-    for tbl, n in rows_touched.items():
-        console.print(f"[dim]{tbl}: {n} row(s) affected[/dim]")
-
+    # Claim only after the irreversibility confirm — nobody should hold the
+    # writers' lock while staring at a y/N prompt. Scan mode is read-only and
+    # stays lock-free.
+    locked = False
     if apply:
-        embedded = store.vectors.redact_documents(redact_text)
-        console.print(f"[green]Re-embedded {embedded} vector document(s).[/green]")
-        console.print("[green]Done. Matched values were masked in place.[/green]")
-    else:
-        console.print(
-            "\n[dim]Run `longhand redact --apply` to mask these, and "
-            "`longhand config --set redact.enabled=true` to mask future ingests.[/dim]"
+        if not claim_ingest_lock_with_wait(
+            store,
+            on_wait=lambda: console.print(
+                "[yellow]Waiting for a running Longhand ingest to finish...[/yellow]"
+            ),
+        ):
+            console.print(
+                "[red]✗[/red] Another Longhand ingest is still running — try again shortly."
+            )
+            raise typer.Exit(1)
+        locked = True
+
+    try:
+        pattern_counts: dict[str, int] = {}
+        rows_touched: dict[str, int] = {}
+
+        with store.sqlite.connect() as conn:
+            for table, (pk, columns) in _REDACT_TABLES.items():
+                try:
+                    rows = conn.execute(
+                        f"SELECT {pk}, {', '.join(columns)} FROM {table}"
+                    ).fetchall()  # noqa: S608 — identifiers are from the hardcoded _REDACT_TABLES map
+                except Exception:
+                    continue  # table may not exist on older schemas
+                touched = 0
+                for row in rows:
+                    updates: dict[str, str] = {}
+                    row_matched = False
+                    for col in columns:
+                        val = row[col]
+                        if not val:
+                            continue
+                        found = scan_text(val)
+                        if not found:
+                            continue
+                        row_matched = True
+                        for name, n in found.items():
+                            pattern_counts[name] = pattern_counts.get(name, 0) + n
+                        if apply:
+                            new_val, _ = redact_text(val)
+                            updates[col] = new_val
+                    if updates:
+                        set_clause = ", ".join(f"{c} = ?" for c in updates)
+                        conn.execute(
+                            f"UPDATE {table} SET {set_clause} WHERE {pk} = ?",  # noqa: S608
+                            (*updates.values(), row[pk]),
+                        )
+                    if row_matched:
+                        touched += 1
+                if touched:
+                    rows_touched[table] = touched
+
+        if not pattern_counts:
+            console.print("[green]No secret-shaped strings found. Store is clean.[/green]")
+            return
+
+        table_out = Table(
+            title="Secrets masked" if apply else "Secrets found (scan only — nothing changed)"
         )
+        table_out.add_column("Pattern", style="cyan")
+        table_out.add_column("Matches", style="yellow", justify="right")
+        for name in sorted(pattern_counts):
+            table_out.add_row(name, str(pattern_counts[name]))
+        console.print(table_out)
+        for tbl, n in rows_touched.items():
+            console.print(f"[dim]{tbl}: {n} row(s) affected[/dim]")
+
+        if apply:
+            embedded = store.vectors.redact_documents(redact_text)
+            console.print(f"[green]Re-embedded {embedded} vector document(s).[/green]")
+            console.print("[green]Done. Matched values were masked in place.[/green]")
+        else:
+            console.print(
+                "\n[dim]Run `longhand redact --apply` to mask these, and "
+                "`longhand config --set redact.enabled=true` to mask future ingests.[/dim]"
+            )
+    finally:
+        if locked:
+            release_ingest_lock(store)
 
 
 # -----------------------------------------------------------------------------

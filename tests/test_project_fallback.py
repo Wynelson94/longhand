@@ -6,6 +6,8 @@ import importlib.util
 import os
 import subprocess
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -370,6 +372,102 @@ def test_recall_does_not_spawn_when_vectors_populated(temp_store, monkeypatch):
     recall_pipeline.recall(temp_store, "background backfill problem")
 
     assert spawned == []
+
+
+# ─── wait-claim + prompt-path lock discipline ────────────────────────────────
+
+
+def test_wait_claim_immediate_when_free(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    waited: list[int] = []
+
+    ok = project_fallback.claim_ingest_lock_with_wait(
+        temp_store, timeout_s=1, interval_s=0.05, on_wait=lambda: waited.append(1)
+    )
+
+    assert ok is True
+    assert waited == []  # never had to wait
+    lock = temp_store.data_dir / ".ingest.lock"
+    assert lock.read_text().strip() == str(os.getpid())
+    project_fallback.release_ingest_lock(temp_store)
+
+
+def test_wait_claim_times_out_against_live_holder(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text(str(os.getppid()))  # an alive PID that isn't ours
+    waited: list[int] = []
+
+    start = time.monotonic()
+    ok = project_fallback.claim_ingest_lock_with_wait(
+        temp_store, timeout_s=0.3, interval_s=0.05, on_wait=lambda: waited.append(1)
+    )
+
+    assert ok is False
+    assert time.monotonic() - start >= 0.3
+    assert waited == [1]  # fired once when waiting began, not once per poll
+    assert lock.read_text().strip() == str(os.getppid())  # holder untouched
+    lock.unlink()
+
+
+def test_wait_claim_acquires_after_holder_releases(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text(str(os.getppid()))
+
+    releaser = threading.Timer(0.15, lock.unlink)
+    releaser.start()
+    try:
+        ok = project_fallback.claim_ingest_lock_with_wait(temp_store, timeout_s=5, interval_s=0.05)
+    finally:
+        releaser.cancel()
+
+    assert ok is True
+    assert lock.read_text().strip() == str(os.getpid())
+    project_fallback.release_ingest_lock(temp_store)
+
+
+def test_wait_claim_idempotent_for_own_pid(temp_store):
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    assert project_fallback.claim_ingest_lock(temp_store) is True
+    waited: list[int] = []
+
+    ok = project_fallback.claim_ingest_lock_with_wait(
+        temp_store, timeout_s=1, interval_s=0.05, on_wait=lambda: waited.append(1)
+    )
+
+    assert ok is True
+    assert waited == []
+    project_fallback.release_ingest_lock(temp_store)
+
+
+def test_infer_missing_projects_defers_to_live_ingest(temp_store, monkeypatch):
+    """infer_missing_projects runs inside the UserPromptSubmit hook: when a
+    live ingest holds the lock it must return [] before doing ANY work —
+    never claim, never wait, never stack writers."""
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text(str(os.getppid()))
+
+    discovered: list[int] = []
+    monkeypatch.setattr(project_fallback, "discover_sessions", lambda: discovered.append(1) or [])
+
+    assert project_fallback.infer_missing_projects(temp_store) == []
+    assert discovered == [], "deferral must precede any discovery work"
+    lock.unlink()
+
+
+def test_infer_missing_projects_ignores_stale_lock(temp_store, sample_session_file, monkeypatch):
+    """A dead holder must not block the cheap project pass."""
+    temp_store.data_dir.mkdir(parents=True, exist_ok=True)
+    lock = temp_store.data_dir / ".ingest.lock"
+    lock.write_text("0")  # PID 0 — dead/invalid
+
+    monkeypatch.setattr(project_fallback, "discover_sessions", lambda: [Path(sample_session_file)])
+
+    inferred = project_fallback.infer_missing_projects(temp_store)
+    assert len(inferred) == 1
+    lock.unlink()
 
 
 # ─── lock-holder liveness ─────────────────────────────────────────────────────

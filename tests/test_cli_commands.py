@@ -248,6 +248,159 @@ def test_cli_reconcile_detects_null_project_rows(
     assert "1 ingested but project_id IS NULL" in result.stdout
 
 
+# ─── ingest-lock coverage for the heavy writers ──────────────────────────────
+#
+# analyze / reattribute --fix / redact --apply write into the same SQLite +
+# Chroma stores the ingest lock serializes. They wait-claim the lock (humans
+# want "run when the ingest finishes", not "try again later"), abort with
+# exit 1 on timeout, and never touch the lock in their read-only modes.
+
+
+def test_analyze_aborts_when_ingest_lock_stays_busy(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+    from longhand.setup_commands import ingest_single_session
+    from longhand.storage.store import LonghandStore
+
+    data_dir = tmp_path / "lh"
+    ingest_single_session(str(sample_session_file), data_dir=str(data_dir), run_analysis=False)
+
+    # A busy holder that never lets go — don't actually poll for 15s in a test.
+    monkeypatch.setattr(project_fallback, "claim_ingest_lock_with_wait", lambda store, **kw: False)
+    analyzed: list[int] = []
+    monkeypatch.setattr(
+        LonghandStore, "analyze_session", lambda self, *a, **k: analyzed.append(1) or {}
+    )
+
+    result = runner.invoke(app, ["analyze", "--all", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 1
+    assert "ingest" in result.output.lower()
+    assert analyzed == []  # aborted before touching the store
+
+
+def test_analyze_claims_and_releases_the_lock(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+    from longhand.setup_commands import ingest_single_session
+    from longhand.storage.store import LonghandStore
+
+    data_dir = tmp_path / "lh"
+    ingest_single_session(str(sample_session_file), data_dir=str(data_dir), run_analysis=False)
+    store = LonghandStore(data_dir=data_dir)
+    with store.sqlite.connect() as conn:
+        sid = conn.execute("SELECT session_id FROM sessions").fetchone()[0]
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        project_fallback,
+        "claim_ingest_lock_with_wait",
+        lambda store, **kw: calls.append("claim") or True,
+    )
+    monkeypatch.setattr(
+        project_fallback, "release_ingest_lock", lambda store: calls.append("release")
+    )
+    monkeypatch.setattr(LonghandStore, "analyze_session", lambda self, *a, **k: {"episodes": 0})
+
+    result = runner.invoke(app, ["analyze", "--session", sid[:8], "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["claim", "release"]
+
+
+def test_reattribute_fix_aborts_when_ingest_lock_stays_busy(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+    from longhand.storage.store import LonghandStore
+
+    monkeypatch.setattr(project_fallback, "claim_ingest_lock_with_wait", lambda store, **kw: False)
+    moved: list[int] = []
+    monkeypatch.setattr(
+        LonghandStore,
+        "reattribute_sessions",
+        lambda self, apply=False: moved.append(1) or {},
+    )
+
+    result = runner.invoke(app, ["reattribute", "--fix", "--data-dir", str(tmp_path / "lh")])
+
+    assert result.exit_code == 1
+    assert moved == []
+
+
+def test_reattribute_dry_run_never_touches_the_lock(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+
+    claims: list[int] = []
+    monkeypatch.setattr(
+        project_fallback,
+        "claim_ingest_lock_with_wait",
+        lambda store, **kw: claims.append(1) or True,
+    )
+
+    result = runner.invoke(app, ["reattribute", "--data-dir", str(tmp_path / "lh")])
+
+    assert result.exit_code == 0, result.output
+    assert claims == []
+
+
+def test_redact_apply_aborts_when_ingest_lock_stays_busy(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+
+    monkeypatch.setattr(project_fallback, "claim_ingest_lock_with_wait", lambda store, **kw: False)
+
+    result = runner.invoke(app, ["redact", "--apply", "--yes", "--data-dir", str(tmp_path / "lh")])
+
+    assert result.exit_code == 1
+
+
+def test_redact_scan_never_touches_the_lock(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from longhand.recall import project_fallback
+
+    claims: list[int] = []
+    monkeypatch.setattr(
+        project_fallback,
+        "claim_ingest_lock_with_wait",
+        lambda store, **kw: claims.append(1) or True,
+    )
+
+    result = runner.invoke(app, ["redact", "--data-dir", str(tmp_path / "lh")])
+
+    assert result.exit_code == 0, result.output
+    assert claims == []
+
+
+def test_redact_apply_claims_lock_only_after_confirmation(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Declining the irreversibility prompt must abort before any lock work —
+    users shouldn't hold the writers' lock while staring at a y/N prompt."""
+    from longhand.recall import project_fallback
+
+    claims: list[int] = []
+    monkeypatch.setattr(
+        project_fallback,
+        "claim_ingest_lock_with_wait",
+        lambda store, **kw: claims.append(1) or True,
+    )
+
+    result = runner.invoke(
+        app, ["redact", "--apply", "--data-dir", str(tmp_path / "lh")], input="n\n"
+    )
+
+    assert result.exit_code == 0
+    assert "Aborted" in result.output
+    assert claims == []
+
+
 # ─── doctor hook-error visibility ───────────────────────────────────────────
 
 
