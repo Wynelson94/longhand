@@ -43,9 +43,9 @@ def is_disabled() -> bool:
 def cache_path(data_dir: str | Path | None = None) -> Path:
     # Imported lazily: store pulls in chromadb-adjacent modules that this
     # module must not load on the fast --version path.
-    from longhand.storage.store import DEFAULT_DATA_DIR
+    from longhand.storage.store import resolve_data_dir
 
-    base = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    base = resolve_data_dir(data_dir)
     return base / "update-check.json"
 
 

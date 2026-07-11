@@ -248,6 +248,159 @@ def test_cli_reconcile_detects_null_project_rows(
     assert "1 ingested but project_id IS NULL" in result.stdout
 
 
+# ─── status consolidation + deprecation aliases (v0.13) ─────────────────────
+#
+# `status` is the single resume command, git-status shaped: bare = recent
+# digest, positional = project deep status, --session = one session's tail.
+# recap/continue/patterns become hidden delegating aliases through 0.13 and
+# are deleted at 1.0.
+
+
+def _seed_session(sample_session_file: Path, data_dir: Path) -> str:
+    """Ingest the sample session; return its session_id."""
+    from longhand.setup_commands import ingest_single_session
+    from longhand.storage import LonghandStore
+
+    ingest_single_session(str(sample_session_file), data_dir=str(data_dir), run_analysis=False)
+    store = LonghandStore(data_dir=data_dir)
+    with store.sqlite.connect() as conn:
+        return conn.execute("SELECT session_id FROM sessions").fetchone()[0]
+
+
+def test_status_bare_shows_recent_digest(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path
+):
+    data_dir = tmp_path / "lh"
+    sid = _seed_session(sample_session_file, data_dir)
+
+    result = runner.invoke(app, ["status", "--days", "3650", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert sid[:8] in result.stdout
+
+
+def test_status_unknown_project_still_exits_one(runner: CliRunner, tmp_path: Path):
+    result = runner.invoke(
+        app, ["status", "definitely-no-such-project", "--data-dir", str(tmp_path / "lh")]
+    )
+    assert result.exit_code == 1
+    assert "No project matching" in result.stdout
+
+
+def test_status_session_mode_tails_events(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path
+):
+    data_dir = tmp_path / "lh"
+    sid = _seed_session(sample_session_file, data_dir)
+
+    result = runner.invoke(app, ["status", "--session", sid[:8], "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert sid in result.stdout  # full id in the session header
+    assert "Last" in result.stdout  # the event tail rendered
+
+
+def test_status_rejects_project_and_session_together(runner: CliRunner, tmp_path: Path):
+    result = runner.invoke(
+        app,
+        ["status", "someproj", "--session", "abc", "--data-dir", str(tmp_path / "lh")],
+    )
+    assert result.exit_code == 2
+
+
+def test_status_json_digest(runner: CliRunner, sample_session_file: Path, tmp_path: Path):
+    data_dir = tmp_path / "lh"
+    sid = _seed_session(sample_session_file, data_dir)
+
+    result = runner.invoke(app, ["status", "--days", "3650", "--json", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "digest"
+    assert any(s["session_id"] == sid for s in payload["sessions"])
+
+
+def test_recap_alias_delegates_with_deprecation_notice(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path
+):
+    data_dir = tmp_path / "lh"
+    sid = _seed_session(sample_session_file, data_dir)
+
+    result = runner.invoke(app, ["recap", "--days", "3650", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in result.stdout.lower()
+    assert sid[:8] in result.stdout  # the digest still renders
+
+
+def test_continue_alias_delegates_with_deprecation_notice(
+    runner: CliRunner, sample_session_file: Path, tmp_path: Path
+):
+    data_dir = tmp_path / "lh"
+    sid = _seed_session(sample_session_file, data_dir)
+
+    result = runner.invoke(app, ["continue", sid[:8], "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in result.stdout.lower()
+    assert "Last" in result.stdout  # the tail still renders
+
+
+def test_patterns_warns_deprecated_but_still_runs(runner: CliRunner, tmp_path: Path):
+    result = runner.invoke(app, ["patterns", "--data-dir", str(tmp_path / "lh")])
+
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in result.stdout.lower()
+    assert "No episodes" in result.stdout  # the body still ran (deleted at 1.0)
+
+
+def test_deprecated_resume_commands_are_hidden():
+    hidden = {
+        (info.name or info.callback.__name__.replace("_", "-"))
+        for info in app.registered_commands
+        if info.hidden
+    }
+    assert {"recap", "continue", "patterns"} <= hidden
+
+
+def test_hook_config_honors_data_dir_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from longhand.setup_commands import _load_hook_config
+
+    cfg_dir = tmp_path / "env"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.json").write_text(json.dumps({"hook": {"max_episodes": 7}}))
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(cfg_dir))
+    monkeypatch.setenv("HOME", str(tmp_path))  # the real ~/.longhand must not leak in
+
+    assert _load_hook_config()["max_episodes"] == 7
+
+
+def test_doctor_json_reports_data_dir_and_source(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "lh"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert str(tmp_path / "lh") in payload["Data directory"]
+    assert "LONGHAND_DATA_DIR" in payload["Data directory"]
+
+
+def test_reconciler_plist_bakes_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """launchd jobs do not inherit shell env — the plist must carry the
+    resolved data dir explicitly or a relocated store gets missed."""
+    from longhand.setup_commands import _reconciler_plist_xml
+
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "relocated"))
+    xml = _reconciler_plist_xml("/usr/local/bin/longhand", tmp_path / "reconcile.log")
+
+    assert "LONGHAND_DATA_DIR" in xml
+    assert str(tmp_path / "relocated") in xml
+
+
 # ─── ingest-lock coverage for the heavy writers ──────────────────────────────
 #
 # analyze / reattribute --fix / redact --apply write into the same SQLite +

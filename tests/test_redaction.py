@@ -155,6 +155,9 @@ def test_redaction_disabled_by_default(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_parser_redacts_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    # config.json now resolves through resolve_data_dir (env > frozen default),
+    # so relocation in tests goes through the env var.
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / ".longhand"))
     _enable_redaction(tmp_path)
     assert redaction_enabled() is True
 
@@ -171,6 +174,7 @@ def test_parser_redacts_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_tail_parse_redacts_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / ".longhand"))
     _enable_redaction(tmp_path)
 
     transcript = tmp_path / "session.jsonl"

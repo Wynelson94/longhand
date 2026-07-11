@@ -15,6 +15,9 @@ def _no_update_check(monkeypatch):
     otherwise refresh the PyPI update cache after every CliRunner invocation.
     Tests that exercise the update check delete this env var explicitly."""
     monkeypatch.setenv("LONGHAND_NO_UPDATE_CHECK", "1")
+    # A developer's real LONGHAND_DATA_DIR must never leak into tests;
+    # tests that exercise the env var set it explicitly.
+    monkeypatch.delenv("LONGHAND_DATA_DIR", raising=False)
 
 
 def _line(entry: dict[str, Any]) -> str:

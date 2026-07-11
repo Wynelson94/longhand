@@ -38,6 +38,30 @@ def test_ingest_timestamps_are_utc_aware(sample_session_file, temp_store):
         assert parsed.utcoffset() == timezone.utc.utcoffset(None)
 
 
+def test_resolve_data_dir_precedence(tmp_path, monkeypatch):
+    """flag > LONGHAND_DATA_DIR env > ~/.longhand — the single resolution rule."""
+    from longhand.storage.store import DEFAULT_DATA_DIR, resolve_data_dir
+
+    monkeypatch.delenv("LONGHAND_DATA_DIR", raising=False)
+    assert resolve_data_dir() == DEFAULT_DATA_DIR
+    assert resolve_data_dir(tmp_path / "flag") == tmp_path / "flag"
+
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "env"))
+    assert resolve_data_dir() == tmp_path / "env"
+    assert resolve_data_dir(tmp_path / "flag") == tmp_path / "flag"  # flag still wins
+
+
+def test_longhand_store_honors_data_dir_env(tmp_path, monkeypatch):
+    """Env inheritance is what carries a relocated store into hooks, spawned
+    workers, and the MCP server without any of them taking a flag."""
+    from longhand.storage import LonghandStore
+
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "env-store"))
+    store = LonghandStore()
+    assert store.data_dir == tmp_path / "env-store"
+    assert (tmp_path / "env-store" / "longhand.db").exists()
+
+
 def test_ingest_and_query_roundtrip(sample_session_file, temp_store):
     parser = JSONLParser(sample_session_file)
     events = list(parser.parse_events())

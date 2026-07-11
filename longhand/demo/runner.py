@@ -77,7 +77,7 @@ def run_demo(*, keep: bool = False) -> Path | None:
 
     Args:
         keep: if True, leave the temp dir in place (printed to stdout) so the
-            user can explore further with `LONGHAND_DIR=<path> longhand ...`.
+            user can explore further with `LONGHAND_DATA_DIR=<path> longhand ...`.
             If False (default), clean up at the end.
 
     Returns:
@@ -172,7 +172,9 @@ def run_demo(*, keep: bool = False) -> Path | None:
     # 6. Cleanup
     if keep:
         console.print(f"[yellow]--keep[/yellow]: corpus preserved at [cyan]{demo_root}[/cyan]")
-        console.print(f"  Explore with: [bold]LONGHAND_DIR={store_dir} longhand sessions[/bold]")
+        console.print(
+            f"  Explore with: [bold]LONGHAND_DATA_DIR={store_dir} longhand sessions[/bold]"
+        )
         return demo_root
     else:
         shutil.rmtree(demo_root, ignore_errors=True)

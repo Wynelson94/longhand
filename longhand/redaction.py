@@ -184,9 +184,10 @@ def redact_event(event: Event) -> int:
 
 def redaction_enabled() -> bool:
     """Read redact.enabled from ~/.longhand/config.json. Default: off."""
-    from pathlib import Path
 
-    config_path = Path.home() / ".longhand" / "config.json"
+    from longhand.storage.store import resolve_data_dir
+
+    config_path = resolve_data_dir() / "config.json"
     try:
         if config_path.exists():
             user = json.loads(config_path.read_text())
