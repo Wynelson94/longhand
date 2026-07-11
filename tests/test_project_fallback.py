@@ -6,6 +6,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -369,3 +370,101 @@ def test_recall_does_not_spawn_when_vectors_populated(temp_store, monkeypatch):
     recall_pipeline.recall(temp_store, "background backfill problem")
 
     assert spawned == []
+
+
+# ─── lock-holder liveness ─────────────────────────────────────────────────────
+
+
+def test_lock_holder_alive_for_own_pid():
+    assert project_fallback._lock_holder_alive(os.getpid()) is True
+
+
+def test_lock_holder_dead_for_exited_child():
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert project_fallback._lock_holder_alive(child.pid) is False
+
+
+def test_lock_holder_invalid_pids_are_dead():
+    assert project_fallback._lock_holder_alive(0) is False
+    assert project_fallback._lock_holder_alive(-7) is False
+
+
+class _FakeKernel32:
+    """Just enough of kernel32 for the Windows liveness probe.
+
+    Mirrors the Win32 calling convention: OpenProcess returns a handle (0 on
+    failure); GetExitCodeProcess writes through the byref pointer and returns
+    nonzero on success.
+    """
+
+    def __init__(self, handle: int, exit_code: int | None = None, get_ok: bool = True):
+        self._handle = handle
+        self._exit_code = exit_code
+        self._get_ok = get_ok
+        self.open_calls: list[tuple[int, object, int]] = []
+        self.closed: list[int] = []
+
+    def OpenProcess(self, access, inherit, pid):  # noqa: N802 — Win32 API name
+        self.open_calls.append((access, inherit, pid))
+        return self._handle
+
+    def GetExitCodeProcess(self, handle, code_ref):  # noqa: N802 — Win32 API name
+        if not self._get_ok:
+            return 0
+        code_ref._obj.value = self._exit_code
+        return 1
+
+    def CloseHandle(self, handle):  # noqa: N802 — Win32 API name
+        self.closed.append(handle)
+        return 1
+
+
+def _patch_win32(monkeypatch, fake: _FakeKernel32) -> None:
+    import ctypes
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(kernel32=fake), raising=False)
+
+    # Prove liveness never routes through os.kill on Windows: there,
+    # os.kill(pid, 0) TERMINATES the target instead of probing it.
+    def _lethal(pid, sig):
+        raise AssertionError("os.kill reached on win32 — this kills the lock holder")
+
+    monkeypatch.setattr(os, "kill", _lethal)
+
+
+def test_win32_liveness_running_process_is_alive(monkeypatch):
+    fake = _FakeKernel32(handle=42, exit_code=259)  # STILL_ACTIVE
+    _patch_win32(monkeypatch, fake)
+    assert project_fallback._lock_holder_alive(1234) is True
+    assert fake.closed == [42]
+
+
+def test_win32_liveness_exited_process_is_dead(monkeypatch):
+    fake = _FakeKernel32(handle=42, exit_code=0)  # exited normally
+    _patch_win32(monkeypatch, fake)
+    assert project_fallback._lock_holder_alive(1234) is False
+    assert fake.closed == [42]  # handle released even for dead processes
+
+
+def test_win32_liveness_unopenable_pid_is_dead(monkeypatch):
+    fake = _FakeKernel32(handle=0)  # OpenProcess failed: gone or unqueryable
+    _patch_win32(monkeypatch, fake)
+    assert project_fallback._lock_holder_alive(99999) is False
+    assert fake.closed == []  # no handle was opened, none to close
+
+
+def test_win32_liveness_queries_with_limited_information_access(monkeypatch):
+    """The probe must request PROCESS_QUERY_LIMITED_INFORMATION (0x1000) —
+    broader access rights fail against processes the user doesn't own."""
+    fake = _FakeKernel32(handle=7, exit_code=259)
+    _patch_win32(monkeypatch, fake)
+
+    assert project_fallback._lock_holder_alive(4321) is True
+
+    assert len(fake.open_calls) == 1
+    access, inherit, pid = fake.open_calls[0]
+    assert access == 0x1000
+    assert not inherit
+    assert pid == 4321

@@ -41,10 +41,41 @@ def _logs_dir(store: LonghandStore) -> Path:
     return store.data_dir / "logs"
 
 
+# Win32 constants for the liveness probe (values from the Windows SDK).
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+
+
+def _win32_pid_alive(pid: int) -> bool:
+    """Liveness probe for Windows, where the POSIX signal-0 idiom is lethal.
+
+    On Windows, os.kill(pid, 0) does not probe: CPython maps every non-CTRL
+    signal value to TerminateProcess, so the usual "signal 0 existence check"
+    kills the lock holder. Query the process handle instead.
+    """
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # PID gone, or a process this user cannot query — treat as dead,
+        # matching the POSIX branch's PermissionError handling. The lock
+        # holder always runs as the same user, so the distinction is moot.
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        return bool(ok) and exit_code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _lock_holder_alive(pid: int) -> bool:
     """Return True if a process with `pid` is still alive on this system."""
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _win32_pid_alive(pid)
     try:
         # Signal 0 just checks existence without delivering a signal.
         os.kill(pid, 0)
