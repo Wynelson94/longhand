@@ -76,7 +76,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 339 real Claude Code sessions across 35 inferred projects. 524 unit tests passing.*
+> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 387 real Claude Code sessions across 35 inferred projects. 524 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -106,7 +106,7 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Local. Complete. Yours.**
 
-> **Storage footprint:** ~2GB for a heavy power user (280+ sessions, 145k events, months of daily Opus usage across 14 repos). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
+> **Storage footprint:** ~4.5GB for a heavy power user (385+ sessions, 180k+ events, months of daily Opus usage across 35 inferred projects). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
 
 ---
 
@@ -456,21 +456,23 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 
 ## Stats
 
-Tested end-to-end on a real Claude Code history:
-- 246 unique sessions
-- 125,745 events
-- 40,937 tool calls
-- 8,333 file edits
+Corpus measured 2026-07-24 against the author's live store on v0.13.0:
+- 387 unique sessions
+- 181,705 events
+- 58,338 tool calls
+- 13,743 file edits
 - 224 thinking blocks
-- 54 projects inferred automatically
-- 905 problem→fix episodes extracted (303 resolved)
-- 4,090 conversation segments (design, story, debugging, discussion, planning)
-- 1,561 git operations extracted (90 commits linked)
-- 77,711 vectors indexed
+- 35 projects inferred automatically
+- 1,033 problem→fix episodes extracted (385 resolved)
+- 3,789 conversation segments (design, story, debugging, discussion, planning)
+- 2,326 git operations extracted (106 commits linked)
+- 128,021 vectors indexed
+- Storage footprint: 4.5 GB total (3.5 GB SQLite + 970 MB ChromaDB) across 387 sessions — ~12 MB per session
+
+Latency, benchmarked on the earlier 246-session corpus (M-class Mac) and not re-measured since:
 - Vector search: ~56ms median (p90 ~62ms)
 - SQL queries (`get_events`): ~2ms median (p90 ~13ms)
 - Full recall pipeline: ~1.4s median, warm (~7 vector queries + artifact load + narrative)
-- Storage footprint: 2.0 GB total (1.4 GB SQLite + 618 MB ChromaDB) across 246 sessions — ~8 MB per session
 
 ---
 
@@ -499,7 +501,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-316 unit tests passing. All 19 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+524 unit tests passing. All 13 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 
