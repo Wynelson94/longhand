@@ -43,22 +43,15 @@ jobs:
           pip install -e ".[dev]"
       - name: Run pytest (with coverage gate)
         id: pytest
-        # 3.14 runs but is non-blocking: onnxruntime's cp314 wheel (via chromadb)
-        # intermittently raises an illegal-instruction SIGILL on GitHub's
-        # heterogeneous runner CPUs. The CPython code is fine (3.14 passes locally
-        # and on most runners); only the native embedding lib is unstable. Keep
-        # 3.10–3.13 gated; surface 3.14 without letting a native crash block PRs.
-        # The Windows leg is likewise non-blocking while it gathers evidence.
-        continue-on-error: ${{ matrix.python-version == '3.14' || matrix.os == 'windows-latest' }}
+        # 3.14 became blocking on 2026-07-24 (issue #40). It was non-blocking
+        # because onnxruntime's cp314 wheel (via chromadb) raised an
+        # illegal-instruction SIGILL on GitHub's heterogeneous runner CPUs.
+        # onnxruntime 1.27.0 ships cp314 wheels including
+        # manylinux_2_28_x86_64 — the runner target — and the leg has been
+        # green on every run since v0.13.0. 3.10–3.14 are all gated now.
+        # The Windows leg stays non-blocking while it gathers evidence.
+        continue-on-error: ${{ matrix.os == 'windows-latest' }}
         run: pytest -q --cov=longhand --cov-report=term-missing --cov-fail-under=60
-      - name: Surface non-blocking 3.14 failure
-        # continue-on-error hides a red 3.14 job behind a green check; make the
-        # failure loud (annotation + step summary) without blocking the merge.
-        # Tracking: https://github.com/Wynelson94/longhand/issues/40
-        if: matrix.python-version == '3.14' && steps.pytest.outcome == 'failure'
-        run: |
-          echo "::warning title=Python 3.14 tests failed (non-blocking)::pytest failed on 3.14. The job is continue-on-error (onnxruntime cp314 SIGILL, issue #40), so this does NOT block the merge — but look before releasing."
-          echo "### :warning: Python 3.14 tests FAILED (non-blocking — issue #40)" >> "$GITHUB_STEP_SUMMARY"
       - name: Surface non-blocking Windows failure
         # Same loud-warning pattern as 3.14: never block the merge, never let
         # a red Windows run hide behind a green check either.
