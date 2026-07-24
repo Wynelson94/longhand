@@ -89,7 +89,7 @@ https://github.com/hesreallyhim/awesome-claude-code/issues/new?template=recommen
 
 **Description (1-3 sentences, no emojis, descriptive not promotional):**
 
-> Longhand indexes Claude Code's session JSONL files into a local SQLite + ChromaDB database, giving you semantic search, deterministic file replay, and fuzzy recall across your entire history without any API calls. It installs a SessionEnd hook so new sessions auto-ingest, and exposes 17 MCP tools so Claude itself can query your past work during live sessions. Data never leaves the machine.
+> Longhand indexes Claude Code's session JSONL files into a local SQLite + ChromaDB database, giving you semantic search, deterministic file replay, and fuzzy recall across your entire history without any API calls. It installs a SessionEnd hook so new sessions auto-ingest, and exposes 13 MCP tools so Claude itself can query your past work during live sessions. Data never leaves the machine.
 
 **Recommendation checklist** — check all five required boxes:
 - [x] I have verified this resource is unique on the list
