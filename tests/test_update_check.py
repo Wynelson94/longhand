@@ -117,7 +117,7 @@ def test_refresh_fresh_cache_skips_network(enabled, monkeypatch):
 def test_refresh_expired_cache_fetches_and_writes(enabled, monkeypatch):
     _seed_cache(enabled, "0.11.9", age_seconds=update_check.CACHE_TTL_SECONDS + 60)
     body = io.StringIO(json.dumps({"info": {"version": "0.12.5"}}))
-    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout: body)
+    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout, context=None: body)
     assert update_check.refresh() == "0.12.5"
     cached = update_check.read_cache()
     assert cached is not None and cached["latest"] == "0.12.5"
@@ -226,6 +226,78 @@ def test_doctor_status_update_available(enabled, monkeypatch):
 def test_doctor_status_offline_without_cache(enabled, monkeypatch):
     monkeypatch.setattr(update_check, "refresh", lambda *a, **k: None)
     assert "could not reach" in update_check.doctor_status()
+
+
+# ─── failure class is reported, not guessed (Promise 5) ─────────────────────
+#
+# On a python.org macOS install, urllib verifies against OpenSSL's trust store
+# rather than the system keychain, so pypi.org fails with
+# CERTIFICATE_VERIFY_FAILED while `curl` to the same URL succeeds. Reporting
+# that as "offline?" sends the user to debug a network that is fine. Longhand
+# ran with this misdiagnosis for weeks and it was logged as "unexplained".
+
+
+def test_refresh_records_the_failure_class(enabled, monkeypatch):
+    import ssl
+
+    def _boom(*a, **k):
+        raise ssl.SSLCertVerificationError("certificate verify failed")
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", _boom)
+
+    assert update_check.refresh(enabled, force=True) is None
+    assert update_check.last_failure() == "tls-trust"
+
+
+def test_refresh_distinguishes_a_real_network_failure(enabled, monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("Network is unreachable")
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", _boom)
+
+    assert update_check.refresh(enabled, force=True) is None
+    assert update_check.last_failure() == "unreachable"
+
+
+def test_doctor_status_names_the_trust_store_problem(enabled, monkeypatch):
+    import ssl
+
+    def _boom(*a, **k):
+        raise ssl.SSLCertVerificationError("certificate verify failed")
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", _boom)
+
+    line = update_check.doctor_status(enabled)
+    assert "offline" not in line.lower(), "a TLS trust failure is not being offline"
+    assert "certificate" in line.lower()
+    # The remedy must be actionable and specific to the real cause.
+    assert "Install Certificates" in line or "certifi" in line
+
+
+def test_refresh_succeeds_through_a_certifi_bundle(enabled, monkeypatch):
+    """The fix, not just the message: verify against certifi when it is there."""
+    pytest.importorskip("certifi")
+    seen: dict = {}
+
+    class _Resp:
+        def read(self):
+            return b'{"info": {"version": "9.9.9"}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake(url, timeout=None, context=None):
+        seen["context"] = context
+        return _Resp()
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", _fake)
+    monkeypatch.setattr(update_check.json, "load", lambda r: {"info": {"version": "9.9.9"}})
+
+    assert update_check.refresh(enabled, force=True) == "9.9.9"
+    assert seen["context"] is not None, "urlopen was called without an explicit SSL context"
 
 
 def test_doctor_status_offline_falls_back_to_stale_cache(enabled, monkeypatch):

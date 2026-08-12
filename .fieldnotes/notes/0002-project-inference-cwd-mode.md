@@ -5,8 +5,8 @@ references:
 - advisory: false
   lines: null
   path: longhand/parser.py
-  pinned_at: '2026-07-11T19:29:10.325279Z'
-  sha: c4e50bbda7b0b0a3c6ed239ba30888a54235aaf5102389c4b15d52d6422574f5
+  pinned_at: '2026-08-12T18:30:57.277614Z'
+  sha: 24868412a3d739fa85f504ed1d3611a3cb51cea2d9b53f568fe2ba804404b318
   symbol: null
 session_id: null
 superseded_by: '0006'
@@ -22,6 +22,8 @@ validations:
 - at: '2026-07-10T18:16:41.805585Z'
   by: unknown
 - at: '2026-07-10T20:55:48.497843Z'
+  by: unknown
+- at: '2026-08-12T18:31:12.049473Z'
   by: unknown
 written_at: '2026-04-26T05:28:36.808901Z'
 written_by: claude-opus-4-7
