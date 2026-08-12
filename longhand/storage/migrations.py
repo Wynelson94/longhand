@@ -3,6 +3,33 @@ Schema migrations for Longhand.
 
 Version-aware SQL evolution. Each migration is a SQL string keyed by version.
 Migrations are applied in order, once, and logged in the `schema_version` table.
+
+Migration authoring policy (1.0, Promise 2 — forward data compat)
+-----------------------------------------------------------------
+Promise 2 says any DB written by 0.11+ opens on any 1.x at least as new as its
+last writer. These rules are what make that true; see COMPATIBILITY.md.
+
+1. **Automatic.** Migrations apply on store open. A user never runs a command
+   to make their existing database work with a newer Longhand.
+2. **One-time.** Applied once, recorded in `schema_version`, never re-run.
+3. **Never renumbered.** A published version number is frozen forever — its
+   content included. Fixing a shipped migration means adding a new one, not
+   editing history: renumbering silently re-applies or silently skips,
+   depending on which side of the number a given user sits.
+4. **Bounded work on open.** Anything beyond O(1) DDL — a data rewrite that
+   walks every row — must not run inline at open. Ship it chunked with
+   progress, or behind an opt-in `db migrate-*` command. Store open is on the
+   hook path; an unbounded migration there blocks a user's prompt.
+5. **Never destructive without opt-in.** No migration drops a column, deletes
+   rows, or discards data a previous version wrote. Additive only; if data
+   must be reshaped, write the new shape alongside and leave the old.
+6. **Every migration ships a prior-schema fixture test** — a real dump of the
+   schema as it existed *before* the migration, committed under
+   `tests/fixtures/db/`, loaded and migrated in a test. Hand-written schemas
+   drift from reality and prove nothing.
+
+M1-M8 predate this policy and are grandfathered: they are already published,
+so rule 3 freezes them as-is. The policy binds M9 onward.
 """
 
 from __future__ import annotations

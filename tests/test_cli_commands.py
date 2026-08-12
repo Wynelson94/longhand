@@ -570,6 +570,97 @@ def test_hook_errors_status_counts_recent_and_ignores_old(tmp_path: Path):
     assert "hook-errors-*.log" in status
 
 
+# ─── doctor hook-error remedy is class-aware (Promise 5) ─────────────────────
+#
+# reconcile enumerates from DISK. A transcript that never landed is invisible
+# to it forever, so "run reconcile --fix" is a no-op for that class. Over the
+# v0.13 bake (2026-07-11..08-12) 21 of 23 real hook errors were exactly that
+# class — the row recommended a no-op for 91% of what it reported.
+
+
+def _write_hook_log(store, *lines: str) -> None:
+    from datetime import datetime, timezone
+
+    logs = store.data_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    today = datetime.now(timezone.utc).date()
+    (logs / f"hook-errors-{today.isoformat()}.log").write_text("".join(f"{ln}\n" for ln in lines))
+
+
+def test_hook_errors_unhealable_class_does_not_recommend_reconcile(tmp_path: Path):
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        "2026-08-11T17:10:51+00:00 ingest-session missing-transcript: /tmp/never-landed.jsonl",
+        "2026-08-11T21:51:19+00:00 ingest-session missing-transcript: /tmp/also-gone.jsonl",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "2 in the last 7 days" in status
+    assert "missing-transcript" in status
+    assert "nothing to heal" in status
+    assert "reconcile" not in status  # the no-op recommendation is gone
+
+
+def test_hook_errors_healable_class_keeps_reconcile_advice(tmp_path: Path):
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        "2026-07-25T00:07:46+00:00 ingest-session ingest-failed: a.jsonl: RuntimeError: boom",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "1 in the last 7 days" in status
+    assert "reconcile" in status  # genuinely healable — keep the advice
+
+
+def test_hook_errors_mixed_classes_split_the_remedy(tmp_path: Path):
+    """The live shape: a healable minority alongside an unhealable majority."""
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        "2026-08-11T17:10:51+00:00 ingest-session missing-transcript: /tmp/gone.jsonl",
+        "2026-08-11T17:11:51+00:00 ingest-session missing-transcript: /tmp/gone2.jsonl",
+        "2026-07-25T00:07:46+00:00 ingest-session ingest-failed: a.jsonl: RuntimeError: boom",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "3 in the last 7 days" in status
+    assert "1 ingest-failed" in status
+    assert "2 missing-transcript" in status
+    assert "reconcile" in status  # scoped to the 1 that it can actually fix
+
+
+def test_hook_errors_unknown_class_never_claims_healability(tmp_path: Path):
+    """Unparseable or new class tokens count, but must not inherit the advice."""
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        "2026-08-11T17:10:51+00:00 ingest-session store-open-failed: OSError: disk gone",
+        "a malformed line with no class token at all",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "2 in the last 7 days" in status
+    assert "reconcile" not in status
+
+
 # ─── doctor transcript-format drift ──────────────────────────────────────────
 
 

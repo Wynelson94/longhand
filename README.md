@@ -6,7 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-524%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-530%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -76,7 +76,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 387 real Claude Code sessions across 35 inferred projects. 524 unit tests passing.*
+> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 530 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -106,13 +106,31 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Local. Complete. Yours.**
 
-> **Storage footprint:** ~4.5GB for a heavy power user (385+ sessions, 180k+ events, months of daily Opus usage across 35 inferred projects). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
+> **Storage footprint:** ~5GB for a heavy power user (430+ sessions, 195k+ events, months of daily Opus usage across 37 inferred projects). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
 
 ---
 
-## Python version note
+## Platform support
 
-Python 3.10 – 3.13 are fully supported. **On Python 3.14**, longhand pins `chromadb<1.0` automatically because chromadb's newer Rust bindings segfault on 3.14 (see [#4](https://github.com/Wynelson94/longhand/issues/4)). Once chromadb ships a 3.14-compatible 1.x wheel, the constraint will relax.
+**Python 3.10 – 3.14 are all fully supported and gated in CI** — every release must pass the full suite on all five before it can merge.
+
+Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
+
+**Windows: CI-tested, best-effort.** A `windows-latest × py3.12` leg runs on every PR and has gone green on every run since v0.13.0, but it is non-blocking and covers one Python version on GitHub's runners. That is honest evidence, not a support tier — Linux and macOS are the tested platforms. Windows bugs are welcome as issues; they just aren't release-blocking.
+
+---
+
+## Compatibility
+
+Longhand 1.0 makes five promises, each backed by an enforcement artifact in the repo. The full text is in **[COMPATIBILITY.md](COMPATIBILITY.md)**; the short version:
+
+1. **Stable surface** — CLI and MCP frozen through 1.x. Removals only at a major version, and only after warning for one full minor.
+2. **Forward data compat** — a database written by 0.11+ opens on any later 1.x. Migrations are automatic, one-time, never renumbered. Older code refuses a newer database loudly rather than operating blind.
+3. **Hook guarantees** — hooks never raise, never touch the network, never block your prompt.
+4. **Upstream drift is never silent** — unknown transcript entries are preserved, surfaced in `doctor`, and regression-gated.
+5. **Honest metrics** — counts reflect real signals, and `doctor` never recommends a remedy that cannot work.
+
+**Deprecation policy:** anything slated for removal warns for at least one full minor release first, and the warning names its replacement. Retired MCP tool names are the one thing that never goes away — they leave the tool listing but keep answering forever with a migration note, because those names live in users' own `CLAUDE.md` files.
 
 ---
 
@@ -262,8 +280,8 @@ longhand status --days 30 -p bsoi           # filtered digest
 longhand status <project-name>              # where did we leave off on a project (git-aware)
 longhand status --session <session-id>      # pick up where a session left off
 longhand history src/app/route.ts           # every edit ever to a file
-# (recap / continue / patterns still work through 0.x — they print a pointer
-#  to their status/recall replacements and are removed at v1.0)
+# (recap / continue / patterns / reanalyze were deprecated aliases through
+#  0.13 and were removed at 1.0 — use status, recall, and analyze --all)
 
 # Semantic search
 longhand search "race condition"
@@ -456,18 +474,18 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 
 ## Stats
 
-Corpus measured 2026-07-24 against the author's live store on v0.13.0:
-- 387 unique sessions
-- 181,705 events
-- 58,338 tool calls
-- 13,743 file edits
+Corpus measured 2026-08-12 against the author's live store on v0.13.0:
+- 433 unique sessions
+- 197,978 events
+- 64,364 tool calls
+- 15,202 file edits
 - 224 thinking blocks
-- 35 projects inferred automatically
-- 1,033 problem→fix episodes extracted (385 resolved)
-- 3,789 conversation segments (design, story, debugging, discussion, planning)
-- 2,326 git operations extracted (106 commits linked)
-- 128,021 vectors indexed
-- Storage footprint: 4.5 GB total (3.5 GB SQLite + 970 MB ChromaDB) across 387 sessions — ~12 MB per session
+- 37 projects inferred automatically
+- 1,119 problem→fix episodes extracted — 618 are low-confidence (fixless) and excluded from the rate, leaving 423 of 501 resolved (84%)
+- 4,286 conversation segments (design, story, debugging, discussion, planning)
+- 2,661 git operations extracted (107 commits linked)
+- 142,897 vectors indexed
+- Storage footprint: 5.0 GB total (3.9 GB SQLite + 1.0 GB ChromaDB) across 433 sessions — ~12 MB per session
 
 Latency, benchmarked on the earlier 246-session corpus (M-class Mac) and not re-measured since:
 - Vector search: ~56ms median (p90 ~62ms)
@@ -501,7 +519,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-524 unit tests passing. All 13 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+530 unit tests passing. All 13 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 

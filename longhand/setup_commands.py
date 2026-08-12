@@ -1089,16 +1089,45 @@ def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
     )
 
 
+# Hook-error classes that `reconcile` can actually heal. reconcile enumerates
+# from DISK (discover_sessions), so it can only re-ingest a transcript that is
+# still there: `ingest-failed` qualifies, and nothing else does. A
+# `missing-transcript` never landed and is invisible to the heal path forever;
+# `oversize-transcript` would hit the same cap on re-ingest; `store-open-failed`
+# blocks reconcile itself. Recommending reconcile for those is a no-op, which
+# is a Promise 5 (honest metrics) violation — over the v0.13 bake, 21 of 23
+# real hook errors were the unhealable class.
+_RECONCILE_HEALABLE = frozenset({"ingest-failed"})
+
+
+def _hook_error_class(line: str) -> str:
+    """Extract the class token from a breadcrumb line, or "unknown".
+
+    _log_hook_error writes ``<iso-ts> <command> <class>: <detail>`` — the
+    class token is already there, so the split needs no new plumbing.
+    """
+    parts = line.split()
+    if len(parts) < 3 or not parts[2].endswith(":"):
+        return "unknown"
+    return parts[2].removesuffix(":")
+
+
 def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
     """Rich-formatted count of hook-error breadcrumbs in the last `days` days.
 
     Complements _freshness_status: freshness says "something is missing";
     this row says why — every hook-mode ingest failure leaves one line in
     logs/hook-errors-YYYY-MM-DD.log (see _log_hook_error).
+
+    The remedy is split by class: only classes reconcile can genuinely heal
+    get the reconcile advice. Anything else says plainly that there is
+    nothing to heal, rather than recommending a command that cannot help.
     """
+    from collections import Counter
+
     logs = store.data_dir / "logs"
     window_start = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
-    count = 0
+    counts: Counter[str] = Counter()
     for f in logs.glob("hook-errors-*.log"):
         try:
             day = date.fromisoformat(f.stem.removeprefix("hook-errors-"))
@@ -1108,15 +1137,30 @@ def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
             continue
         try:
             with f.open() as fh:
-                count += sum(1 for line in fh if line.strip())
+                counts.update(_hook_error_class(line) for line in fh if line.strip())
         except OSError:
             continue
+    count = sum(counts.values())
     if count == 0:
         return f"[green]✓[/green] none in the last {days} days"
+
+    healable = sum(n for cls, n in counts.items() if cls in _RECONCILE_HEALABLE)
+    # Largest class first so the dominant failure mode leads the remedy.
+    breakdown = ", ".join(
+        f"{n} {cls}" for cls, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    if healable == count:
+        remedy = "[bold]longhand reconcile --fix[/bold] heals missed ingests"
+    elif healable:
+        remedy = (
+            f"[bold]longhand reconcile --fix[/bold] heals the {healable} ingest-failed; "
+            "the rest were never written — nothing to heal"
+        )
+    else:
+        remedy = "these were never written — nothing to heal"
     return (
-        f"[yellow]⚠[/yellow] {count} in the last {days} days — see "
-        f"[bold]{logs}/hook-errors-*.log[/bold]; "
-        "[bold]longhand reconcile --fix[/bold] heals missed ingests"
+        f"[yellow]⚠[/yellow] {count} in the last {days} days ({breakdown}) — see "
+        f"[bold]{logs}/hook-errors-*.log[/bold]; {remedy}"
     )
 
 
