@@ -31,7 +31,16 @@ pip install longhand
 longhand demo         # sandboxed; cleans up afterwards (pass --keep to explore)
 ```
 
-**Upgrading to 0.13.0?** Nothing breaks — this release opens the v1.0 deprecation window, so every old name keeps working while pointing at its replacement:
+**Upgrading to 1.0.0?** This is the release that closes the deprecation window 0.13 opened. Everything removed here has been warning since 0.13.0:
+
+- Four CLI aliases are gone: `patterns` → `recall "<topic>"`, `recap` → `status --days N`, `continue` → `status --session <prefix>`, `reanalyze` → `analyze --all`.
+- **The `reconcile` MCP tool now defaults to a dry run.** If you have an agent loop that relied on the implicit heal, pass `fix=true` explicitly. Dry runs tell you so in the payload.
+- Six retired MCP tools left the listing (19 → 13) but **still answer forever** with a migration note — retired names live in users' own `CLAUDE.md` files and must never hard-fail.
+- New: [COMPATIBILITY.md](COMPATIBILITY.md) states what 1.x guarantees and what it doesn't.
+
+Your database needs nothing. Migrations are automatic and a 0.11+ store opens on any later 1.x — that's Promise 2, and there's a real 0.11-schema fixture in the test suite proving it.
+
+**Upgrading to 0.13.0?** Nothing breaks — that release opened the v1.0 deprecation window, so every old name kept working while pointing at its replacement:
 
 - `status` is now the single resume command: bare `status` = recent digest (was `recap`), `status <project>` unchanged, `status --session <prefix>` = session tail (was `continue`). The old commands still run and print a pointer; they're removed at v1.0.
 - Six MCP tools folded into six survivors with identical parameters (`search_in_context` → `search` + `context_events`, `get_episode` → `find_episodes` + `episode_id`, etc. — full table in the CHANGELOG). The retired names still answer, prefixed with a migration note.
@@ -76,7 +85,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v0.13.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 541 unit tests passing.*
+> *Status: v1.0.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 541 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
