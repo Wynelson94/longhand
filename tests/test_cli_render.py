@@ -233,7 +233,6 @@ def test_help_hides_plumbing_commands(runner: CliRunner):
         "ingest-session",
         "ingest-live",
         "backfill-episodes",
-        "reanalyze",
         "mcp-server",
     ):
         assert hidden_cmd not in out, f"plumbing command leaked into --help: {hidden_cmd}"
@@ -246,13 +245,15 @@ def test_hidden_commands_still_callable(runner: CliRunner):
         assert result.exit_code == 0, f"{cmd} --help failed"
 
 
-def test_reanalyze_alias_warns_and_delegates(runner: CliRunner, tmp_path: Path, monkeypatch):
+def test_reanalyze_is_removed_at_1_0(runner: CliRunner, tmp_path: Path, monkeypatch):
+    """`reanalyze` was a deprecated alias through 0.13; `analyze --all` survives."""
     monkeypatch.setenv("HOME", str(tmp_path))
     result = runner.invoke(app, ["reanalyze", "--data-dir", str(tmp_path / "store")])
-    assert result.exit_code == 0
-    out = plain(result.stdout)
-    assert "deprecated" in out.lower()
-    assert "analyze --all" in out
+    assert result.exit_code == 2
+
+    analyze = runner.invoke(app, ["analyze", "--help"])
+    assert analyze.exit_code == 0
+    assert "--all" in plain(analyze.stdout)
 
 
 def test_stats_splits_low_confidence_noise(runner: CliRunner, tmp_path: Path, monkeypatch):
