@@ -85,7 +85,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.0.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 546 unit tests passing.*
+> *Status: v1.0.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 546 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 

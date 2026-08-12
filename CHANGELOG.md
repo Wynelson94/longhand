@@ -9,6 +9,39 @@ commits and tag annotations of those releases.
 
 ---
 
+## [1.0.1] — 2026-08-12
+
+Three `doctor` rows told you the wrong thing. Found by dogfooding 1.0.0 on a
+live corpus within the hour, all the same defect Promise 5 exists to prevent:
+a diagnostic recommending a remedy that cannot work for the case it reports.
+
+### Fixed
+
+- **The update check never worked on a python.org macOS install, and said
+  "offline?" instead of saying so.** `urllib` verifies against OpenSSL's own
+  trust store rather than the system keychain, so pypi.org failed with
+  `CERTIFICATE_VERIFY_FAILED` while `curl` to the same URL succeeded — which
+  is exactly why it looked like a network problem and sat "unexplained" since
+  0.13. Longhand now verifies against certifi's CA bundle when it is
+  importable, so the check works; and when it still fails, the row names the
+  real class (TLS trust vs unreachable vs bad response) and gives the matching
+  remedy — `Install Certificates.command` on macOS, or `pip install -U certifi`.
+  If you never saw an update notice on macOS, this is why.
+- **The transcript-drift row told everyone to `pip install -U longhand`,
+  including people already on the newest release**, for whom it is a
+  guaranteed no-op — an unrecognized entry type is not handled by *any*
+  version yet. It now suggests upgrading only when one actually exists, and
+  otherwise asks you to report the type. Still cache-only; it never touches
+  the network.
+- **`file-history-delta` is now dispositioned.** Claude Code added the type
+  upstream and the drift canary caught it on a live corpus (276 in 30 days)
+  the day 1.0.0 shipped — Promise 4 doing its job. It is checkpoint bookkeeping
+  with no content, and every edit it shadows is already stored as a `tool_call`
+  event with the real diff, so it joins the skip set rather than becoming
+  unknown-event bloat.
+
+---
+
 ## [1.0.0] — 2026-08-12
 
 **The promise release.** 1.0 is a commitment, not a version bump: five
