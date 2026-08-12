@@ -1084,8 +1084,32 @@ def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
     capped = "+" if len(rows) == 500 else ""
     return (
         f"[yellow]⚠[/yellow] {sum(counter.values())}{capped} unrecognized entries in the "
-        f"last {days} days ({top}) — the transcript format may have drifted; "
-        "try [bold]pip install -U longhand[/bold]"
+        f"last {days} days ({top}) — the transcript format has drifted; {_drift_remedy()}"
+    )
+
+
+def _drift_remedy() -> str:
+    """Recommend upgrading only when a newer release actually exists.
+
+    Telling someone already on the newest version to upgrade is a no-op, and
+    a no-op remedy is the same Promise 5 defect the hook-error row had: the
+    type genuinely isn't handled by any release yet, so the useful action is
+    to report it. Cache-only — this row must never touch the network.
+    """
+    from longhand import update_check
+    from longhand.version import __version__
+
+    try:
+        cached = update_check.read_cache()
+        latest = cached.get("latest") if cached else None
+        if latest and update_check.newer_available(__version__, latest):
+            return f"[bold]pip install -U longhand[/bold] ({latest} is available)"
+    except Exception:
+        pass  # never let a diagnostic row raise
+    return (
+        "you are on the newest longhand, so these types aren't handled by any "
+        "release yet — please report them at "
+        "[bold]https://github.com/Wynelson94/longhand/issues[/bold]"
     )
 
 

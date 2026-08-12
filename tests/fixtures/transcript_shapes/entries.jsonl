@@ -14,3 +14,4 @@
 {"type":"summary","summary":"Fixed the auth token refresh by adding a mutex around the cache","leafUuid":"shape-asst-1"}
 {"type":"pr-link","sessionId":"s-shapes","prNumber":42,"prUrl":"https://github.com/example/repo/pull/42","prRepository":"example/repo","timestamp":"2026-07-01T10:00:20.000Z"}
 {"type":"worktree-state","sessionId":"s-shapes","worktreeSession":{"originalCwd":"/tmp/shapes-project","worktreePath":"/tmp/shapes-project/.claude/worktrees/wt-1","worktreeName":"wt-1","worktreeBranch":"worktree-wt-1","originalBranch":"main","originalHeadCommit":"0000000000000000000000000000000000000000","sessionId":"s-shapes"}}
+{"type":"file-history-delta","messageId":"shape-fhd-1","snapshotMessageId":"shape-fhs-1","trackingPath":"/tmp/shapes-project/main.py","backup":{"backupFileName":null,"version":3,"backupTime":"2026-08-11T10:00:00.000Z","realParentDir":"/tmp/shapes-project"},"timestamp":"2026-08-11T10:00:00.000Z"}

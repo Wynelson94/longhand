@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import sys
 import tempfile
 import time
@@ -34,6 +35,39 @@ from longhand.version import __version__
 CACHE_TTL_SECONDS = 24 * 60 * 60
 PYPI_JSON_URL = "https://pypi.org/pypi/longhand/json"
 _TIMEOUT_SECONDS = 2.0
+
+# Why the last refresh failed, so doctor can report the cause instead of
+# guessing one. "offline?" was wrong for the dominant real-world case: on a
+# python.org macOS install, urllib verifies against OpenSSL's own trust store
+# rather than the system keychain, so pypi.org fails with
+# CERTIFICATE_VERIFY_FAILED while `curl` to the same URL succeeds. Sending
+# that user to debug their network is a Promise 5 violation.
+_last_failure: str | None = None
+
+
+def last_failure() -> str | None:
+    """Failure class of the most recent refresh: 'tls-trust', 'unreachable',
+    'bad-payload', or None if the last attempt succeeded or never ran."""
+    return _last_failure
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Verify against certifi's CA bundle when it is importable.
+
+    certifi is present transitively (chromadb pulls requests/httpx), but this
+    stays a soft import: if it ever goes away we fall back to the default
+    context and report the honest failure rather than breaking.
+
+    This exists because a python.org macOS install verifies against OpenSSL's
+    own trust store, not the system keychain — so pypi.org fails with
+    CERTIFICATE_VERIFY_FAILED while `curl` to the same URL succeeds.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 
 
 def is_disabled() -> bool:
@@ -110,15 +144,39 @@ def refresh(data_dir: str | Path | None = None, *, force: bool = False) -> str |
     cached = read_cache(data_dir)
     if not force and cached and time.time() - cached["checked_at"] < CACHE_TTL_SECONDS:
         return cached["latest"]
+    global _last_failure
     try:
-        with urllib.request.urlopen(PYPI_JSON_URL, timeout=_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(
+            PYPI_JSON_URL, timeout=_TIMEOUT_SECONDS, context=_ssl_context()
+        ) as resp:
             latest = json.load(resp)["info"]["version"]
         if not isinstance(latest, str):
+            _last_failure = "bad-payload"
             return None
-    except Exception:
+    except Exception as e:
+        _last_failure = _classify(e)
         return None
+    _last_failure = None
     _write_cache(data_dir, latest)
     return latest
+
+
+def _classify(exc: BaseException) -> str:
+    """Map a refresh exception to a failure class doctor can act on.
+
+    Checks the whole cause chain: urllib wraps the SSL error in a URLError,
+    so the certificate failure is one `.reason` deep.
+    """
+    seen: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in seen:
+        seen.append(cur)
+        if isinstance(cur, ssl.SSLError):
+            return "tls-trust"
+        cur = getattr(cur, "reason", None) or cur.__cause__ or cur.__context__
+    if "certificate" in str(exc).lower():
+        return "tls-trust"
+    return "unreachable"
 
 
 def _write_cache(data_dir: str | Path | None, latest: str) -> None:
@@ -162,18 +220,43 @@ def after_command(data_dir: str | Path | None = None) -> None:
         pass
 
 
+def _failure_line(why: str | None) -> str:
+    """Name the failure and give a remedy that matches it.
+
+    "offline?" is only honest when the network is actually the problem. A
+    trust-store failure has a completely different fix, and telling that user
+    to check their connection wastes their time.
+    """
+    if why == "tls-trust":
+        hint = (
+            "[yellow]⚠[/yellow] pypi.org TLS certificate verification failed — "
+            "your Python cannot verify HTTPS certificates"
+        )
+        if sys.platform == "darwin":
+            return (
+                f"{hint}; run [bold]Install Certificates.command[/bold] in your "
+                "Python.app folder, or [bold]pip install -U certifi[/bold]"
+            )
+        return f"{hint}; try [bold]pip install -U certifi[/bold]"
+    if why == "bad-payload":
+        return "[yellow]⚠[/yellow] pypi.org returned an unexpected response"
+    return "[yellow]⚠[/yellow] could not reach pypi.org (offline?)"
+
+
 def doctor_status(data_dir: str | Path | None = None) -> str:
     """Rich-markup status line for the doctor table. Refreshes (forced)."""
     if is_disabled():
         return "[dim]disabled (LONGHAND_NO_UPDATE_CHECK)[/dim]"
     latest = refresh(data_dir, force=True)
     if latest is None:
+        why = last_failure()
         cached = read_cache(data_dir)
         if cached is None:
-            return "[yellow]⚠[/yellow] could not reach pypi.org (offline?)"
+            return _failure_line(why)
         age_days = max(0.0, (time.time() - cached["checked_at"]) / 86400)
         latest = cached["latest"]
-        suffix = f" [dim](cached {age_days:.0f}d ago; pypi.org unreachable)[/dim]"
+        reason = "TLS certificate verification failed" if why == "tls-trust" else "unreachable"
+        suffix = f" [dim](cached {age_days:.0f}d ago; pypi.org {reason})[/dim]"
     else:
         suffix = ""
     if newer_available(__version__, latest):

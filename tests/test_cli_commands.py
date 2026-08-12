@@ -700,7 +700,46 @@ def test_transcript_format_status_yellow_names_the_drifting_type(tmp_path: Path)
     assert "yellow" in status
     assert "flux-capacitor" in status
     assert "ancient" not in status
-    assert "pip install -U longhand" in status
+
+
+def _seed_drift(store) -> None:
+    from longhand.timeutil import utcnow
+
+    with store.sqlite.connect() as conn:
+        conn.execute(
+            "INSERT INTO events (event_id, session_id, event_type, sequence,"
+            " timestamp, content, raw_json) VALUES ('unk-1', 's-drift', 'unknown', 1, ?, '', ?)",
+            (utcnow().isoformat(), json.dumps({"type": "flux-capacitor"})),
+        )
+        conn.commit()
+
+
+def test_transcript_format_only_suggests_upgrading_when_one_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Same Promise 5 rule as the hook-error row: don't recommend a no-op.
+
+    `pip install -U longhand` cannot help someone already on the newest
+    release — the type genuinely isn't handled by any version yet.
+    """
+    from longhand import update_check
+    from longhand.setup_commands import _transcript_format_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _seed_drift(store)
+
+    monkeypatch.setattr(update_check, "hint_from_cache", lambda *a, **k: None)
+    monkeypatch.setattr(update_check, "newer_available", lambda *a, **k: False)
+    on_latest = _transcript_format_status(store)
+    assert "pip install -U longhand" not in on_latest
+    assert "flux-capacitor" in on_latest
+    assert "report" in on_latest.lower() or "issue" in on_latest.lower()
+
+    monkeypatch.setattr(update_check, "newer_available", lambda *a, **k: True)
+    monkeypatch.setattr(update_check, "read_cache", lambda *a, **k: {"latest": "99.0.0"})
+    behind = _transcript_format_status(store)
+    assert "pip install -U longhand" in behind
 
 
 def test_transcript_format_status_ignores_dispositioned_types(tmp_path: Path):

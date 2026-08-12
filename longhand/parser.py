@@ -41,6 +41,14 @@ KNOWN_SKIP_ENTRY_TYPES = frozenset(
         "attachment",
         "ai-title",
         "agent-name",
+        # file-history-delta: checkpoint/undo bookkeeping behind Claude Code's
+        # file-history feature — {messageId, snapshotMessageId, trackingPath,
+        # backup: {backupFileName, version, backupTime, realParentDir}}. It
+        # carries no content, and the edit each one shadows is already stored
+        # as a tool_call event with the real diff, so parsing it would add
+        # rows and no recall. Triaged 2026-08-12, found by the doctor drift
+        # row on the live corpus (276 in 30 days) the day 1.0.0 shipped.
+        "file-history-delta",
     }
 )
 
