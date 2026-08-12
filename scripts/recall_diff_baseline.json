@@ -8,22 +8,22 @@
         "session_id": "d1801a3e-2744-42dd-b151-b683cca63276"
       },
       {
-        "distance": 1.5511,
-        "episode_id": "ep_2504d7db1ce61753",
-        "rank": 1,
-        "session_id": "d1801a3e-2744-42dd-b151-b683cca63276"
-      },
-      {
         "distance": 1.3554,
         "episode_id": "ep_38bc9e734d4ca3c5",
-        "rank": 2,
+        "rank": 1,
         "session_id": "8eea2770-97b6-45e2-90b6-7fe275bf6ac7"
       },
       {
         "distance": 1.4365,
         "episode_id": "ep_f7c2f2a919431889",
-        "rank": 3,
+        "rank": 2,
         "session_id": "8eea2770-97b6-45e2-90b6-7fe275bf6ac7"
+      },
+      {
+        "distance": 1.1403,
+        "episode_id": "ep_4b1f9d109afc9a6d",
+        "rank": 3,
+        "session_id": "503c2815-8c7f-46ca-acd9-fe62ae0ea4e9"
       },
       {
         "distance": 1.4846,
@@ -80,10 +80,10 @@
         "session_id": "e6a468ef-ce7f-419f-b1f1-3c07bf9f46e1"
       },
       {
-        "distance": 1.3121,
-        "episode_id": "ep_590554e6bca3e5ef",
+        "distance": 1.5528,
+        "episode_id": "ep_d9bb0e7c16e0253d",
         "rank": 1,
-        "session_id": "a353ccfe-136d-416b-968f-2b3af45ee427"
+        "session_id": "69f46fa2-ac70-42d0-a61d-54c89ee49fa3"
       },
       {
         "distance": 1.5532,
@@ -92,16 +92,16 @@
         "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
       },
       {
-        "distance": 1.4312,
-        "episode_id": "ep_e45f43c7ee62b83a",
+        "distance": 1.3121,
+        "episode_id": "ep_590554e6bca3e5ef",
         "rank": 3,
-        "session_id": "316fd0da-03de-4b75-8d28-c486d98d3376"
+        "session_id": "a353ccfe-136d-416b-968f-2b3af45ee427"
       },
       {
-        "distance": 1.5168,
-        "episode_id": "ep_9d5fed895a1a6dc5",
+        "distance": 1.4312,
+        "episode_id": "ep_e45f43c7ee62b83a",
         "rank": 4,
-        "session_id": "e5012482-e3ed-4fe3-898d-b5c2231f2a0e"
+        "session_id": "316fd0da-03de-4b75-8d28-c486d98d3376"
       }
     ],
     "narrative_session_prefixes": [
@@ -158,26 +158,28 @@
         "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       },
       {
-        "distance": 1.3856,
-        "episode_id": "ep_e21bf66150586bf8",
+        "distance": 1.4678,
+        "episode_id": "ep_bce71df1db740022",
         "rank": 2,
-        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
+        "session_id": "28303e12-96bb-4827-9b0d-83298d3a53bc"
       },
       {
-        "distance": 1.5261,
-        "episode_id": "ep_decea735a79b3e86",
+        "distance": 1.3931,
+        "episode_id": "ep_07eda27b0823082e",
         "rank": 3,
         "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
       },
       {
-        "distance": 1.5959,
-        "episode_id": "ep_f70c47245e676b50",
+        "distance": 1.5261,
+        "episode_id": "ep_decea735a79b3e86",
         "rank": 4,
-        "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
       }
     ],
     "narrative_session_prefixes": [
-      "58df5093"
+      "4aaf4f48",
+      "58df5093",
+      "eef364a9"
     ],
     "segments": [
       {
@@ -193,22 +195,22 @@
         "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
       },
       {
-        "distance": 1.1575,
+        "distance": 1.1183,
         "rank": 2,
+        "segment_id": "seg_dd71ac12495b2367",
+        "session_id": "28303e12-96bb-4827-9b0d-83298d3a53bc"
+      },
+      {
+        "distance": 1.1495,
+        "rank": 3,
+        "segment_id": "seg_951a75cd1287b90a",
+        "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
+      },
+      {
+        "distance": 1.1575,
+        "rank": 4,
         "segment_id": "seg_b1609151490a2785",
         "session_id": "eef364a9-265a-43e3-ad44-5a8c9e743e92"
-      },
-      {
-        "distance": 1.1755,
-        "rank": 3,
-        "segment_id": "seg_4d97fc404f707a31",
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
-      },
-      {
-        "distance": 1.1831,
-        "rank": 4,
-        "segment_id": "seg_ea183a988404f350",
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
       }
     ]
   },
@@ -299,22 +301,22 @@
         "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
       },
       {
+        "distance": 1.4247,
+        "episode_id": "ep_91cda70b75f155b3",
+        "rank": 2,
+        "session_id": "9fea8fa4-0c7c-438b-b66f-ae01e8a84ce1"
+      },
+      {
         "distance": 1.2303,
         "episode_id": "ep_50b4f4cd354cbf5b",
-        "rank": 2,
+        "rank": 3,
         "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
       },
       {
         "distance": 1.2306,
         "episode_id": "ep_b491149d828124e8",
-        "rank": 3,
-        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
-      },
-      {
-        "distance": 1.2871,
-        "episode_id": "ep_aade0a9bff3baf07",
         "rank": 4,
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
       }
     ],
     "narrative_session_prefixes": [
@@ -410,22 +412,22 @@
         "session_id": "a44b23e2-b590-4a98-a1a5-59eaae1446fa"
       },
       {
-        "distance": 1.4521,
-        "episode_id": "ep_2e6a7d90ffc3a02d",
-        "rank": 2,
-        "session_id": "bb5117ab-7c57-4f76-a77f-cb7102283527"
-      },
-      {
         "distance": 1.1401,
         "episode_id": "ep_50b4f4cd354cbf5b",
-        "rank": 3,
+        "rank": 2,
         "session_id": "e2e29540-590c-4e89-9d1e-f60b6899c368"
       },
       {
         "distance": 1.1339,
         "episode_id": "ep_04519196cc8a0991",
-        "rank": 4,
+        "rank": 3,
         "session_id": "419ca408-722b-4e19-849b-52bbebf67f2d"
+      },
+      {
+        "distance": 1.1323,
+        "episode_id": "ep_6390d04799973fe5",
+        "rank": 4,
+        "session_id": "0f975ac8-339a-44bf-8dba-bd13ffbcc2bd"
       }
     ],
     "narrative_session_prefixes": [
@@ -454,44 +456,57 @@
         "session_id": "f3ba67ab-5d8d-4e5a-ad47-1b3773ad59ac"
       },
       {
-        "distance": 1.0683,
+        "distance": 0.9822,
         "rank": 3,
-        "segment_id": "seg_4a88b3a2ab62bc74",
-        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
+        "segment_id": "seg_3c002b3f1ef8dd93",
+        "session_id": "e8085741-c991-48f0-a1c9-81cf8580dc70"
       },
       {
-        "distance": 1.0687,
+        "distance": 1.0683,
         "rank": 4,
-        "segment_id": "seg_89ebc2538fc34ca6",
-        "session_id": "7b4515c8-f335-4511-8a3b-972121852664"
+        "segment_id": "seg_4a88b3a2ab62bc74",
+        "session_id": "4aaf4f48-b84f-4b56-9fbe-106778db9564"
       }
     ]
   },
   "what did we ship in v0.6": {
     "episodes": [],
     "narrative_session_prefixes": [
-      "04f54a92",
-      "2901f511",
-      "fae52c08"
+      "27ae09fe",
+      "69f46fa2",
+      "9060e5df",
+      "eaafe447"
     ],
     "segments": [
       {
-        "distance": 1.2973,
+        "distance": 1.102,
         "rank": 0,
-        "segment_id": "seg_34df731c8cde9743",
-        "session_id": "2901f511-0a85-4b7a-870a-26be43417e57"
+        "segment_id": "seg_5c2eefce501990ae",
+        "session_id": "27ae09fe-aeb7-45bd-bc78-1135b2b48e38"
       },
       {
-        "distance": 1.3362,
+        "distance": 1.1195,
         "rank": 1,
-        "segment_id": "seg_f2289e0497902d98",
-        "session_id": "fae52c08-83df-466f-8f7d-a53c2deafd0b"
+        "segment_id": "seg_3fbf1a083ac623a7",
+        "session_id": "69f46fa2-ac70-42d0-a61d-54c89ee49fa3"
       },
       {
-        "distance": 1.3527,
+        "distance": 1.2483,
         "rank": 2,
-        "segment_id": "seg_523e337464282a62",
-        "session_id": "04f54a92-5047-4961-bbe2-95e381d15752"
+        "segment_id": "seg_f552b9ee424c7f1f",
+        "session_id": "eaafe447-7047-4348-ae6f-6c4c07cca506"
+      },
+      {
+        "distance": 1.2494,
+        "rank": 3,
+        "segment_id": "seg_e44c9c06791aa8c3",
+        "session_id": "9060e5df-038c-486d-8fce-93588ffa8912"
+      },
+      {
+        "distance": 1.2548,
+        "rank": 4,
+        "segment_id": "seg_a17a2cb4797e6089",
+        "session_id": "69f46fa2-ac70-42d0-a61d-54c89ee49fa3"
       }
     ]
   }
