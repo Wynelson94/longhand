@@ -62,6 +62,11 @@ include = ["longhand*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 filterwarnings = [
+    # A 1.0 gate: Longhand must emit zero deprecation warnings of its own.
+    # Anything we deprecate warns for a full minor and is then REMOVED, so a
+    # warning still firing from our own package at release time means a
+    # removal was missed. Third-party noise is triaged individually below.
+    "error::DeprecationWarning:longhand",
     # Third-party deprecation noise, triaged 2026-07-10 (audit P3). Both come
     # from chromadb's internals, not our code; re-check on chromadb upgrades.
     "ignore:asyncio.iscoroutinefunction:DeprecationWarning",
