@@ -61,14 +61,19 @@ def _tools():
     return {t.name: t for t in asyncio.run(mcp_server.list_tools())}
 
 
-def test_retired_tools_stay_listed_with_deprecated_prefix():
+def test_retired_tools_leave_the_listing_at_1_0():
     tools = _tools()
-    assert len(tools) == 19  # nothing leaves list_tools() until 1.0
-    for name, survivor in RETIRED.items():
-        assert tools[name].description.startswith("[DEPRECATED — use "), name
-        assert survivor in tools[name].description.splitlines()[0], name
-    for name in set(tools) - set(RETIRED):
+    assert len(tools) == 13  # the 6 retired names left list_tools() at 1.0
+    assert not (set(tools) & set(RETIRED))
+    for name in tools:
         assert not tools[name].description.startswith("[DEPRECATED"), name
+
+
+def test_retired_tools_still_answer_forever():
+    """Removed from the listing, never removed from _DISPATCH — stale user
+    CLAUDE.md files must never hard-fail."""
+    for name in RETIRED:
+        assert name in mcp_server._DISPATCH, name
 
 
 def test_retired_payloads_carry_migration_preamble(temp_store, sample_session_file):
@@ -165,21 +170,27 @@ def test_list_projects_absorbs_match(temp_store, sample_session_file):
     assert "reasons" in payload[0]  # the match_project shape
 
 
-def test_reconcile_implicit_fix_carries_deprecation_warning(temp_store, monkeypatch):
+def test_reconcile_defaults_to_dry_run_at_1_0(temp_store, monkeypatch):
+    """The 0.13 warning promised this flip; at 1.0 the implicit default is dry-run."""
     from types import SimpleNamespace
 
-    monkeypatch.setattr(
-        mcp_server,
-        "run_reconcile",
-        lambda store, fix: SimpleNamespace(to_dict=lambda: {"missing": 0, "ingested": 0}),
-    )
+    seen: list[bool] = []
+
+    def _fake(store, fix):
+        seen.append(fix)
+        return SimpleNamespace(to_dict=lambda: {"missing": 0, "ingested": 0})
+
+    monkeypatch.setattr(mcp_server, "run_reconcile", _fake)
 
     implicit = _payload(_call(mcp_server._DISPATCH["reconcile"], temp_store, {}))
-    assert "deprecation_warning" in implicit
-    assert "fix" in implicit["deprecation_warning"]
+    assert seen == [False]
+    assert implicit["hint"] == "pass fix=true to apply"
+    assert "deprecation_warning" not in implicit  # the window closed; no more nagging
 
+    seen.clear()
     explicit = _payload(_call(mcp_server._DISPATCH["reconcile"], temp_store, {"fix": True}))
-    assert "deprecation_warning" not in explicit
+    assert seen == [True]
+    assert "hint" not in explicit  # not a dry run, nothing to hint at
 
 
 # ─── auto-scope threshold + observability ────────────────────────────────────
@@ -236,12 +247,12 @@ def test_no_tool_declares_output_schema():
 
     Claude Code's MCP validator rejects any tool whose outputSchema.type is not
     "object", and our handlers return TextContent (not structuredContent), so we
-    strip outputSchema entirely. Guards issue #9 — 12 of 19 tools silently failed
-    to load when array/oneOf outputSchemas were declared.
+    strip outputSchema entirely. Guards issue #9 — 12 of the then-19 tools
+    silently failed to load when array/oneOf outputSchemas were declared.
     """
     tools = asyncio.run(mcp_server.list_tools())
     assert tools, "list_tools returned no tools"
-    assert len(tools) == 19
+    assert len(tools) == 13
     offenders = [t.name for t in tools if getattr(t, "outputSchema", None) is not None]
     assert not offenders, (
         f"tools must not declare outputSchema (Claude Code rejects them): {offenders}"
@@ -485,6 +496,10 @@ def test_tool_recall_project_status_exposes_staleness(
     assert payload["stale"] is True
     assert payload["stale_reason"]
     assert "reconcile" in payload["stale_reason"]
+    # The banner is MCP-only, so it must name the tool call — not the CLI.
+    # `fix=true` is now explicit because the implicit default is dry-run at 1.0.
+    assert "fix=true" in payload["stale_reason"]
+    assert "--fix" not in payload["stale_reason"]
     # Narrative should include the drift warning up front.
     assert "⚠" in payload["narrative"] or "reconcile" in payload["narrative"]
 
@@ -928,8 +943,8 @@ def test_tool_reconcile_fix_ingests_missing(sample_session_file, temp_store, tmp
     assert payload["lock_unavailable"] is False
 
 
-def test_tool_reconcile_default_fix_is_true(temp_store, monkeypatch):
-    """When `fix` is omitted, the MCP tool defaults to fix=True (CLI defaults to False)."""
+def test_tool_reconcile_default_fix_is_false(temp_store, monkeypatch):
+    """When `fix` is omitted, the MCP tool defaults to a dry run — matching the CLI."""
     from longhand.recall import reconcile as reconcile_mod
 
     captured: dict[str, bool] = {}
@@ -944,7 +959,7 @@ def test_tool_reconcile_default_fix_is_true(temp_store, monkeypatch):
     monkeypatch.setattr(mcp_server, "run_reconcile", fake_run)
 
     _call(mcp_server._tool_reconcile, temp_store, {})
-    assert captured["fix"] is True
+    assert captured["fix"] is False
 
 
 # ─── End-to-end dispatch ────────────────────────────────────────────────────

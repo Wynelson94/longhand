@@ -320,47 +320,24 @@ def test_status_json_digest(runner: CliRunner, sample_session_file: Path, tmp_pa
     assert any(s["session_id"] == sid for s in payload["sessions"])
 
 
-def test_recap_alias_delegates_with_deprecation_notice(
-    runner: CliRunner, sample_session_file: Path, tmp_path: Path
-):
-    data_dir = tmp_path / "lh"
-    sid = _seed_session(sample_session_file, data_dir)
+@pytest.mark.parametrize("removed", ["recap", "continue", "patterns", "reanalyze"])
+def test_deprecated_aliases_are_gone_at_1_0(runner: CliRunner, tmp_path: Path, removed: str):
+    """The 0.13 deprecation window closed — these four no longer exist.
 
-    result = runner.invoke(app, ["recap", "--days", "3650", "--data-dir", str(data_dir)])
+    Typer exits 2 ("No such command") rather than running anything. The
+    survivors are `status` (recap/continue), `recall` (patterns) and
+    `analyze --all` (reanalyze).
+    """
+    result = runner.invoke(app, [removed, "--data-dir", str(tmp_path / "lh")])
 
-    assert result.exit_code == 0, result.output
-    assert "deprecated" in result.stdout.lower()
-    assert sid[:8] in result.stdout  # the digest still renders
-
-
-def test_continue_alias_delegates_with_deprecation_notice(
-    runner: CliRunner, sample_session_file: Path, tmp_path: Path
-):
-    data_dir = tmp_path / "lh"
-    sid = _seed_session(sample_session_file, data_dir)
-
-    result = runner.invoke(app, ["continue", sid[:8], "--data-dir", str(data_dir)])
-
-    assert result.exit_code == 0, result.output
-    assert "deprecated" in result.stdout.lower()
-    assert "Last" in result.stdout  # the tail still renders
+    assert result.exit_code == 2, result.output
 
 
-def test_patterns_warns_deprecated_but_still_runs(runner: CliRunner, tmp_path: Path):
-    result = runner.invoke(app, ["patterns", "--data-dir", str(tmp_path / "lh")])
-
-    assert result.exit_code == 0, result.output
-    assert "deprecated" in result.stdout.lower()
-    assert "No episodes" in result.stdout  # the body still ran (deleted at 1.0)
-
-
-def test_deprecated_resume_commands_are_hidden():
-    hidden = {
-        (info.name or info.callback.__name__.replace("_", "-"))
-        for info in app.registered_commands
-        if info.hidden
+def test_removed_commands_are_not_registered():
+    names = {
+        (info.name or info.callback.__name__.replace("_", "-")) for info in app.registered_commands
     }
-    assert {"recap", "continue", "patterns"} <= hidden
+    assert not ({"recap", "continue", "patterns", "reanalyze"} & names)
 
 
 def test_hook_config_honors_data_dir_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

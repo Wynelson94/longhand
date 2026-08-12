@@ -717,7 +717,7 @@ def _detect_project_drift(
         plural = "session" if n == 1 else "sessions"
         stale_reason = (
             f"{n} {plural} on disk not yet indexed for this project — "
-            f"run `longhand reconcile --fix` to catch up"
+            f"call the `reconcile` tool with fix=true to catch up"
         )
 
     return {

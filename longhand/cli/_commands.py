@@ -78,13 +78,9 @@ _UPDATE_CHECK_EXCLUDED = {
     "__prompt-hook-run",
     "backfill-episodes",
     "context",
-    "continue",
     "ingest-live",
     "ingest-session",
     "mcp-server",
-    "patterns",
-    "reanalyze",
-    "recap",
 }
 
 
@@ -1153,14 +1149,6 @@ def reattribute(
             release_ingest_lock(store)
 
 
-def _deprecated(old: str, new: str) -> None:
-    """Print a deprecation warning for an aliased command.
-
-    Aliases that print this are removed in v1.0.
-    """
-    console.print(f"[yellow]`longhand {old}` is deprecated — use `longhand {new}`.[/yellow]")
-
-
 # -----------------------------------------------------------------------------
 # PROJECTS
 # -----------------------------------------------------------------------------
@@ -2040,135 +2028,6 @@ def _session_to_markdown(store, session_id: str) -> str:
 
 
 # -----------------------------------------------------------------------------
-# PATTERNS — recurring fix patterns across episodes
-# -----------------------------------------------------------------------------
-
-
-@app.command(hidden=True, rich_help_panel="Browse & insights")
-def patterns(
-    limit: int = typer.Option(10, "--limit", "-n", help="Top N pattern groups to show"),
-    min_count: int = typer.Option(2, "--min", help="Minimum episode count per pattern"),
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-):
-    """Deprecated — use `longhand recall "<topic>"`. Removed in v1.0.
-
-    Groups episodes by error category and shared keywords from problem descriptions.
-    """
-    _deprecated("patterns", 'recall "<topic>"')
-    import json as _json
-    import re as _re
-    from collections import defaultdict
-
-    store = _get_store(data_dir)
-
-    # Pull all resolved/partial episodes
-    episodes = store.sqlite.query_episodes(limit=10000)
-
-    if not episodes:
-        console.print("[yellow]No episodes found. Run `longhand analyze --all` first.[/yellow]")
-        return
-
-    # Group by (category-tag, normalized error keyword)
-    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
-
-    for ep in episodes:
-        problem = (ep.get("problem_description") or "")[:300].lower()
-
-        # Pull tags
-        tags: list[str] = []
-        if ep.get("tags_json"):
-            try:
-                tags = _json.loads(ep["tags_json"])
-            except Exception:
-                pass
-        category = tags[0] if tags else "unknown"
-
-        # Extract distinctive keywords from problem
-        words = _re.findall(r"[a-z][a-z0-9]{4,}", problem)
-        # Remove common words
-        common = {
-            "error",
-            "type",
-            "test",
-            "tests",
-            "module",
-            "import",
-            "imports",
-            "fail",
-            "failed",
-            "value",
-            "result",
-            "check",
-            "found",
-            "missing",
-            "expected",
-            "received",
-            "actual",
-            "passed",
-            "running",
-        }
-        meaningful = [w for w in words if w not in common]
-        # Most distinctive token (the longest non-common one)
-        keyword = sorted(meaningful, key=len, reverse=True)[0] if meaningful else ""
-
-        if not keyword:
-            keyword = "general"
-
-        groups[(category, keyword)].append(ep)
-
-    # Sort groups by count
-    ranked = sorted(
-        [(key, eps) for key, eps in groups.items() if len(eps) >= min_count],
-        key=lambda kv: len(kv[1]),
-        reverse=True,
-    )[:limit]
-
-    if not ranked:
-        console.print(f"[yellow]No patterns found with at least {min_count} occurrences.[/yellow]")
-        return
-
-    console.print(
-        Panel.fit(
-            f"[bold]Recurring fix patterns[/bold]\n"
-            f"[dim]Found {len(ranked)} pattern(s) across {len(episodes)} episode(s)[/dim]",
-            border_style="cyan",
-        )
-    )
-    console.print()
-
-    for (category, keyword), eps in ranked:
-        # Header
-        header = Text()
-        header.append(f"× {len(eps)}  ", style="bold cyan")
-        header.append(f"{category}", style="magenta")
-        if keyword and keyword != "general":
-            header.append(f" · {keyword}", style="yellow")
-        console.print(header)
-
-        # Show 3 example problems
-        seen_problems: set[str] = set()
-        shown = 0
-        for ep in eps:
-            problem = (ep.get("problem_description") or "")[:120].strip()
-            problem_key = problem.lower()[:60]
-            if problem_key in seen_problems or not problem:
-                continue
-            seen_problems.add(problem_key)
-            console.print(f"  • {problem}")
-            shown += 1
-            if shown >= 3:
-                break
-
-        # If any have a fix summary, show one example fix
-        for ep in eps:
-            if ep.get("fix_summary"):
-                console.print(f"  [dim]example fix:[/dim] {ep['fix_summary'][:160]}")
-                break
-
-        console.print()
-
-
-# -----------------------------------------------------------------------------
 # RECAP — what have I been working on recently
 # -----------------------------------------------------------------------------
 
@@ -2299,20 +2158,6 @@ def _recap_digest(
             console.print(f"  [dim]topics:[/dim] {', '.join(entry['topics'])}")
 
         console.print()
-
-
-@app.command(hidden=True, rich_help_panel="Recall")
-def recap(
-    days: int = typer.Option(7, "--days", "-d", help="How far back to look"),
-    limit: int = typer.Option(10, "--limit", "-n"),
-    project: str | None = typer.Option(
-        None, "--project", "-p", help="Filter by project id or name"
-    ),
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-):
-    """Deprecated alias for `longhand status`. Removed in v1.0."""
-    _deprecated("recap", "status --days N")
-    _recap_digest(_get_store(data_dir), days, limit, project)
 
 
 # -----------------------------------------------------------------------------
@@ -2504,17 +2349,6 @@ def _session_tail(store, session_id: str, n: int, json_out: bool = False) -> Non
                 border_style="yellow",
             )
         )
-
-
-@app.command("continue", hidden=True, rich_help_panel="Recall")
-def continue_cmd(
-    session_id: str = typer.Argument(..., help="Session ID prefix"),
-    n: int = typer.Option(10, "--events", "-n", help="How many recent events to show"),
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-):
-    """Deprecated alias for `longhand status --session`. Removed in v1.0."""
-    _deprecated("continue", "status --session <prefix>")
-    _session_tail(_get_store(data_dir), session_id, n)
 
 
 # -----------------------------------------------------------------------------
@@ -2792,18 +2626,6 @@ def doctor(
 ):
     """Diagnose Longhand installation and data."""
     _doctor(json_out=json_out)
-
-
-@app.command("reanalyze", hidden=True)
-def reanalyze(
-    data_dir: str | None = typer.Option(None, "--data-dir"),
-    limit: int = typer.Option(0, "--limit", help="Deprecated — ignored."),
-):
-    """Deprecated alias for `longhand analyze --all`. Removed in v1.0."""
-    _deprecated("reanalyze", "analyze --all")
-    if limit > 0:
-        console.print("[dim]--limit is deprecated and ignored; analyzing all sessions.[/dim]")
-    analyze(all_sessions=True, session=None, data_dir=data_dir)
 
 
 @app.command("backfill-episodes", hidden=True)

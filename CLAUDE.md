@@ -21,7 +21,7 @@ When a user asks about past work:
 - **Never paginate `get_session_timeline` in a loop** looking for something. Use `search` with `session_id` + `context_events` instead.
 - **Never use `search` without `session_id`** when you know which session to look in. Unscoped search returns noise from all sessions.
 - **Never skip `recall`** for "do you remember" questions. It was built for exactly this use case.
-- **Don't call the deprecated names** — `search_in_context`, `get_latest_events`, `get_project_timeline`, `get_session_commits`, `get_episode`, `match_project` still answer (with a migration preamble), but the surviving tools take the same parameters directly.
+- **Don't call the retired names** — `search_in_context`, `get_latest_events`, `get_project_timeline`, `get_session_commits`, `get_episode`, `match_project` left the tool listing at 1.0. They still answer forever (with a migration preamble) so older docs never hard-fail, but the surviving tools take the same parameters directly.
 
 ## Tool Pairing Patterns
 
@@ -51,4 +51,4 @@ When a user asks about past work:
 
 ## Deeper Tools (less common starting points)
 
-Beyond the decision tree above: `get_session_timeline` with `tail` (the last N events, replaces get_latest_events), `find_episodes` with `episode_id` (full detail: referenced events, diff, post-fix file state), `list_projects` with `match` (fuzzy candidates with scored reasons — "which project did you mean?"), `list_plans` (browse plan-file writes), `get_stats` (store health), and `reconcile` (re-ingest drift) — **pass `fix` explicitly**: `fix=true` heals now; the implicit default flips to dry-run at v1.0.
+Beyond the decision tree above: `get_session_timeline` with `tail` (the last N events, replaces get_latest_events), `find_episodes` with `episode_id` (full detail: referenced events, diff, post-fix file state), `list_projects` with `match` (fuzzy candidates with scored reasons — "which project did you mean?"), `list_plans` (browse plan-file writes), `get_stats` (store health), and `reconcile` (re-ingest drift) — **`reconcile` defaults to a dry run; pass `fix=true` to actually heal.**
