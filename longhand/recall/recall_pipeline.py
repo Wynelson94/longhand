@@ -291,7 +291,22 @@ def recall(
         if ep_distance is not None:
             episode_semantic_boost = max(0.0, (1.0 - ep_distance) * 20)
 
-        # Recency boost — more recent episodes rank higher for fuzzy time queries
+        # Recency boost — more recent episodes rank higher for fuzzy time queries.
+        #
+        # KNOWN LIMITATION (issue #82): this is nearly decorative. It is worth
+        # at most 0.5 against 10 per keyword hit below, so an eleven-month-old
+        # episode with one extra keyword match outranks today's work by 20x.
+        # It also saturates at one year — everything older ranks the same.
+        # Measured 2026-08-12: after the live corpus grew 387 -> 433 sessions,
+        # 4 of 8 recall_diff queries shifted and two sessions that PREDATED the
+        # baseline climbed into the top results. Confirmed as index growth, not
+        # a code change, by reproducing a byte-identical diff on the v0.13.0 tag.
+        #
+        # Deliberately not fixed yet: a ranking change validated on a corpus
+        # that barely exhibits the problem is a guess wearing a test. Revisit
+        # at ~600 and ~800 sessions per the issue. Raising this weight is
+        # probably the WRONG fix — "what did I do last year" needs old results
+        # to win. See the issue for the shape that is more likely right.
         recency_boost = 0.0
         ended_at = ep.get("ended_at")
         if ended_at:
