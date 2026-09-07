@@ -9,7 +9,7 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.1.0] — 2026-09-07
 
 Longhand now keeps one archive for Claude Code **and** Codex. This is the
 first release that captures a second client, and it holds that client to the
