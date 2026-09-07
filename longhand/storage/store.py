@@ -455,7 +455,9 @@ class LonghandStore:
             command = ""
             if e.tool_use_id:
                 paired_input = tool_inputs.get(e.tool_use_id, {})
-                command = paired_input.get("command", "")
+                command = paired_input.get("command", paired_input.get("cmd", ""))
+                if isinstance(command, list):
+                    command = " ".join(str(part) for part in command)
             signal = extract_git_signal(command, e.tool_output or "")
 
             op_id = (

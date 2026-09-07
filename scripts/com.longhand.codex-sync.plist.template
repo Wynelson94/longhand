@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Longhand: capture Codex sessions into the shared archive on a timer (macOS).
+
+  Fill the two placeholders and install as a user LaunchAgent — see
+  docs/codex.md, "Automatic capture with launchd (macOS)":
+
+    __PYTHON__  absolute path of the Python interpreter that has longhand installed
+    __HOME__    your home directory (the archive and log live under ~/.longhand)
+
+  If your archive is not at ~/.longhand, add LONGHAND_DATA_DIR to
+  EnvironmentVariables below — launchd does not read your shell profile.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.longhand.codex-sync</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PYTHON__</string>
+		<string>-m</string>
+		<string>longhand</string>
+		<string>codex-sync</string>
+		<string>--limit</string>
+		<string>8</string>
+		<string>--max-file-kb</string>
+		<string>16384</string>
+		<string>--max-events</string>
+		<string>20000</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.longhand/logs/codex-sync.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.longhand/logs/codex-sync.log</string>
+</dict>
+</plist>

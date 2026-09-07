@@ -32,6 +32,7 @@ from longhand.cli.helpers import (
     _resolve_prefix,
     console,
 )
+from longhand.codex import DEFAULT_MAX_EVENTS, DEFAULT_MAX_FILE_BYTES, DEFAULT_SESSION_LIMIT
 from longhand.parser import JSONLParser, discover_sessions
 from longhand.recall import recall as recall_pipeline
 from longhand.replay import ReplayEngine
@@ -300,6 +301,98 @@ def demo(
 # -----------------------------------------------------------------------------
 
 
+@app.command("codex-sync", rich_help_panel="Data")
+def codex_sync_cmd(
+    semantic: bool = typer.Option(
+        False,
+        "--semantic",
+        help="Run the full pipeline (embeddings, episodes, project inference) so recall and "
+        "search see these sessions; the default captures exact records only",
+    ),
+    limit: int = typer.Option(
+        DEFAULT_SESSION_LIMIT, "--limit", min=1, help="Maximum sessions imported per scan"
+    ),
+    max_file_kb: int = typer.Option(
+        DEFAULT_MAX_FILE_BYTES // 1024,
+        "--max-file-kb",
+        min=1,
+        help="Defer rollouts larger than this many KiB",
+    ),
+    max_events: int = typer.Option(
+        DEFAULT_MAX_EVENTS, "--max-events", min=1, help="Defer sessions with more events than this"
+    ),
+    include_subagents: bool = typer.Option(
+        False,
+        "--include-subagents",
+        help="Also capture threads Codex spawned for itself (e.g. its approval reviewer); "
+        "skipped by default because they re-quote the parent thread",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List rollouts and sizes without opening the archive or loading embeddings",
+    ),
+    codex_home: str | None = typer.Option(
+        None, "--codex-home", help="Codex home (defaults to CODEX_HOME or ~/.codex)"
+    ),
+    data_dir: str | None = typer.Option(None, "--data-dir", help="Shared Longhand archive"),
+    watch: bool = typer.Option(
+        False, "--watch", help="Keep importing changed Codex sessions until interrupted"
+    ),
+    interval: int = typer.Option(
+        60, "--interval", min=10, help="Seconds between scans with --watch"
+    ),
+):
+    """Capture Codex history into the same archive Claude uses.
+
+    Exact records only by default, with no vector model loaded. `reconcile
+    --fix` runs this capture too, so a scheduled reconciler keeps Codex
+    current on its own; run this directly for an immediate capture, or with
+    --watch for a 60-second loop.
+    """
+    import json
+    import time
+
+    from longhand.codex import (
+        CodexArchiveStore,
+        discover_codex_sessions,
+        is_subagent_rollout,
+        read_session_meta,
+        sync_codex,
+    )
+
+    if dry_run:
+        for path in discover_codex_sessions(codex_home):
+            size = path.stat().st_size
+            console.print(
+                json.dumps(
+                    {
+                        "path": str(path),
+                        "bytes": size,
+                        "within_size_limit": size <= max_file_kb * 1024,
+                        "subagent": is_subagent_rollout(read_session_meta(path)),
+                    }
+                )
+            )
+        return
+    store = _get_store(data_dir) if semantic else CodexArchiveStore(data_dir)
+    while True:
+        report = sync_codex(
+            store,
+            codex_home,
+            limit=limit,
+            max_file_bytes=max_file_kb * 1024,
+            max_events=max_events,
+            include_subagents=include_subagents,
+        )
+        console.print(json.dumps(report))
+        if not watch:
+            if report["errors"]:
+                raise typer.Exit(1)
+            return
+        time.sleep(interval)
+
+
 @app.command(rich_help_panel="Data")
 def ingest(
     path: str | None = typer.Argument(
@@ -481,26 +574,53 @@ def reconcile(
     store = _get_store(data_dir)
     report = run_reconcile(store, fix=fix)
 
-    if report.files_on_disk == 0:
+    if report.files_on_disk == 0 and report.codex_on_disk == 0:
         console.print("[yellow]No session files found on disk.[/yellow]")
-        console.print("Default location: ~/.claude/projects")
+        console.print("Default location: ~/.claude/projects (Codex: ~/.codex/sessions)")
         return
 
-    console.print(f"[bold]On disk:[/bold] {report.files_on_disk} JSONL files")
-    console.print(f"  [green]{report.fully_indexed}[/green] fully indexed")
-    console.print(
-        f"  [yellow]{len(report.partially_indexed)}[/yellow] partially indexed (ingest crashed mid-pipeline)"
-    )
-    console.print(f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL")
-    console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
-    if report.skipped_oversize:
+    if report.files_on_disk:
+        console.print(f"[bold]On disk:[/bold] {report.files_on_disk} JSONL files")
+        console.print(f"  [green]{report.fully_indexed}[/green] fully indexed")
         console.print(
-            f"  [dim]{len(report.skipped_oversize)} skipped — over the parser size cap "
-            "(not ingestable by any path)[/dim]"
+            f"  [yellow]{len(report.partially_indexed)}[/yellow] partially indexed (ingest crashed mid-pipeline)"
         )
+        console.print(
+            f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL"
+        )
+        console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
+        if report.skipped_oversize:
+            console.print(
+                f"  [dim]{len(report.skipped_oversize)} skipped — over the parser size cap "
+                "(not ingestable by any path)[/dim]"
+            )
+    else:
+        console.print("[dim]No Claude Code session files on disk.[/dim]")
 
+    if report.codex_on_disk:
+        current = (
+            report.codex_on_disk
+            - report.codex_pending
+            - report.codex_skipped_subagents
+            - report.codex_oversize
+        )
+        console.print(f"[bold]Codex rollouts:[/bold] {report.codex_on_disk} on disk")
+        console.print(f"  [green]{current}[/green] captured and current")
+        console.print(f"  [yellow]{report.codex_pending}[/yellow] new or changed since capture")
+        if report.codex_skipped_subagents:
+            console.print(
+                f"  [dim]{report.codex_skipped_subagents} subagent thread(s) skipped "
+                "(longhand codex-sync --include-subagents to capture them)[/dim]"
+            )
+        if report.codex_oversize:
+            console.print(
+                f"  [dim]{report.codex_oversize} over the capture size bound "
+                "(longhand codex-sync --max-file-kb to raise it)[/dim]"
+            )
+
+    fixable_claude = bool(report.missing or report.null_project or report.partially_indexed)
     if not fix:
-        if report.missing or report.null_project or report.partially_indexed:
+        if fixable_claude or report.codex_pending:
             console.print("\n[dim]Run with --fix to re-ingest.[/dim]")
         return
 
@@ -508,17 +628,23 @@ def reconcile(
         console.print("[yellow]Another ingest is running — aborting reconcile.[/yellow]")
         raise typer.Exit(1)
 
-    if not (report.missing or report.null_project or report.partially_indexed):
+    if not fixable_claude and not report.codex_pending:
         console.print("\n[green]Nothing to fix.[/green]")
         return
 
     n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
-    console.print(f"\n[cyan]Re-ingesting {n_fixable} file(s)...[/cyan]")
+    if n_fixable:
+        console.print(f"\n[cyan]Re-ingesting {n_fixable} file(s)...[/cyan]")
     for err in report.errors:
         console.print(f"  [red]✗[/red] {Path(err['path']).name}: {err['error']}")
     console.print(
         f"\n[bold]Re-ingested {report.ingested}[/bold] ([dim]{len(report.errors)} errors[/dim])"
     )
+    if report.codex_on_disk:
+        deferred = (
+            f" ([dim]{len(report.codex_deferred)} deferred[/dim])" if report.codex_deferred else ""
+        )
+        console.print(f"[bold]Captured {report.codex_ingested}[/bold] Codex rollout(s){deferred}")
 
 
 # -----------------------------------------------------------------------------
@@ -2542,6 +2668,19 @@ def mcp_serve_cmd():
 def mcp_server_cmd():
     """Run the MCP server (stdio). Used by Claude Desktop."""
     _run_mcp_server()
+
+
+@app.command("shared-mcp", rich_help_panel="Plumbing")
+def shared_mcp_cmd():
+    """Run the shared-archive MCP server (stdio): keyword search over the archive
+    both Claude and Codex write, with no vector model loaded.
+
+    Register it as `longhand-shared` in Claude Code and as `longhand` in Codex —
+    see docs/codex.md.
+    """
+    from longhand.lightweight_mcp import mcp
+
+    mcp.run()
 
 
 @app.command("ingest-session", hidden=True)

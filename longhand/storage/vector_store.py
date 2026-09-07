@@ -16,6 +16,11 @@ from typing import Any
 import chromadb
 from chromadb.config import Settings
 
+# The package-level name resolves on every supported chromadb (0.5.x ships it
+# in a single module, 0.6.x re-exports it from a package), but 0.6.x's
+# re-export is invisible to mypy — hence the targeted ignore.
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2  # type: ignore[attr-defined]
+
 from longhand.types import Event, EventType
 
 # Limit embedded text length to keep Chroma performant.
@@ -24,7 +29,8 @@ MAX_EMBED_CHARS = 2000
 
 # Per-upsert batch size for Chroma. Chroma tolerates larger batches but 500
 # is the stable sweet spot: enough to amortize ONNX call overhead, small
-# enough to avoid memory spikes on low-RAM systems.
+# enough to avoid memory spikes on low-RAM systems. All collections in a
+# VectorStore share one CPU embedding model (see VectorStore.__init__).
 CHROMA_BATCH_SIZE = 500
 
 
@@ -48,23 +54,31 @@ class VectorStore:
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
 
+        # Share one CPU model across collections; avoid CoreML compilation
+        # and loading a separate embedding model for every collection.
+        embedding = ONNXMiniLM_L6_V2(preferred_providers=["CPUExecutionProvider"])
+
         self.events_collection = self.client.get_or_create_collection(
             name="events",
+            embedding_function=embedding,
             metadata={"description": "All session events, embedded for semantic search"},
         )
 
         self.sessions_collection = self.client.get_or_create_collection(
             name="sessions",
+            embedding_function=embedding,
             metadata={"description": "One embedding per session for fuzzy recall (v0.2)"},
         )
 
         self.projects_collection = self.client.get_or_create_collection(
             name="projects",
+            embedding_function=embedding,
             metadata={"description": "One embedding per project for fuzzy project matching"},
         )
 
         self.segments_collection = self.client.get_or_create_collection(
             name="segments",
+            embedding_function=embedding,
             metadata={
                 "description": "One embedding per conversation segment for topic-level recall"
             },
@@ -72,6 +86,7 @@ class VectorStore:
 
         self.episodes_collection = self.client.get_or_create_collection(
             name="episodes",
+            embedding_function=embedding,
             metadata={
                 "description": "One embedding per problem→fix episode for intent-framed recall"
             },

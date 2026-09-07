@@ -9,6 +9,82 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+Longhand now keeps one archive for Claude Code **and** Codex. This is the
+first release that captures a second client, and it holds that client to the
+same rules as the first: exact records, stable IDs, nothing stored twice,
+drift never silent.
+
+### Added
+
+- **`longhand codex-sync`** captures Codex Desktop and Codex CLI threads (the
+  rollouts under `~/.codex/sessions`) into the same `~/.longhand` archive the
+  Claude Code hooks write, under the same ingest lock, with `codex:`-namespaced
+  session and tool IDs. Exact-record capture by default — every message,
+  reasoning summary, tool call, and output, verbatim and searchable, without
+  loading the embedding model; `--semantic` runs the full pipeline so `recall`
+  and semantic `search` see the sessions. Per run it imports up to 50 sessions
+  of up to 16 MiB and 20,000 events each; larger ones are reported as
+  `deferred`, never partially imported. `--dry-run` lists rollouts without
+  opening the archive; `--watch` polls every 60 seconds.
+- **`reconcile --fix` captures Codex too.** New or changed rollouts are picked
+  up alongside the Claude buckets, so an installed reconciler keeps both
+  clients current with no extra setup. The report and the `reconcile` MCP
+  tool gained `codex_*` fields.
+- **`longhand shared-mcp`** — a four-tool, read-only MCP server
+  (`list_sessions` with `source` and `project` filters, `search`,
+  `get_session_timeline`, `get_event_text`) over the SQLite archive: no
+  Chroma, no model. Keyword matching, not semantic. It is the server Codex
+  talks to, and the way Claude searches Codex history by phrase.
+  `python -m longhand.lightweight_mcp` runs the same server.
+- **Commits made from Codex show up in `find_commits` and `git-log`** on the
+  default capture path — including commands run inside Codex's `exec`
+  scripts, whose `cmd:` literals are decoded for git and error detection.
+- **A Codex shapes gate.** `tests/fixtures/codex_shapes/` holds every rollout
+  record shape seen in the wild (both Codex CLI generations), and
+  `tests/test_codex_shapes.py` fails the moment one is undispositioned. Unknown
+  shapes are preserved as `unknown` events with raw JSON intact, and `doctor`'s
+  "Transcript format" row names Codex drift by its nested kind
+  (`event_msg/<kind>`).
+- **`doctor` knows about Codex.** A "Codex capture" row — only on machines
+  that have Codex — shows rollouts captured vs. changed since. Archived Codex
+  sessions are split out of "Sessions needing analysis" with the remedy that
+  actually works for them: `codex-sync --semantic`. (`analyze --all` was the
+  old advice; it never embeds events, so it could not have made them
+  searchable — a Promise 5 defect caught before it shipped.)
+- `scripts/com.longhand.codex-sync.plist.template` — a macOS LaunchAgent for
+  60-second capture, for anyone who wants faster than the reconciler.
+
+### Changed
+
+- **What Codex capture stores.** Codex writes every message twice — a
+  canonical `response_item` and a UI `event_msg` mirror — plus token
+  accounting and turn bookkeeping. Only the canonical items are stored; the
+  mirrors and bookkeeping are skipped (the same rule `KNOWN_SKIP_ENTRY_TYPES`
+  applies to Claude transcripts), and reasoning without a readable summary is
+  skipped rather than stored as an empty row. On a real corpus this removed
+  six of every ten rows without losing a searchable character.
+- **Subagent threads are skipped by default.** Codex spawns threads for
+  itself (its "guardian" approval reviewer) that re-quote the parent
+  conversation, so capturing them returned every search hit twice.
+  `--include-subagents` captures them.
+- The `mcp` dependency floor is now `>=1.2.0`, the first release with FastMCP.
+
+### Fixed
+
+- **Embedding no longer takes the CoreML path on macOS.** Every Chroma
+  collection now shares one `ONNXMiniLM_L6_V2` pinned to the CPU execution
+  provider, instead of each collection loading its own default model. The
+  CoreML build is the `Failed to create MLModel … .mlmodelc` ingest failure
+  that `doctor` had been surfacing from `hook-errors-*.log`.
+- **`frame-link` is dispositioned.** Claude Code's new entry for a published
+  page — the Artifact URL plus the local `.html` it came from — is preserved
+  as a triaged unknown (recallable, so a promotion candidate beside `pr-link`)
+  instead of tripping the drift row on every `doctor` run.
+
+---
+
 ## [1.0.1] — 2026-08-12
 
 Three `doctor` rows told you the wrong thing. Found by dogfooding 1.0.0 on a

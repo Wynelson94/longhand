@@ -18,6 +18,10 @@ def _no_update_check(monkeypatch):
     # A developer's real LONGHAND_DATA_DIR must never leak into tests;
     # tests that exercise the env var set it explicitly.
     monkeypatch.delenv("LONGHAND_DATA_DIR", raising=False)
+    # Nor may a developer's real ~/.codex: reconcile and doctor discover Codex
+    # rollouts there. Tests that exercise Codex capture point CODEX_HOME at a
+    # tmp directory explicitly.
+    monkeypatch.setenv("CODEX_HOME", "/nonexistent/longhand-test-codex-home")
 
 
 def _line(entry: dict[str, Any]) -> str:

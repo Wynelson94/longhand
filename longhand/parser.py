@@ -13,12 +13,15 @@ from collections import Counter
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from longhand.extractors.errors import detect_error
 from longhand.extractors.git import extract_git_signal
 from longhand.redaction import redact_event, redaction_enabled
 from longhand.types import Event, EventType, FileOperation, Session
+
+if TYPE_CHECKING:
+    from longhand.codex import CodexAdapter
 
 # Hard limits — keep the parser bounded so a malicious or corrupted JSONL
 # can't crash or OOM the ingest pipeline.
@@ -63,7 +66,11 @@ KNOWN_SKIP_ENTRY_TYPES = frozenset(
 #   on the live corpus the day the row shipped).
 # - worktree-state: worktree orchestration snapshot; cwd/branch data already
 #   lives on events. Triaged 2026-07-11 (same harvest as pr-link).
-TRIAGED_UNKNOWN_ENTRY_TYPES = frozenset({"summary", "pr-link", "worktree-state"})
+# - frame-link: where a published page landed ({frameUrl: a claude.ai URL,
+#   path: the local .html, title}). Genuinely recallable ("where did that
+#   report go?") — a promotion candidate alongside pr-link — preserved until
+#   then. Triaged 2026-09-07 (doctor drift row on the live corpus, 30 in 30 days).
+TRIAGED_UNKNOWN_ENTRY_TYPES = frozenset({"summary", "pr-link", "worktree-state", "frame-link"})
 
 
 _MAX_UNIQUE_CWDS_SCANNED = 20
@@ -258,6 +265,9 @@ class JSONLParser:
         # the file sees the same setting (covers full, tail, and re-ingest
         # paths — they all construct events through this class).
         self._redact = redaction_enabled()
+        # Set on the first `session_meta` line: from then on the whole file is
+        # a Codex rollout and every entry routes through the adapter.
+        self._codex_adapter: CodexAdapter | None = None
 
     def parse_events(self) -> Iterator[Event]:
         """Yield Event objects from the session file, in file order.
@@ -268,6 +278,7 @@ class JSONLParser:
         """
         sequence = 0
         seen_ids: dict[str, int] = {}
+        self._codex_adapter = None
         with self.file_path.open("r", encoding="utf-8", errors="replace") as f:
             for _line_num, line in enumerate(f, start=1):
                 # Skip lines that exceed the hard line-length limit
@@ -388,6 +399,13 @@ class JSONLParser:
         searchable and timelineable.
         """
         entry_type = entry.get("type", "unknown")
+
+        if entry_type == "session_meta" and self._codex_adapter is None:
+            from longhand.codex import CodexAdapter
+
+            self._codex_adapter = CodexAdapter(entry.get("payload") or {})
+        if self._codex_adapter is not None:
+            return self._codex_adapter.convert(entry, base_sequence)
 
         # File history snapshots — create a minimal event
         if entry_type == "file-history-snapshot":

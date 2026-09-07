@@ -2,11 +2,13 @@
 
 # Longhand
 
+**Using Codex too?** [Share one memory archive between Claude Code and Codex](docs/codex.md).
+
 [![Longhand MCP server](https://glama.ai/mcp/servers/Wynelson94/longhand/badges/score.svg)](https://glama.ai/mcp/servers/Wynelson94/longhand)
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-546%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-580%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -85,7 +87,7 @@ longhand analyze --all           # fill in episodes + vectors whenever, safe to 
 
 Exact-text search, timelines, file history, and commit lookup all work after `--skip-analysis`. Semantic `recall` needs the `analyze --all` pass to complete. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.0.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 546 unit tests passing.*
+> *Status: v1.0.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 433 real Claude Code sessions across 37 inferred projects (measured 2026-08-12). 580 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -126,6 +128,8 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
 
 **Windows: CI-tested, best-effort.** A `windows-latest × py3.12` leg runs on every PR and has gone green on every run since v0.13.0, but it is non-blocking and covers one Python version on GitHub's runners. That is honest evidence, not a support tier — Linux and macOS are the tested platforms. Windows bugs are welcome as issues; they just aren't release-blocking.
+
+**Codex Desktop and Codex CLI** threads are captured into the same archive from 1.1.0 — see [Works with Codex](#works-with-codex).
 
 ---
 
@@ -433,6 +437,21 @@ Both are non-blocking and run in one to two seconds. You don't have to think abo
 
 ---
 
+## Works with Codex
+
+Use Codex Desktop or the Codex CLI too? Longhand captures those threads into the same archive, so a question asked in Claude Code can be answered from work done in Codex, and the other way round.
+
+```sh
+pip install -U longhand
+longhand codex-sync                                                  # capture every Codex thread on this machine
+claude mcp add --scope user longhand-shared -- longhand shared-mcp   # keyword search across both clients, from Claude
+codex mcp add longhand -- longhand shared-mcp                        # the same server from Codex (Desktop: config.toml, see the docs)
+```
+
+From then on `reconcile --fix` captures new Codex threads too, so the scheduled reconciler keeps both clients current. Codex sessions are stored exact-record-only — verbatim and searchable, no model loaded — until `longhand codex-sync --semantic` makes them recallable. Threads Codex spawns for itself are skipped, UI mirrors are never stored twice, and unknown record shapes surface in `doctor` like any other drift. Setup, bounds, and the macOS launchd template: **[docs/codex.md](docs/codex.md)**.
+
+---
+
 ## Architecture
 
 ```
@@ -528,7 +547,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-546 unit tests passing. All 13 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
+580 unit tests passing. All 13 MCP tools stress-tested. Full security audit: zero critical findings, zero high findings. `~/.longhand/` created with 0700 permissions, all SQL parameterized, all inputs bounded. Dependencies: chromadb, typer, rich, pydantic, mcp.
 
 ---
 
