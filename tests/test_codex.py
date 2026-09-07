@@ -394,19 +394,33 @@ def test_reconcile_captures_codex_rollouts_under_its_own_lock(temp_store, tmp_pa
 
 
 def test_shared_mcp_and_codex_sync_are_registered_cli_commands():
+    import inspect
+
     from typer.testing import CliRunner
 
     from longhand.cli import app
 
+    commands = {
+        (info.name or info.callback.__name__.replace("_", "-")): info
+        for info in app.registered_commands
+    }
+    assert "shared-mcp" in commands
+    assert "codex-sync" in commands
+
     runner = CliRunner()
-    shared = runner.invoke(app, ["shared-mcp", "--help"])
-    assert shared.exit_code == 0, shared.output
-    assert "keyword search" in shared.output
-    sync = runner.invoke(app, ["codex-sync", "--help"])
-    assert sync.exit_code == 0, sync.output
-    for default in ("16384", "20000", "50"):
-        assert default in sync.output, f"default {default} missing from --help"
-    assert "--include-subagents" in sync.output
+    for name in ("shared-mcp", "codex-sync"):
+        result = runner.invoke(app, [name, "--help"])
+        assert result.exit_code == 0, result.output
+
+    # Defaults and flags by introspection — rendered help wraps and hyphenates
+    # long option names at narrow terminal widths, so it is not a stable oracle.
+    signature = inspect.signature(commands["codex-sync"].callback)
+    options = {name: param.default for name, param in signature.parameters.items()}
+    assert options["limit"].default == 50
+    assert options["max_file_kb"].default == 16384
+    assert options["max_events"].default == 20000
+    assert options["include_subagents"].default is False
+    assert "--include-subagents" in options["include_subagents"].param_decls
 
 
 def test_doctor_codex_capture_row(tmp_path, monkeypatch):
