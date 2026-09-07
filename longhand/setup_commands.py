@@ -1071,7 +1071,15 @@ def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
     counter: Counter[str] = Counter()
     for row in rows:
         try:
-            entry_type = str(json.loads(row["raw_json"]).get("type", "?"))
+            raw = json.loads(row["raw_json"])
+            entry_type = str(raw.get("type", "?"))
+            # Codex rollouts nest the informative kind one level down
+            # (response_item/<kind>, event_msg/<kind>) — name that, not
+            # the envelope.
+            if entry_type in ("response_item", "event_msg"):
+                payload = raw.get("payload")
+                kind = payload.get("type") if isinstance(payload, dict) else None
+                entry_type = f"{entry_type}/{kind or '?'}"
         except Exception:
             entry_type = "?"
         if entry_type not in dispositioned:
@@ -1134,6 +1142,83 @@ def _hook_error_class(line: str) -> str:
     if len(parts) < 3 or not parts[2].endswith(":"):
         return "unknown"
     return parts[2].removesuffix(":")
+
+
+def _archived_session_count(store: LonghandStore) -> int:
+    """Sessions captured exact-record-only (Codex `archived` stage): no vectors yet."""
+    try:
+        with store.sqlite.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM ingestion_log WHERE analysis_stage = 'archived'"
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def _age_text(iso_timestamp: str) -> str:
+    """'3 min ago' style age for a stored ISO timestamp; '' if unparseable."""
+    try:
+        then = datetime.fromisoformat(iso_timestamp)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        seconds = max(0, int((utcnow() - then).total_seconds()))
+    except Exception:
+        return ""
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86400:
+        return f"{seconds // 3600} h ago"
+    return f"{seconds // 86400} d ago"
+
+
+def _codex_capture_status(store: LonghandStore) -> str | None:
+    """Codex rollouts on disk vs. captured in the archive.
+
+    None when there is no Codex home: a machine without Codex should not see
+    a Codex row at all. Subagent threads are reported separately because
+    capture skips them by default.
+    """
+    from longhand.codex import discover_codex_sessions, is_subagent_rollout, read_session_meta
+
+    try:
+        files = discover_codex_sessions()
+    except Exception:
+        return None
+    if not files:
+        return None
+    primary = [f for f in files if not is_subagent_rollout(read_session_meta(f))]
+    try:
+        with store.sqlite.connect() as conn:
+            rows = conn.execute(
+                "SELECT transcript_path, file_size, ingested_at FROM ingestion_log "
+                "WHERE session_id LIKE 'codex:%'"
+            ).fetchall()
+    except Exception:
+        return "[dim]—[/dim] could not inspect the archive"
+    captured = {r["transcript_path"]: r for r in rows}
+    current = 0
+    for f in primary:
+        row = captured.get(str(f))
+        try:
+            if row is not None and row["file_size"] == f.stat().st_size:
+                current += 1
+        except OSError:
+            pass
+    behind = len(primary) - current
+    latest = max((r["ingested_at"] for r in rows if r["ingested_at"]), default=None)
+    age = f", last capture {_age_text(latest)}" if latest and _age_text(latest) else ""
+    subagents = len(files) - len(primary)
+    note = f" [dim]({subagents} subagent thread(s) skipped by default)[/dim]" if subagents else ""
+    if behind == 0:
+        return f"[green]✓[/green] {current}/{len(primary)} rollouts captured{age}{note}"
+    return (
+        f"[yellow]⚠[/yellow] {behind} of {len(primary)} rollouts new or changed since "
+        f"capture{age} — run [bold]longhand codex-sync[/bold] "
+        f"([bold]reconcile --fix[/bold] also captures them on its schedule){note}"
+    )
 
 
 def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
@@ -1349,6 +1434,11 @@ def doctor(json_out: bool = False) -> None:
     # entries yet.
     _row("Transcript format", _transcript_format_status(store))
 
+    # 5d. Codex capture — only on a machine that has Codex rollouts.
+    codex_row = _codex_capture_status(store)
+    if codex_row:
+        _row("Codex capture", codex_row)
+
     # 6. Stats
     stats = store.stats()
     _row("Sessions ingested", f"{stats.get('sessions', 0):,}")
@@ -1356,11 +1446,24 @@ def doctor(json_out: bool = False) -> None:
     _row("Projects inferred", f"{stats.get('projects', 0):,}")
     _row("Episodes extracted", f"{stats.get('episodes', 0):,}")
 
-    sessions_needing_analysis = max(0, stats.get("sessions", 0) - stats.get("outcomes", 0))
+    # Archived Codex sessions have no outcome row either, but `analyze` is
+    # the wrong remedy for them: it rebuilds outcomes and episodes without
+    # ever embedding the events, so search would stay blind. Name the remedy
+    # that actually works for that class (Promise 5).
+    archived = _archived_session_count(store)
+    sessions_needing_analysis = max(
+        0, stats.get("sessions", 0) - stats.get("outcomes", 0) - archived
+    )
     if sessions_needing_analysis > 0:
         _row(
             "Sessions needing analysis",
             f"[yellow]{sessions_needing_analysis}[/yellow] (run [bold]longhand analyze --all[/bold])",
+        )
+    if archived > 0:
+        _row(
+            "Codex sessions archived",
+            f"[yellow]{archived}[/yellow] captured exact-record only — recall and search "
+            "skip them (run [bold]longhand codex-sync --semantic[/bold] to index them)",
         )
 
     # 7. Storage footprint — the corpus grows forever by design, but nothing

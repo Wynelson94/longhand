@@ -52,3 +52,7 @@ When a user asks about past work:
 ## Deeper Tools (less common starting points)
 
 Beyond the decision tree above: `get_session_timeline` with `tail` (the last N events, replaces get_latest_events), `find_episodes` with `episode_id` (full detail: referenced events, diff, post-fix file state), `list_projects` with `match` (fuzzy candidates with scored reasons — "which project did you mean?"), `list_plans` (browse plan-file writes), `get_stats` (store health), and `reconcile` (re-ingest drift) — **`reconcile` defaults to a dry run; pass `fix=true` to actually heal.**
+
+## Codex sessions (1.1.0+)
+
+Codex Desktop / CLI threads live in the same archive with `codex:`-prefixed session ids. This server lists and pages them (`list_sessions`, `get_session_timeline`) and `find_commits` sees commits made from Codex — but `recall` and semantic `search` only see a Codex session after `longhand codex-sync --semantic` has indexed it. For "what did I do in Codex" questions, use the `longhand-shared` server's keyword search (literal phrases; its session listing takes source="codex"), or tell the user to run the semantic sync.
