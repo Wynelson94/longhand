@@ -1144,6 +1144,53 @@ def _hook_error_class(line: str) -> str:
     return parts[2].removesuffix(":")
 
 
+def _codex_finalize_status(store: LonghandStore) -> str | None:
+    """Rich-formatted state of Codex rollouts captured exact-record-only.
+
+    `archived` is a normal transient stage now: a thread is finalized (full
+    pipeline) once it has been quiet for DEFAULT_FINALIZE_AFTER_SECONDS, by
+    the codex-sync poller or the scheduled reconciler. So the row is green
+    while every archived rollout is still being written, and yellow only when
+    one has been quiet long enough and nothing has finalized it yet. None
+    when nothing is archived.
+    """
+    import time
+
+    from longhand.codex import DEFAULT_FINALIZE_AFTER_SECONDS
+
+    try:
+        with store.sqlite.connect() as conn:
+            rows = conn.execute(
+                "SELECT transcript_path FROM ingestion_log WHERE analysis_stage = 'archived'"
+            ).fetchall()
+    except Exception:
+        return None
+    settling = waiting = 0
+    now = time.time()
+    for row in rows:
+        try:
+            idle = now - Path(row[0]).stat().st_mtime
+        except OSError:
+            continue  # rollout gone from disk: nothing can finalize it
+        if idle < DEFAULT_FINALIZE_AFTER_SECONDS:
+            settling += 1
+        else:
+            waiting += 1
+    minutes = DEFAULT_FINALIZE_AFTER_SECONDS // 60
+    if waiting:
+        return (
+            f"[yellow]⚠[/yellow] {waiting} awaiting the finalizer — "
+            f"[bold]longhand codex-sync[/bold] and [bold]reconcile --fix[/bold] run it on "
+            "their schedules; run codex-sync now to index immediately"
+        )
+    if settling:
+        return (
+            f"[green]✓[/green] {settling} Codex thread(s) active — "
+            f"indexed {minutes} min after they go quiet"
+        )
+    return None
+
+
 def _archived_session_count(store: LonghandStore) -> int:
     """Sessions captured exact-record-only (Codex `archived` stage): no vectors yet."""
     try:
@@ -1448,8 +1495,8 @@ def doctor(json_out: bool = False) -> None:
 
     # Archived Codex sessions have no outcome row either, but `analyze` is
     # the wrong remedy for them: it rebuilds outcomes and episodes without
-    # ever embedding the events, so search would stay blind. Name the remedy
-    # that actually works for that class (Promise 5).
+    # ever embedding the events, so search would stay blind. They get their
+    # own row, whose remedy is the finalizer (Promise 5).
     archived = _archived_session_count(store)
     sessions_needing_analysis = max(
         0, stats.get("sessions", 0) - stats.get("outcomes", 0) - archived
@@ -1459,12 +1506,9 @@ def doctor(json_out: bool = False) -> None:
             "Sessions needing analysis",
             f"[yellow]{sessions_needing_analysis}[/yellow] (run [bold]longhand analyze --all[/bold])",
         )
-    if archived > 0:
-        _row(
-            "Codex sessions archived",
-            f"[yellow]{archived}[/yellow] captured exact-record only — recall and search "
-            "skip them (run [bold]longhand codex-sync --semantic[/bold] to index them)",
-        )
+    finalize_row = _codex_finalize_status(store)
+    if finalize_row:
+        _row("Codex finalizer", finalize_row)
 
     # 7. Storage footprint — the corpus grows forever by design, but nothing
     # surfaced how big it had gotten (3 GB observed in the wild).

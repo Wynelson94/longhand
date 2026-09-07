@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
@@ -36,7 +37,10 @@ from longhand.extractors.git import extract_git_signal
 from longhand.types import Event, EventType
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from longhand.storage.sqlite_store import SQLiteStore
+    from longhand.storage.store import LonghandStore
     from longhand.types import Session
 
 # Capture bounds. These are input bounds, not a memory ceiling: the default
@@ -45,6 +49,11 @@ if TYPE_CHECKING:
 DEFAULT_SESSION_LIMIT = 50
 DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_EVENTS = 20_000
+
+# Codex sends no session-end signal, so quiet stands in for it: a rollout
+# untouched for this long gets the full pipeline (embeddings, episodes,
+# project inference) — the Codex twin of Claude Code's SessionEnd hook.
+DEFAULT_FINALIZE_AFTER_SECONDS = 1800
 
 # Top-level record types with nothing recallable in them — usage accounting
 # and world-state snapshots. Skipped, not stored: the Claude parser's
@@ -384,10 +393,17 @@ class CodexScan:
     unchanged: list[Path] = field(default_factory=list)  # captured at this exact size
     subagents: list[Path] = field(default_factory=list)  # skipped unless include_subagents
     oversize: list[Path] = field(default_factory=list)  # over max_file_bytes
+    settling: list[Path] = field(default_factory=list)  # changed within min_idle_seconds
 
     @property
     def on_disk(self) -> int:
-        return len(self.candidates) + len(self.unchanged) + len(self.subagents) + len(self.oversize)
+        return (
+            len(self.candidates)
+            + len(self.unchanged)
+            + len(self.subagents)
+            + len(self.oversize)
+            + len(self.settling)
+        )
 
 
 def scan_codex_sessions(
@@ -397,15 +413,23 @@ def scan_codex_sessions(
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     include_subagents: bool = False,
     complete_stages: tuple[str, ...] = ("archived", "analyzed"),
+    min_idle_seconds: float | None = None,
 ) -> CodexScan:
-    """Classify every rollout on disk against the archive without parsing any."""
+    """Classify every rollout on disk against the archive without parsing any.
+
+    With `min_idle_seconds`, a rollout written more recently than that is
+    `settling` rather than a candidate: the thread may still be running, so
+    the caller waits for it to go quiet. `None` never waits (live capture).
+    """
     scan = CodexScan()
     stages = sqlite.analysis_stages()
+    now = time.time()
     for path in discover_codex_sessions(codex_home):
         try:
-            size = path.stat().st_size
+            stat = path.stat()
         except OSError:
             continue
+        size = stat.st_size
         key = str(path)
         if sqlite.already_ingested(key, size) and stages.get(key) in complete_stages:
             scan.unchanged.append(path)
@@ -413,6 +437,8 @@ def scan_codex_sessions(
             scan.subagents.append(path)
         elif size > max_file_bytes:
             scan.oversize.append(path)
+        elif min_idle_seconds is not None and now - stat.st_mtime < min_idle_seconds:
+            scan.settling.append(path)
         else:
             scan.candidates.append(path)
     return scan
@@ -427,6 +453,7 @@ def sync_codex(
     max_events: int = DEFAULT_MAX_EVENTS,
     include_subagents: bool = False,
     claim_lock: bool = True,
+    min_idle_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Import new or changed rollouts into the archive.
 
@@ -436,8 +463,11 @@ def sync_codex(
     reconcile does. This is deliberately a separate discovery path: Codex
     support never changes which files Claude's hooks scan.
 
-    Report keys: ingested, skipped (unchanged), skipped_subagents, deferred
-    (over a bound, or past `limit` for this run), errors, locked.
+    `min_idle_seconds` leaves rollouts written more recently than that alone
+    (reported as `settling`); live capture passes `None` and never waits.
+
+    Report keys: ingested, skipped (unchanged), skipped_subagents, settling,
+    deferred (over a bound, or past `limit` for this run), errors, locked.
     """
     from longhand.parser import JSONLParser
     from longhand.recall.project_fallback import claim_ingest_lock, release_ingest_lock
@@ -448,6 +478,7 @@ def sync_codex(
         "ingested": 0,
         "skipped": 0,
         "skipped_subagents": 0,
+        "settling": 0,
         "deferred": [],
         "errors": [],
         "locked": False,
@@ -465,9 +496,11 @@ def sync_codex(
             max_file_bytes=max_file_bytes,
             include_subagents=include_subagents,
             complete_stages=complete,
+            min_idle_seconds=min_idle_seconds,
         )
         report["skipped"] = len(scan.unchanged)
         report["skipped_subagents"] = len(scan.subagents)
+        report["settling"] = len(scan.settling)
         report["deferred"].extend(str(p) for p in scan.oversize)
         for index, path in enumerate(scan.candidates):
             if index >= limit:
@@ -502,3 +535,64 @@ def sync_codex(
         if claim_lock:
             release_ingest_lock(store)
     return report
+
+
+def finalize_codex(
+    sqlite: SQLiteStore,
+    codex_home: str | Path | None,
+    build_store: Callable[[], LonghandStore],
+    *,
+    idle_seconds: float = DEFAULT_FINALIZE_AFTER_SECONDS,
+    limit: int = 1,
+    max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
+    max_events: int = DEFAULT_MAX_EVENTS,
+    include_subagents: bool = False,
+    claim_lock: bool = True,
+) -> dict[str, Any]:
+    """Run the full pipeline on rollouts that have gone quiet.
+
+    The synthetic SessionEnd for Codex: a rollout not yet `analyzed` whose
+    file has been untouched for `idle_seconds` is re-ingested through the
+    LonghandStore (embeddings, episodes, project inference), exactly as
+    `codex-sync --semantic` would. A rollout written more recently is
+    `settling` and left for a later run.
+
+    `build_store` is called only when there is something to finalize, so the
+    every-minute steady state never loads the embedding model. `limit`
+    bounds the work per run; the rest is `deferred` to the next one.
+
+    Report keys: finalized, settling, deferred, errors, locked.
+    """
+    scan = scan_codex_sessions(
+        sqlite,
+        codex_home,
+        max_file_bytes=max_file_bytes,
+        include_subagents=include_subagents,
+        complete_stages=("analyzed",),
+        min_idle_seconds=idle_seconds,
+    )
+    if not scan.candidates:
+        return {
+            "finalized": 0,
+            "settling": len(scan.settling),
+            "deferred": [str(p) for p in scan.oversize],
+            "errors": [],
+            "locked": False,
+        }
+    report = sync_codex(
+        build_store(),
+        codex_home,
+        limit=limit,
+        max_file_bytes=max_file_bytes,
+        max_events=max_events,
+        include_subagents=include_subagents,
+        claim_lock=claim_lock,
+        min_idle_seconds=idle_seconds,
+    )
+    return {
+        "finalized": report["ingested"],
+        "settling": report["settling"],
+        "deferred": report["deferred"],
+        "errors": report["errors"],
+        "locked": report["locked"],
+    }

@@ -382,7 +382,8 @@ def test_reconcile_captures_codex_rollouts_under_its_own_lock(temp_store, tmp_pa
     assert fixed.codex_ingested == 1
     assert fixed.errors == []
     assert temp_store.sqlite.get_events(session_id="codex:primary")
-    # The archive path stamps `archived`, never the semantic stages.
+    # Freshly written, so still settling: the exact pass stamps `archived`
+    # and the finalizer waits for the thread to go quiet.
     assert temp_store.sqlite.analysis_stages()[str(home / "sessions/primary.jsonl")] == "archived"
 
     # Reconcile owned the lock throughout and released it afterwards.
@@ -421,6 +422,8 @@ def test_shared_mcp_and_codex_sync_are_registered_cli_commands():
     assert options["max_events"].default == 20000
     assert options["include_subagents"].default is False
     assert "--include-subagents" in options["include_subagents"].param_decls
+    assert options["finalize_after"].default == 1800
+    assert "--no-finalize" in options["no_finalize"].param_decls
 
 
 def test_doctor_codex_capture_row(tmp_path, monkeypatch):
@@ -475,3 +478,277 @@ def test_doctor_drift_row_names_the_codex_kind(tmp_path):
     )
     row = _transcript_format_status(store)
     assert "event_msg/brand_new_kind ×1" in row
+
+
+def test_scan_puts_recently_written_rollouts_in_settling(tmp_path):
+    import os
+    import time
+
+    from longhand.codex import scan_codex_sessions
+
+    source = tmp_path / "codex/sessions/rollout.jsonl"
+    write_rollout(source)
+    sqlite = SQLiteStore(tmp_path / "longhand.db")
+    # Without an idle bound the scan is unchanged: a fresh rollout is a candidate.
+    assert scan_codex_sessions(sqlite, tmp_path / "codex").candidates == [source]
+
+    scan = scan_codex_sessions(sqlite, tmp_path / "codex", min_idle_seconds=600)
+    assert (scan.candidates, scan.settling) == ([], [source])
+    assert scan.on_disk == 1
+
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    scan = scan_codex_sessions(sqlite, tmp_path / "codex", min_idle_seconds=600)
+    assert (scan.candidates, scan.settling) == ([source], [])
+
+
+def _analyzing_store(sqlite, source):
+    """A stand-in for LonghandStore: ingests into SQLite and stamps `analyzed`."""
+    store = MagicMock()
+    store.data_dir = source.parents[2] / "archive"
+    store.sqlite = sqlite
+
+    def ingest(session, events, run_analysis=True):
+        sqlite.upsert_session(session)
+        sqlite.insert_events(events)
+        sqlite.log_ingestion(
+            session.transcript_path, session.session_id, source.stat().st_size, len(events)
+        )
+        sqlite.set_analysis_stage(session.transcript_path, "analyzed")
+
+    store.ingest_session.side_effect = ingest
+    return store
+
+
+def test_finalize_waits_for_quiet_then_runs_full_pipeline(tmp_path):
+    import os
+    import time
+
+    from longhand.codex import CodexArchiveStore, finalize_codex
+
+    source = tmp_path / "codex/sessions/rollout.jsonl"
+    write_rollout(source)
+    archive = CodexArchiveStore(tmp_path / "archive")
+    assert sync_codex(archive, tmp_path / "codex")["ingested"] == 1
+    assert archive.sqlite.analysis_stages()[str(source)] == "archived"
+
+    # Still settling: nothing is finalized and the semantic store is never built.
+    report = finalize_codex(
+        archive.sqlite,
+        tmp_path / "codex",
+        lambda: pytest.fail("built the semantic store while the thread was settling"),
+        idle_seconds=600,
+    )
+    assert (report["finalized"], report["settling"]) == (0, 1)
+    assert archive.sqlite.analysis_stages()[str(source)] == "archived"
+
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    semantic = _analyzing_store(archive.sqlite, source)
+    report = finalize_codex(archive.sqlite, tmp_path / "codex", lambda: semantic, idle_seconds=600)
+    assert (report["finalized"], report["settling"], report["errors"]) == (1, 0, [])
+    assert archive.sqlite.analysis_stages()[str(source)] == "analyzed"
+    semantic.ingest_session.assert_called_once()
+
+    # Nothing left to do: unchanged and analyzed.
+    report = finalize_codex(archive.sqlite, tmp_path / "codex", lambda: semantic, idle_seconds=600)
+    assert report["finalized"] == 0
+    semantic.ingest_session.assert_called_once()
+
+
+def test_finalize_after_append_regresses_then_recovers(tmp_path):
+    import os
+    import time
+
+    from longhand.codex import CodexArchiveStore, finalize_codex
+
+    source = tmp_path / "codex/sessions/rollout.jsonl"
+    write_rollout(source)
+    archive = CodexArchiveStore(tmp_path / "archive")
+    semantic = _analyzing_store(archive.sqlite, source)
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    sync_codex(archive, tmp_path / "codex")
+    assert finalize_codex(archive.sqlite, tmp_path / "codex", lambda: semantic)["finalized"] == 1
+
+    # The thread resumes: live capture is exact-only again and the stage regresses.
+    with source.open("a") as f:
+        f.write(
+            json.dumps(
+                record(
+                    "response_item",
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Anything else?"}],
+                    },
+                )
+            )
+            + "\n"
+        )
+    assert sync_codex(archive, tmp_path / "codex")["ingested"] == 1
+    assert archive.sqlite.analysis_stages()[str(source)] == "archived"
+    assert finalize_codex(archive.sqlite, tmp_path / "codex", lambda: semantic)["settling"] == 1
+
+    # Ten quiet minutes later it is finalized once more — one re-embed per resume.
+    os.utime(source, (quiet, quiet))
+    assert finalize_codex(archive.sqlite, tmp_path / "codex", lambda: semantic)["finalized"] == 1
+    assert archive.sqlite.analysis_stages()[str(source)] == "analyzed"
+    assert len(archive.sqlite.get_events(session_id="codex:test-id")) == 11
+
+
+def test_reconcile_finalizes_quiet_codex_rollouts(temp_store, tmp_path, monkeypatch):
+    import os
+    import time
+
+    from longhand.recall import reconcile as reconcile_mod
+    from longhand.recall.reconcile import run_reconcile
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda: [])
+    home = tmp_path / "codex"
+    quiet_path = home / "sessions/quiet.jsonl"
+    active_path = home / "sessions/active.jsonl"
+    write_rollout(quiet_path, "quiet")
+    write_rollout(active_path, "active")
+    quiet = time.time() - 31 * 60
+    os.utime(quiet_path, (quiet, quiet))
+
+    dry = run_reconcile(temp_store, fix=False, codex_home=home)
+    assert (dry.codex_pending, dry.codex_unfinalized, dry.codex_settling) == (2, 1, 1)
+    assert dry.to_dict()["codex_unfinalized"] == 1
+    assert dry.codex_finalized == 0
+
+    fixed = run_reconcile(temp_store, fix=True, codex_home=home)
+    assert fixed.errors == []
+    assert (fixed.codex_ingested, fixed.codex_finalized, fixed.codex_settling) == (2, 1, 1)
+    stages = temp_store.sqlite.analysis_stages()
+    assert stages[str(quiet_path)] == "analyzed"
+    assert stages[str(active_path)] == "archived"
+    # The quiet thread is now recallable: its events reached the vector store.
+    assert temp_store.vectors.events_collection.get(
+        where={"session_id": "codex:quiet"}, include=[]
+    )["ids"]
+
+    after = run_reconcile(temp_store, fix=False, codex_home=home)
+    assert (after.codex_pending, after.codex_unfinalized, after.codex_settling) == (0, 0, 1)
+
+
+def _cli_json(output):
+    """Rich wraps long lines at the runner's width; rejoin before parsing."""
+    return json.loads("".join(output.splitlines()))
+
+
+def test_codex_sync_cli_never_loads_model_while_threads_settle(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from longhand.cli import app
+
+    home = tmp_path / "codex"
+    write_rollout(home / "sessions/active.jsonl", "active")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / "archive"))
+    monkeypatch.setattr(
+        "longhand.storage.store.VectorStore", lambda *a, **k: pytest.fail("loaded vectors")
+    )
+    result = CliRunner().invoke(app, ["codex-sync"])
+    assert result.exit_code == 0, result.output
+    report = _cli_json(result.output)
+    assert (report["ingested"], report["finalized"], report["settling"]) == (1, 0, 1)
+
+
+def test_codex_sync_cli_finalizes_quiet_threads(tmp_path, monkeypatch):
+    import os
+    import time
+
+    from typer.testing import CliRunner
+
+    from longhand.cli import _commands, app
+
+    home = tmp_path / "codex"
+    source = home / "sessions/quiet.jsonl"
+    write_rollout(source, "quiet")
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    archive = tmp_path / "archive"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(archive))
+    archive.mkdir()
+    sqlite = SQLiteStore(archive / "longhand.db")
+    semantic = _analyzing_store(sqlite, source)
+    semantic.data_dir = archive
+    monkeypatch.setattr(_commands, "_get_store", lambda data_dir=None: semantic)
+
+    result = CliRunner().invoke(app, ["codex-sync"])
+    assert result.exit_code == 0, result.output
+    report = _cli_json(result.output)
+    assert (report["ingested"], report["finalized"], report["settling"]) == (1, 1, 0)
+    assert sqlite.analysis_stages()[str(source)] == "analyzed"
+
+    # Opting out leaves the quiet thread archived: nothing else changes.
+    with sqlite.connect() as conn:
+        conn.execute("UPDATE ingestion_log SET analysis_stage = 'archived'")
+    semantic.ingest_session.reset_mock()
+    result = CliRunner().invoke(app, ["codex-sync", "--no-finalize"])
+    assert result.exit_code == 0, result.output
+    assert "finalized" not in _cli_json(result.output)
+    semantic.ingest_session.assert_not_called()
+
+
+def test_doctor_codex_finalizer_row(tmp_path, monkeypatch):
+    import os
+    import time
+
+    from longhand.codex import CodexArchiveStore
+    from longhand.setup_commands import _codex_finalize_status
+
+    store = CodexArchiveStore(tmp_path / "archive")
+    home = tmp_path / "codex"
+    source = home / "sessions/active.jsonl"
+    write_rollout(source, "active")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    # Nothing captured exact-only yet: no row.
+    assert _codex_finalize_status(store) is None
+
+    sync_codex(store, home)
+    settling = _codex_finalize_status(store)
+    assert "1 Codex thread(s) active" in settling
+    assert "30 min" in settling
+
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    waiting = _codex_finalize_status(store)
+    assert "1 awaiting the finalizer" in waiting
+    assert "longhand codex-sync" in waiting
+
+    store.sqlite.set_analysis_stage(str(source), "analyzed")
+    assert _codex_finalize_status(store) is None
+
+
+def test_reconcile_cli_reports_codex_finalization(temp_store, tmp_path, monkeypatch):
+    import os
+    import time
+
+    from typer.testing import CliRunner
+
+    from longhand.cli import app
+    from longhand.codex import CodexArchiveStore
+    from longhand.recall import reconcile as reconcile_mod
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda: [])
+    home = tmp_path / "codex"
+    source = home / "sessions/quiet.jsonl"
+    write_rollout(source, "quiet")
+    quiet = time.time() - 31 * 60
+    os.utime(source, (quiet, quiet))
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    sync_codex(CodexArchiveStore(temp_store.data_dir, sqlite=temp_store.sqlite), home)
+
+    runner = CliRunner()
+    dry = runner.invoke(app, ["reconcile", "--data-dir", str(temp_store.data_dir)])
+    assert dry.exit_code == 0, dry.output
+    assert "1 quiet thread(s) awaiting the full pipeline" in dry.output
+
+    fixed = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(temp_store.data_dir)])
+    assert fixed.exit_code == 0, fixed.output
+    assert "Finalized 1 Codex thread(s)" in fixed.output
+    assert temp_store.sqlite.analysis_stages()[str(source)] == "analyzed"

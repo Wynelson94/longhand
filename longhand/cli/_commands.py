@@ -32,7 +32,12 @@ from longhand.cli.helpers import (
     _resolve_prefix,
     console,
 )
-from longhand.codex import DEFAULT_MAX_EVENTS, DEFAULT_MAX_FILE_BYTES, DEFAULT_SESSION_LIMIT
+from longhand.codex import (
+    DEFAULT_FINALIZE_AFTER_SECONDS,
+    DEFAULT_MAX_EVENTS,
+    DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_SESSION_LIMIT,
+)
 from longhand.parser import JSONLParser, discover_sessions
 from longhand.recall import recall as recall_pipeline
 from longhand.replay import ReplayEngine
@@ -327,6 +332,18 @@ def codex_sync_cmd(
         help="Also capture threads Codex spawned for itself (e.g. its approval reviewer); "
         "skipped by default because they re-quote the parent thread",
     ),
+    finalize_after: int = typer.Option(
+        DEFAULT_FINALIZE_AFTER_SECONDS,
+        "--finalize-after",
+        min=0,
+        help="Seconds a thread must stay quiet before it gets the full pipeline "
+        "(embeddings, episodes, project inference) so recall and search see it",
+    ),
+    no_finalize: bool = typer.Option(
+        False,
+        "--no-finalize",
+        help="Capture exact records only; never run the full pipeline from this command",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -345,10 +362,14 @@ def codex_sync_cmd(
 ):
     """Capture Codex history into the same archive Claude uses.
 
-    Exact records only by default, with no vector model loaded. `reconcile
-    --fix` runs this capture too, so a scheduled reconciler keeps Codex
-    current on its own; run this directly for an immediate capture, or with
-    --watch for a 60-second loop.
+    Two passes, the Codex twin of Claude Code's Stop and SessionEnd hooks:
+    every new or changed rollout is captured exact-record-only (no vector
+    model loaded), then any rollout quiet for --finalize-after seconds gets
+    the full pipeline so recall and search see it. The model loads only when
+    a quiet thread is waiting. `reconcile --fix` runs both passes too, so a
+    scheduled reconciler keeps Codex current on its own; run this directly
+    for an immediate capture, with --watch for a 60-second loop, or with
+    --semantic to run the full pipeline on everything now.
     """
     import json
     import time
@@ -356,6 +377,7 @@ def codex_sync_cmd(
     from longhand.codex import (
         CodexArchiveStore,
         discover_codex_sessions,
+        finalize_codex,
         is_subagent_rollout,
         read_session_meta,
         sync_codex,
@@ -385,6 +407,20 @@ def codex_sync_cmd(
             max_events=max_events,
             include_subagents=include_subagents,
         )
+        if not semantic and not no_finalize:
+            finalized = finalize_codex(
+                store.sqlite,
+                codex_home,
+                lambda: _get_store(data_dir),
+                idle_seconds=finalize_after,
+                max_file_bytes=max_file_kb * 1024,
+                max_events=max_events,
+                include_subagents=include_subagents,
+            )
+            report["finalized"] = finalized["finalized"]
+            report["settling"] = finalized["settling"]
+            report["deferred"] = list(dict.fromkeys(report["deferred"] + finalized["deferred"]))
+            report["errors"].extend(finalized["errors"])
         console.print(json.dumps(report))
         if not watch:
             if report["errors"]:
@@ -607,6 +643,15 @@ def reconcile(
         console.print(f"[bold]Codex rollouts:[/bold] {report.codex_on_disk} on disk")
         console.print(f"  [green]{current}[/green] captured and current")
         console.print(f"  [yellow]{report.codex_pending}[/yellow] new or changed since capture")
+        if report.codex_unfinalized:
+            console.print(
+                f"  [yellow]{report.codex_unfinalized}[/yellow] quiet thread(s) awaiting the "
+                "full pipeline"
+            )
+        if report.codex_settling:
+            console.print(
+                f"  [dim]{report.codex_settling} still being written (finalized once quiet)[/dim]"
+            )
         if report.codex_skipped_subagents:
             console.print(
                 f"  [dim]{report.codex_skipped_subagents} subagent thread(s) skipped "
@@ -619,8 +664,9 @@ def reconcile(
             )
 
     fixable_claude = bool(report.missing or report.null_project or report.partially_indexed)
+    fixable_codex = bool(report.codex_pending or report.codex_unfinalized)
     if not fix:
-        if fixable_claude or report.codex_pending:
+        if fixable_claude or fixable_codex:
             console.print("\n[dim]Run with --fix to re-ingest.[/dim]")
         return
 
@@ -628,7 +674,7 @@ def reconcile(
         console.print("[yellow]Another ingest is running — aborting reconcile.[/yellow]")
         raise typer.Exit(1)
 
-    if not fixable_claude and not report.codex_pending:
+    if not fixable_claude and not fixable_codex:
         console.print("\n[green]Nothing to fix.[/green]")
         return
 
@@ -645,6 +691,10 @@ def reconcile(
             f" ([dim]{len(report.codex_deferred)} deferred[/dim])" if report.codex_deferred else ""
         )
         console.print(f"[bold]Captured {report.codex_ingested}[/bold] Codex rollout(s){deferred}")
+        settling = (
+            f" ([dim]{report.codex_settling} settling[/dim])" if report.codex_settling else ""
+        )
+        console.print(f"[bold]Finalized {report.codex_finalized}[/bold] Codex thread(s){settling}")
 
 
 # -----------------------------------------------------------------------------

@@ -9,6 +9,34 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **The Codex finalizer.** Codex threads now get the full pipeline —
+  embeddings, episodes, project inference — on their own, 30 minutes after
+  the rollout goes quiet. It is the Codex twin of Claude Code's SessionEnd
+  hook: Codex sends no session-end signal, so quiet stands in for it. Until
+  now an active thread that had been indexed with `--semantic` regressed to
+  exact-record-only the moment it grew, and nothing ever indexed it again.
+  `longhand codex-sync` runs the finalizer after its exact-record pass
+  (`--finalize-after SECONDS` to tune the bound, `--no-finalize` to opt out),
+  one thread per run so the every-minute poller stays bounded; `reconcile
+  --fix` clears the whole quiet backlog. The embedding model loads only on a
+  run that has a quiet thread to finalize. A finalized thread that resumes is
+  captured exact-only again and finalized again once it settles — one
+  re-embed per resume, never a treadmill.
+- `longhand.codex.finalize_codex()`, a `settling` bucket and
+  `min_idle_seconds` on `scan_codex_sessions()` / `sync_codex()`, and
+  `codex_unfinalized` / `codex_settling` / `codex_finalized` on the
+  `reconcile` report and MCP tool.
+
+### Changed
+
+- `doctor`'s "Codex sessions archived" row is now "Codex finalizer": green
+  while archived threads are still being written, yellow only when one has
+  been quiet past the bound and nothing has finalized it yet.
+
 ## [1.1.0] — 2026-09-07
 
 Longhand now keeps one archive for Claude Code **and** Codex. This is the
