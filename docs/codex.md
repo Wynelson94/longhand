@@ -51,7 +51,7 @@ commands — one archive is the whole point.
 | ------------------------------------------------- | ----------------------------- | -------------------------- |
 | Lists and pages Codex sessions                    | yes                           | yes                        |
 | Keyword search across both clients                | no                            | yes (`search`, literal)    |
-| `recall` and semantic search over Codex sessions  | after `codex-sync --semantic` | no                         |
+| `recall` and semantic search over Codex sessions  | 30 min after a thread quiets  | no                         |
 | Commits made in Codex                             | yes (`find_commits`)          | through `search`           |
 | Loads the embedding model                         | yes                           | never                      |
 
@@ -63,21 +63,32 @@ Chroma, and never loads a model; long texts and raw records page in
 8,000-character slices. A broad query on a large archive can hit the server's
 instruction budget — narrow it to a session.
 
-Codex sessions are captured exact-record-only by default (ingestion stage
-`archived`): every message, reasoning summary, tool call, and output is stored
-verbatim and searchable, but not embedded. `longhand codex-sync --semantic`
-runs the full pipeline — embeddings, episodes, project inference — on captured
-sessions so `recall` and semantic `search` see them. It is the remedy `doctor`
-names for archived sessions; `analyze` is not, because it never embeds events.
+Capture runs in two passes, the Codex twin of Claude Code's Stop and SessionEnd
+hooks. A new or changed rollout is first captured exact-record-only (ingestion
+stage `archived`): every message, reasoning summary, tool call, and output is
+stored verbatim and keyword-searchable, with no vector model loaded — the same
+reason Claude's per-turn Stop hook skips embeddings. Codex sends no session-end
+signal, so quiet stands in for it: once a rollout has been untouched for 30
+minutes (`--finalize-after`, in seconds) it gets the full pipeline —
+embeddings, episodes, project inference — and `recall` and semantic `search`
+see it. A finalized thread that resumes is captured exact-only again and
+finalized again once it settles: one re-embed per resume. `longhand codex-sync
+--semantic` runs the full pipeline on everything immediately, and
+`--no-finalize` keeps a run exact-only. `doctor` shows a "Codex finalizer" row
+while any thread is archived; `analyze` never embeds events, so it is not the
+remedy for one.
 
 ## Keeping capture current
 
-`longhand reconcile --fix` captures new or changed Codex rollouts along with
-everything it already does for Claude transcripts, so the scheduled reconciler
-(`longhand schedule install-reconciler`, every 30 minutes on macOS) keeps Codex
-current with no extra setup. For an immediate capture run `longhand codex-sync`;
-for a foreground loop run `longhand codex-sync --watch` (every 60 seconds until
-interrupted).
+`longhand reconcile --fix` runs both passes — captures new or changed Codex
+rollouts and finalizes the quiet ones — along with everything it already does
+for Claude transcripts, so the scheduled reconciler (`longhand schedule
+install-reconciler`, every 30 minutes on macOS) keeps Codex current and
+recallable with no extra setup. For an immediate run use `longhand codex-sync`;
+for a foreground loop, `longhand codex-sync --watch` (every 60 seconds until
+interrupted). On a 60-second schedule a thread is recallable about 30 minutes
+after its last message; the poller loads the embedding model only on the run
+that has a quiet thread to finalize, one thread per run.
 
 ### Faster capture with launchd (macOS)
 
@@ -125,7 +136,8 @@ Scheduler.
 - **Bounds.** Per run: up to 50 sessions, each up to 16 MiB and 20,000 events.
   Larger rollouts are reported as `deferred`, never partially imported. Raise
   the bounds with `--limit`, `--max-file-kb`, and `--max-events`. These are
-  input bounds, not a memory ceiling — the default capture never loads a model.
+  input bounds, not a memory ceiling — the exact-record pass never loads a
+  model, and the finalizer loads it only when a quiet thread is waiting.
 - **Drift is never silent.** A record shape Longhand does not recognize is
   preserved as an `unknown` event with its raw JSON intact, and surfaces in
   `longhand doctor`'s "Transcript format" row as `response_item/<kind>` or

@@ -5,8 +5,10 @@ Classifies every Claude Code JSONL into buckets and, when `fix=True`,
 re-ingests the missing, null-project, and partially-indexed entries.
 
 Codex rollouts ride along when a Codex home exists: new or changed ones are
-captured exact-record-only under the same ingest lock, so the scheduled
-reconciler keeps both clients' history current with no extra setup.
+captured exact-record-only under the same ingest lock, and rollouts that have
+gone quiet get the full pipeline (the Codex twin of Claude's SessionEnd hook),
+so the scheduled reconciler keeps both clients' history current and recallable
+with no extra setup.
 """
 
 from __future__ import annotations
@@ -41,6 +43,9 @@ class ReconcileReport:
     codex_oversize: int = 0
     codex_ingested: int = 0
     codex_deferred: list[str] = field(default_factory=list)
+    codex_unfinalized: int = 0  # quiet but not yet through the full pipeline
+    codex_settling: int = 0  # written too recently to finalize this run
+    codex_finalized: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -64,6 +69,9 @@ class ReconcileReport:
             "codex_oversize": self.codex_oversize,
             "codex_ingested": self.codex_ingested,
             "codex_deferred": self.codex_deferred,
+            "codex_unfinalized": self.codex_unfinalized,
+            "codex_settling": self.codex_settling,
+            "codex_finalized": self.codex_finalized,
         }
 
 
@@ -75,11 +83,20 @@ def run_reconcile(
     Without `fix`: returns counts only.
     With `fix=True`: acquires the ingest lock, re-ingests missing,
     null-project, and partially-indexed Claude entries using current project
-    inference, and captures new or changed Codex rollouts (exact records
-    only). If another ingest is running, returns with
-    `lock_unavailable=True` and nothing ingested.
+    inference, captures new or changed Codex rollouts (exact records only),
+    and finalizes Codex rollouts that have been quiet for
+    DEFAULT_FINALIZE_AFTER_SECONDS (full pipeline, so recall sees them). If
+    another ingest is running, returns with `lock_unavailable=True` and
+    nothing ingested.
     """
-    from longhand.codex import CodexArchiveStore, scan_codex_sessions, sync_codex
+    from longhand.codex import (
+        DEFAULT_FINALIZE_AFTER_SECONDS,
+        DEFAULT_SESSION_LIMIT,
+        CodexArchiveStore,
+        finalize_codex,
+        scan_codex_sessions,
+        sync_codex,
+    )
 
     files = discover_sessions()
 
@@ -121,6 +138,12 @@ def run_reconcile(
                 fully_indexed += 1
 
     codex_scan = scan_codex_sessions(store.sqlite, codex_home)
+    finalize_scan = scan_codex_sessions(
+        store.sqlite,
+        codex_home,
+        complete_stages=("analyzed",),
+        min_idle_seconds=DEFAULT_FINALIZE_AFTER_SECONDS,
+    )
 
     report = ReconcileReport(
         files_on_disk=len(files),
@@ -133,13 +156,15 @@ def run_reconcile(
         codex_pending=len(codex_scan.candidates),
         codex_skipped_subagents=len(codex_scan.subagents),
         codex_oversize=len(codex_scan.oversize),
+        codex_unfinalized=len(finalize_scan.candidates),
+        codex_settling=len(finalize_scan.settling),
     )
 
     if not fix:
         return report
 
     to_process = missing + null_project + partial
-    if not to_process and not codex_scan.candidates:
+    if not to_process and not codex_scan.candidates and not finalize_scan.candidates:
         report.fix_applied = True
         return report
 
@@ -171,6 +196,20 @@ def run_reconcile(
             report.codex_ingested = codex_report["ingested"]
             report.codex_deferred = list(codex_report["deferred"])
             report.errors.extend(codex_report["errors"])
+
+        if finalize_scan.candidates:
+            # The store already holds the model and the lock; as the catch-up
+            # job, clear the whole quiet backlog rather than one per run.
+            finalized = finalize_codex(
+                store.sqlite,
+                codex_home,
+                lambda: store,
+                limit=DEFAULT_SESSION_LIMIT,
+                claim_lock=False,
+            )
+            report.codex_finalized = finalized["finalized"]
+            report.codex_settling = finalized["settling"]
+            report.errors.extend(finalized["errors"])
     finally:
         release_ingest_lock(store)
 
