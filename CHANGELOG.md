@@ -9,7 +9,7 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.2.0] — 2026-09-07
 
 ### Added
 
