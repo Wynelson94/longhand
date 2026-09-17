@@ -124,14 +124,23 @@ def search(query: str, session_id: str | None = None, limit: int = 10) -> list[d
 
 @mcp.tool()
 def get_session_timeline(session_id: str, offset: int = 0, limit: int = 10) -> list[dict]:
-    """Read consecutive recorded events; paginate with offset."""
+    """Read consecutive recorded events; paginate with offset.
+
+    Ordered by timestamp, with sequence only as a tiebreak: subagent
+    (sidechain) transcripts are stored under the PARENT session_id and each
+    restarts its own `sequence` at 0, so ordering by sequence alone interleaves
+    independent threads and reads as though rows from several sessions were
+    mixed together. `#`-suffixed rows are the parser's collision-resolution
+    duplicates, hidden here the same way the main store hides them.
+    """
     with connection() as conn:
         return [
             dict(r)
             for r in conn.execute(
-                "SELECT event_id, sequence, event_type, timestamp, "
+                "SELECT event_id, sequence, event_type, timestamp, is_sidechain, "
                 "substr(content, 1, 2000) AS content, length(content) AS total_chars "
-                "FROM events WHERE session_id = ? ORDER BY sequence LIMIT ? OFFSET ?",
+                "FROM events WHERE session_id = ? AND event_id NOT LIKE '%#%' "
+                "ORDER BY timestamp ASC, sequence ASC LIMIT ? OFFSET ?",
                 (session_id, bounded(limit), max(0, offset)),
             )
         ]

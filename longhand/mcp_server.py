@@ -167,6 +167,17 @@ def _limit(value: Any, default: int) -> int:
     return max(1, min(_int(value, default), MAX_LIMIT))
 
 
+def _tail(value: Any) -> int:
+    """Coerce the optional `tail` count, where 0 means "not requested".
+
+    Deliberately NOT _limit(): that floors at 1, so an absent `tail` would
+    clamp to 1 and be indistinguishable from a request for the last single
+    event — which silently swallows `offset`/`limit`. That regression shipped
+    from 2026-06-09 (bad2f17) through v1.2.0.
+    """
+    return max(0, min(_int(value, 0), MAX_LIMIT))
+
+
 def _offset(value: Any) -> int:
     """Coerce to int and floor at 0 so negative offsets can't reach SQL."""
     return max(0, _int(value, 0))
@@ -886,8 +897,13 @@ async def _tool_search(store: LonghandStore, arguments: dict[str, Any]) -> list[
     # filter was set. Reuses match_projects — the same fuzzy infrastructure
     # the recall tool uses — so literal project names don't get buried under
     # semantically-similar events from sibling projects.
+    #
+    # An explicit session_id suppresses this entirely: it is the most specific
+    # filter there is, and layering a fuzzy project match on top of it
+    # intersects to nothing whenever the guessed project doesn't contain that
+    # session — returning zero hits with a hint that blames project scope.
     auto_scoped_to: str | None = None
-    if not project_id and not project_name:
+    if not project_id and not project_name and not search_session_id:
         try:
             matches = match_projects(store, query, top_k=1)
             if matches and matches[0].score >= AUTO_SCOPE_MIN_SCORE:
@@ -1131,7 +1147,7 @@ async def _tool_get_session_timeline(
     if not full_id:
         return [TextContent(type="text", text=f"No session matching: {arguments['session_id']}")]
 
-    tail = _limit(arguments.get("tail"), 0)
+    tail = _tail(arguments.get("tail"))
     offset = _offset(arguments.get("offset"))
     limit = _limit(arguments.get("limit"), 100)
     max_chars = _max_chars(arguments.get("max_chars"), 16000)
