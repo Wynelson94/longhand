@@ -9,7 +9,10 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.2.1] — 2026-09-17
+
+Three MCP-path fixes. The `longhand timeline` CLI reads `get_events` directly
+and was never affected by any of them.
 
 ### Fixed
 
@@ -22,10 +25,8 @@ commits and tag annotations of those releases.
   `"tail": 1` for a caller who never asked to tail. Passing `tail` explicitly
   always worked, which is why this survived: the existing tests asserted the
   shape of the payload but never counted the events in it. Shipped in v1.0
-  through v1.2 — MCP path only, the `longhand timeline` CLI reads
-  `get_events` directly and was never affected. A new `_tail()` coercion
-  keeps `0` distinct from `1`; `_limit()` is unchanged, its floor being
-  correct for every real limit.
+  through v1.2. A new `_tail()` coercion keeps `0` distinct from `1`;
+  `_limit()` is unchanged, its floor being correct for every real limit.
 - **The shared server's `get_session_timeline` interleaved subagent threads.**
   Subagent (sidechain) transcripts are stored under the *parent*
   `session_id`, each restarting its own `sequence` at 0, so `ORDER BY
