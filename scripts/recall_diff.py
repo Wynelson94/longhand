@@ -98,16 +98,25 @@ def snapshot(store: LonghandStore, queries: list[str]) -> dict[str, Any]:
     return results
 
 
-def diff(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
-    """Compare two snapshots, return one human-readable line per detected change."""
+def diff(baseline: dict[str, Any], current: dict[str, Any]) -> tuple[list[str], set[str]]:
+    """Compare two snapshots.
+
+    Returns the human-readable lines AND the set of query names that changed.
+    The caller must not recover that set by re-parsing the lines: the headers
+    are written with a leading newline, so a `startswith("=== '")` test misses
+    every one of them and reports "0 queries changed" over a page of changes.
+    """
     out: list[str] = []
+    changed: set[str] = set()
     all_queries = sorted(set(baseline) | set(current))
     for q in all_queries:
         if q not in baseline:
             out.append(f"NEW QUERY: {q!r}")
+            changed.add(q)
             continue
         if q not in current:
             out.append(f"REMOVED QUERY: {q!r}")
+            changed.add(q)
             continue
         b, c = baseline[q], current[q]
         # Episodes
@@ -115,6 +124,7 @@ def diff(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
         c_eps = [(e["rank"], e["session_id"], e["episode_id"]) for e in c["episodes"]]
         if b_eps != c_eps:
             out.append(f"\n=== {q!r} — EPISODES CHANGED ===")
+            changed.add(q)
             out.append(f"  was: {[(r, s) for r, s, _ in b_eps]}")
             out.append(f"  now: {[(r, s) for r, s, _ in c_eps]}")
         # Segments
@@ -122,6 +132,7 @@ def diff(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
         c_segs = [(s["rank"], s["session_id"], s["segment_id"]) for s in c["segments"]]
         if b_segs != c_segs:
             out.append(f"\n=== {q!r} — SEGMENTS CHANGED ===")
+            changed.add(q)
             out.append(f"  was: {[(r, s) for r, s, _ in b_segs]}")
             out.append(f"  now: {[(r, s) for r, s, _ in c_segs]}")
         # Narrative session prefixes (user-visible surface)
@@ -131,11 +142,12 @@ def diff(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
             added = sorted(set(c_nar) - set(b_nar))
             removed = sorted(set(b_nar) - set(c_nar))
             out.append(f"\n=== {q!r} — NARRATIVE SESSIONS CHANGED ===")
+            changed.add(q)
             if added:
                 out.append(f"  + appeared: {added}")
             if removed:
                 out.append(f"  - disappeared: {removed}")
-    return out
+    return out, changed
 
 
 def main() -> int:
@@ -192,20 +204,11 @@ def main() -> int:
         return 2
     baseline = json.loads(args.baseline.read_text())
 
-    changes = diff(baseline, current)
+    changes, changed_queries = diff(baseline, current)
     if not changes:
         print("✓ no ranking changes vs baseline")
         return 0
-    # Count headers — each query that changed gets one or more "=== query — KIND ===" lines.
-    # We also surface NEW/REMOVED query lines.
-    changed_queries = {
-        line.split("'")[1]
-        for line in changes
-        if line.startswith("=== '")
-    }
-    new_or_removed = sum(1 for line in changes if line.startswith(("NEW QUERY:", "REMOVED QUERY:")))
-    total = len(changed_queries) + new_or_removed
-    print(f"⚠ {total} queries changed:\n")
+    print(f"⚠ {len(changed_queries)} of {len(queries)} queries changed:\n")
     for line in changes:
         print(line)
     return 1
