@@ -9,6 +9,40 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`get_session_timeline` ignored `limit` and `offset` and always returned
+  exactly one event.** The handler used `0` as its "no tail requested"
+  sentinel, but read it through `_limit()`, which floors at `1` — a floor
+  added in `bad2f17` (2026-06-09) to stop a negative value reaching SQLite as
+  the unbounded `LIMIT -1`. The sentinel clamped to `1`, so every call took
+  the tail branch, `offset`/`limit` were never read, and the response carried
+  `"tail": 1` for a caller who never asked to tail. Passing `tail` explicitly
+  always worked, which is why this survived: the existing tests asserted the
+  shape of the payload but never counted the events in it. Shipped in v1.0
+  through v1.2 — MCP path only, the `longhand timeline` CLI reads
+  `get_events` directly and was never affected. A new `_tail()` coercion
+  keeps `0` distinct from `1`; `_limit()` is unchanged, its floor being
+  correct for every real limit.
+- **The shared server's `get_session_timeline` interleaved subagent threads.**
+  Subagent (sidechain) transcripts are stored under the *parent*
+  `session_id`, each restarting its own `sequence` at 0, so `ORDER BY
+  sequence` mixed several independent threads together and read as though
+  rows from different sessions had leaked into one. It now orders by
+  timestamp with sequence as the tiebreak, hides the parser's `#`-suffixed
+  collision duplicates (matching `get_events`' `dedup_suffixes`), and returns
+  `is_sidechain` so a reader can tell a subagent row from a parent one.
+- **`search` let a fuzzy project guess override an explicit `session_id`.**
+  Auto-scoping checked only `project_id`/`project_name`, so a query whose
+  *text* resembled some project name layered that project on top of the
+  session filter and intersected to nothing — returning zero hits with a hint
+  blaming project scope. An explicit `session_id` now suppresses auto-scope
+  entirely; pass `project_id`/`project_name` to combine them deliberately.
+
+---
+
 ## [1.2.0] — 2026-09-07
 
 ### Added

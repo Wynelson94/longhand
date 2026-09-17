@@ -1029,3 +1029,192 @@ def test_tool_find_episodes_default_filters_low_confidence(temp_store):
 
     everything = _payload(_call(mcp_server._tool_find_episodes, temp_store, {"min_confidence": 0}))
     assert {e["episode_id"] for e in everything} == {"ep-solid", "ep-noise"}
+
+
+# ─── Timeline pagination, auto-scope, and sidechain ordering ─────────────────
+#
+# Three defects found 2026-09-17, all in the MCP path only (the CLI reads
+# store.sqlite.get_events directly and was never affected).
+
+
+def _many_event_session(tmp_path, n=12, session_id="paginate-me"):
+    """A session file of n plain turns with ordered, distinct timestamps."""
+    path = tmp_path / "paginated.jsonl"
+    with path.open("w") as fh:
+        for i in range(n):
+            fh.write(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": f"u-{i}",
+                        "parentUuid": None,
+                        "sessionId": session_id,
+                        "timestamp": f"2026-04-09T10:{i:02d}:00.000Z",
+                        "cwd": "/Users/tester/test-project",
+                        "isSidechain": False,
+                        "message": {"role": "user", "content": f"message number {i}"},
+                    }
+                )
+                + "\n"
+            )
+    return path
+
+
+def test_timeline_honors_limit_when_tail_is_absent(tmp_path, temp_store):
+    """Regression: _limit() floors at 1, so the tail sentinel 0 clamped to 1
+    and every paginated read returned exactly one event (bad2f17 → v1.2.0)."""
+    session = _ingest(_many_event_session(tmp_path), temp_store)
+
+    payload = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "limit": 5},
+        )
+    )
+
+    assert len(payload["events"]) == 5
+    assert payload["meta"]["returned"] == 5
+    # A response the caller never asked to tail must not claim it was tailed.
+    assert "tail" not in payload["meta"]
+
+
+def test_timeline_offset_paginates(tmp_path, temp_store):
+    session = _ingest(_many_event_session(tmp_path), temp_store)
+
+    first = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "limit": 4},
+        )
+    )
+    second = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "offset": 4, "limit": 4},
+        )
+    )
+
+    assert len(first["events"]) == 4
+    assert len(second["events"]) == 4
+    assert second["meta"]["offset"] == 4
+    first_ids = [e["event_id"] for e in first["events"]]
+    second_ids = [e["event_id"] for e in second["events"]]
+    assert not set(first_ids) & set(second_ids), "offset returned an overlapping page"
+
+
+def test_timeline_explicit_tail_still_works(tmp_path, temp_store):
+    """The fix must not over-correct: an explicit tail keeps tailing."""
+    session = _ingest(_many_event_session(tmp_path), temp_store)
+
+    payload = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "tail": 3},
+        )
+    )
+
+    assert len(payload["events"]) == 3
+    assert payload["meta"]["tail"] == 3
+    everything = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "limit": 50},
+        )
+    )
+    assert [e["event_id"] for e in payload["events"]] == [
+        e["event_id"] for e in everything["events"][-3:]
+    ]
+
+
+def test_tail_coercion_keeps_zero_distinct_from_one():
+    """_tail treats 0 as "not requested"; _limit's floor of 1 is correct for
+    real limits but would destroy that sentinel — which is why _tail exists."""
+    assert mcp_server._tail(None) == 0
+    assert mcp_server._tail(0) == 0
+    assert mcp_server._tail(-3) == 0
+    assert mcp_server._tail(5) == 5
+    assert mcp_server._tail(10**9) == mcp_server.MAX_LIMIT
+    # Unchanged, and deliberately so: a real limit must never reach SQL as 0/-1.
+    assert mcp_server._limit(None, 0) == 1
+    assert mcp_server._limit(-5, 100) == 1
+
+
+def test_explicit_session_id_suppresses_project_auto_scope(
+    sample_session_file, temp_store, monkeypatch
+):
+    """An explicit session_id is the most specific filter there is; a fuzzy
+    project match on the query text must not be layered on top of it."""
+    session = _ingest(sample_session_file, temp_store)
+
+    class _Match:
+        display_name = "some other project"
+        score = 999.0
+
+    monkeypatch.setattr(mcp_server, "match_projects", lambda *a, **k: [_Match()])
+
+    scoped = _payload(
+        _call(
+            mcp_server._tool_search,
+            temp_store,
+            {"query": "readme", "session_id": session.session_id},
+        )
+    )
+    assert "auto_scoped_to" not in json.dumps(scoped)
+
+    # Without a session_id the auto-scope still fires — that behavior is wanted.
+    unscoped = _payload(_call(mcp_server._tool_search, temp_store, {"query": "readme"}))
+    assert unscoped.get("auto_scoped_to") == "some other project"
+
+
+def test_shared_timeline_orders_by_time_across_sidechains(
+    sample_session_file, temp_store, monkeypatch
+):
+    """Subagent transcripts are stored under the PARENT session_id with their
+    own sequence restarting at 0. Ordering by sequence alone interleaved them
+    and read as rows from several different sessions."""
+    from longhand import lightweight_mcp
+
+    session = _ingest(sample_session_file, temp_store)
+
+    with temp_store.sqlite.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE session_id = ? LIMIT 1", (session.session_id,)
+        ).fetchone()
+        template = dict(row)
+        # Two subagent events, sequence restarting at 0, timestamps interleaved
+        # between the parent's — plus one parser collision-duplicate row.
+        for event_id, seq, ts, sidechain in [
+            ("sub-a", 0, "2026-04-09T10:00:01.500000+00:00", 1),
+            ("sub-b", 1, "2026-04-09T10:00:02.500000+00:00", 1),
+            ("dupe#1", 0, "2026-04-09T10:00:01.600000+00:00", 0),
+        ]:
+            new = {
+                **template,
+                "event_id": event_id,
+                "sequence": seq,
+                "timestamp": ts,
+                "is_sidechain": sidechain,
+                "content": f"content for {event_id}",
+            }
+            cols = ", ".join(new)
+            conn.execute(
+                f"INSERT INTO events ({cols}) VALUES ({', '.join('?' * len(new))})",
+                list(new.values()),
+            )
+        conn.commit()
+
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(temp_store.data_dir))
+    rows = lightweight_mcp.get_session_timeline(session.session_id, limit=50)
+
+    timestamps = [r["timestamp"] for r in rows]
+    assert timestamps == sorted(timestamps), "shared timeline is not in chronological order"
+    ids = [r["event_id"] for r in rows]
+    assert "sub-a" in ids and "sub-b" in ids
+    assert "dupe#1" not in ids, "parser collision duplicates must stay hidden"
+    # The reader can tell a subagent row from a parent row without guessing.
+    assert {r["is_sidechain"] for r in rows} == {0, 1}
