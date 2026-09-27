@@ -37,7 +37,25 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - name: Evict natively-compiled hnswlib wheels from the pip cache
+        # 3.13 went red on PRs #89 and #90 (2026-09-17) with "Fatal Python
+        # error: Illegal instruction" while importing chromadb's local_hnsw.
+        # chroma-hnswlib 0.7.6 publishes wheels only for cp37–cp312, so on
+        # 3.13 and 3.14 pip builds it from source — and its setup.py adds
+        # -march=native on Linux unless HNSWLIB_NO_NATIVE is set. `cache: pip`
+        # saved that CPU-specific wheel and restored it onto runners with a
+        # different CPU. Green or red depended on which CPU the job drew; the
+        # 3.14 leg reuses a locally built wheel the same way and was lucky.
+        # HNSWLIB_NO_NATIVE (next step) builds a portable wheel. This step
+        # drops any native wheel already in a restored cache — pip keys its
+        # wheel cache by the sdist, not the build flags, so it would otherwise
+        # keep reusing the bad one. Linux only: the MSVC build has no native
+        # flag.
+        if: runner.os == 'Linux'
+        run: pip cache remove chroma_hnswlib || true
       - name: Install dependencies
+        env:
+          HNSWLIB_NO_NATIVE: "1"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
