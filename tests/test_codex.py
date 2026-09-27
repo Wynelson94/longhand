@@ -480,6 +480,39 @@ def test_doctor_drift_row_names_the_codex_kind(tmp_path):
     assert "event_msg/brand_new_kind ×1" in row
 
 
+def test_doctor_drift_row_accepts_codex_skip_records_stored_before_the_skip(tmp_path):
+    """A Codex record type that is skipped now but was stored as `unknown`
+    before the skip existed is understood, not reported as drift: the rule
+    the Claude skip sets already follow. Found live: one `compacted` record
+    captured 2026-09-07 kept the doctor row yellow."""
+    from unittest.mock import MagicMock
+
+    from longhand.setup_commands import _transcript_format_status
+    from longhand.timeutil import utcnow
+    from longhand.types import Event, EventType
+
+    store = MagicMock()
+    store.sqlite = SQLiteStore(tmp_path / "longhand.db")
+    entry = {"type": "compacted", "payload": {"message": "", "replacement_history": []}}
+    store.sqlite.insert_events(
+        [
+            Event(
+                event_id="codex:compacted:1",
+                session_id="codex:compacted",
+                parent_event_id=None,
+                event_type=EventType.UNKNOWN,
+                sequence=1,
+                timestamp=utcnow(),
+                content=json.dumps(entry),
+                raw=entry,
+            )
+        ]
+    )
+    row = _transcript_format_status(store)
+    assert "compacted" not in row
+    assert "green" in row
+
+
 def test_scan_puts_recently_written_rollouts_in_settling(tmp_path):
     import os
     import time
