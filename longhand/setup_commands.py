@@ -1043,15 +1043,17 @@ def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
     Claude Code adds entry types without notice; the parser preserves them as
     event_type='unknown' rows with raw_json intact. A pile of one NEW type
     means the transcript format drifted — a newer longhand probably reads it.
-    Types already dispositioned (KNOWN_SKIP_ENTRY_TYPES members stored before
-    the skip existed, or deliberately-preserved TRIAGED_UNKNOWN_ENTRY_TYPES)
-    are excluded — alarming on understood types forever would train users to
-    ignore the row. The fixture corpus in tests/fixtures/transcript_shapes/
-    regression-gates every known type; this row is how new drift surfaces on
-    a live store.
+    Types already dispositioned (KNOWN_SKIP_ENTRY_TYPES or Codex
+    CODEX_SKIP_RECORD_TYPES members stored before the skip existed, or
+    deliberately-preserved TRIAGED_UNKNOWN_ENTRY_TYPES) are excluded —
+    alarming on understood types forever would train users to ignore the row.
+    The fixture corpora in tests/fixtures/transcript_shapes/ and
+    tests/fixtures/codex_shapes/ regression-gate every known type; this row
+    is how new drift surfaces on a live store.
     """
     from collections import Counter
 
+    from longhand.codex import CODEX_SKIP_RECORD_TYPES
     from longhand.parser import KNOWN_SKIP_ENTRY_TYPES, TRIAGED_UNKNOWN_ENTRY_TYPES
 
     cutoff = (utcnow() - timedelta(days=days)).isoformat()
@@ -1067,7 +1069,7 @@ def _transcript_format_status(store: LonghandStore, days: int = 30) -> str:
 
     # Counter over the raw type in Python — JSON1 availability varies across
     # bundled SQLites, so no json_extract in the query.
-    dispositioned = KNOWN_SKIP_ENTRY_TYPES | TRIAGED_UNKNOWN_ENTRY_TYPES
+    dispositioned = KNOWN_SKIP_ENTRY_TYPES | TRIAGED_UNKNOWN_ENTRY_TYPES | CODEX_SKIP_RECORD_TYPES
     counter: Counter[str] = Counter()
     for row in rows:
         try:

@@ -59,7 +59,13 @@ DEFAULT_FINALIZE_AFTER_SECONDS = 1800
 # and world-state snapshots. Skipped, not stored: the Claude parser's
 # KNOWN_SKIP_ENTRY_TYPES rule. Every member needs a fixture line in
 # tests/fixtures/codex_shapes/entries.jsonl.
-CODEX_SKIP_RECORD_TYPES = frozenset({"token_usage_record", "world_state"})
+# - compacted: context-window compaction. Its replacement_history re-lists
+#   messages the rollout already carries as response_items (26 of 27 on the
+#   one live record), plus the injected developer context the adapter keeps
+#   out of recall anyway and an encrypted `compaction` item. Nothing new to
+#   recall, only a second copy. Triaged 2026-09-27 (doctor drift row, one
+#   record captured 2026-09-07).
+CODEX_SKIP_RECORD_TYPES = frozenset({"token_usage_record", "world_state", "compacted"})
 
 # `event_msg` kinds that mirror something the canonical `response_item`
 # stream already provides (user_message / agent_message / agent_reasoning

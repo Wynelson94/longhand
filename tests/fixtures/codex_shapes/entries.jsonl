@@ -24,3 +24,4 @@
 {"timestamp":"2026-09-07T20:08:49.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"shape-turn-1","last_agent_message":"Fixed the login test and pushed."}}
 {"timestamp":"2026-09-07T20:08:50.000Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"shape-codex-1"}}
 {"timestamp":"2026-09-07T20:08:51.000Z","type":"world_state","payload":{"full":true,"state":{}}}
+{"timestamp":"2026-09-07T20:08:52.000Z","type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"user","content":[{"type":"input_text","text":"run the tests and fix whatever breaks"}]},{"type":"message","role":"developer","content":[{"type":"input_text","text":"<app-context>shape desktop context</app-context>"}]},{"type":"compaction","id":"shape-compaction-1","encrypted_content":"OPAQUE_CIPHERTEXT"}],"window_number":2}}
