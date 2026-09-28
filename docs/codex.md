@@ -2,30 +2,38 @@
 
 Longhand keeps one archive for both clients. Claude Code sessions arrive
 through the hooks you already have; Codex Desktop and Codex CLI threads (the
-"rollouts" under `~/.codex/sessions`) arrive through `longhand codex-sync`.
-Both land in `~/.longhand`, with Codex sessions namespaced `codex:<thread-id>`
-so nothing collides. A question asked in either client can be answered from
-work done in the other.
+"rollouts" under `~/.codex/sessions` and `~/.codex/archived_sessions` — or
+wherever `CODEX_HOME`/`--codex-home` points) arrive through `longhand
+codex-sync`. Both land in `~/.longhand`, with Codex sessions namespaced
+`codex:<thread-id>` so nothing collides. A question asked in either client can
+be answered from work done in the other.
 
-Requires Longhand 1.1.0 or newer.
+Basic capture requires Longhand 1.1.0 or newer. The finalizer described below
+(the 30-minute quiet rule, `--finalize-after`, `--no-finalize`, and doctor's
+"Codex finalizer" row) needs 1.2.0+; before that, an active thread indexed
+with `--semantic` regressed to exact-record-only the moment it grew, with
+nothing to re-index it. Skipping `compacted` records (see *What is captured*
+below) needs 1.2.2+.
 
 ## Set up in three commands
 
 ```sh
 pip install -U longhand
-longhand codex-sync        # capture every Codex thread on this machine
+longhand codex-sync        # capture Codex threads on this machine (up to 50/run; subagent threads skipped)
 longhand doctor            # the "Codex capture" row confirms it
 ```
 
 Then connect the shared keyword server to each client:
 
 ```sh
-# Claude Code — alongside the existing `longhand` server
+# Claude Code — alongside the `longhand` server, if you've registered one
 claude mcp add --scope user longhand-shared -- longhand shared-mcp
 
 # Codex CLI
 codex mcp add longhand -- longhand shared-mcp
 ```
+
+That "alongside" assumes you already have Claude Code's main `longhand` server registered — `longhand setup`/`mcp install` only wire up Claude *Desktop*. For Claude Code, add it explicitly: `claude mcp add longhand -s user -- longhand mcp-server` (or install the Claude Code plugin). The two servers are independent; `longhand-shared` works fine on its own.
 
 Codex Desktop does not put `codex` on your PATH. Add the server to
 `~/.codex/config.toml` instead and restart the app:
@@ -57,11 +65,20 @@ commands — one archive is the whole point.
 
 The shared server exposes four read-only tools: `list_sessions` (with
 `source="codex"|"claude"` and `project` substring filters), `search`,
-`get_session_timeline`, and `get_event_text`. Search matches literal phrases,
-not meaning. It reads the same SQLite rows both clients write, never opens
-Chroma, and never loads a model; long texts and raw records page in
-8,000-character slices. A broad query on a large archive can hit the server's
-instruction budget — narrow it to a session.
+`get_session_timeline`, and `get_event_text`. Search matches literal phrases
+(up to 200 characters), not meaning, and needs an exact `session_id` to scope
+to one session — there's no prefix matching here, unlike the main `longhand`
+server. `search` and `get_session_timeline` return 2,000-character excerpts
+per event, each with a `total_chars` field so you know how much more there
+is; every tool's `limit` is capped at 50. `get_session_timeline` orders by
+timestamp (not just sequence) and returns `is_sidechain` per event, so a
+Claude Code subagent thread — stored under its parent `session_id` with its
+own sequence starting at 0 — reads in the right order instead of interleaved
+with the parent (fixed in 1.2.1). It reads the same SQLite rows both clients
+write, never opens Chroma, and never loads a model; `get_event_text` pages
+longer text or raw JSON in 8,000-character slices via its `offset` parameter.
+A broad query on a large archive can hit the server's instruction budget —
+narrow it to a session.
 
 Capture runs in two passes, the Codex twin of Claude Code's Stop and SessionEnd
 hooks. A new or changed rollout is first captured exact-record-only (ingestion
@@ -73,10 +90,14 @@ minutes (`--finalize-after`, in seconds) it gets the full pipeline —
 embeddings, episodes, project inference — and `recall` and semantic `search`
 see it. A finalized thread that resumes is captured exact-only again and
 finalized again once it settles: one re-embed per resume. `longhand codex-sync
---semantic` runs the full pipeline on everything immediately, and
-`--no-finalize` keeps a run exact-only. `doctor` shows a "Codex finalizer" row
-while any thread is archived; `analyze` never embeds events, so it is not the
-remedy for one.
+--semantic` runs the full pipeline immediately on everything that scan
+discovers (still bounded by `--limit`, default 50), and `--no-finalize` keeps
+a run exact-only. `doctor` shows a "Codex finalizer" row while any thread is
+archived; `analyze` never embeds events, so it is not the remedy for one —
+and a long-running `longhand analyze --all` holds the same ingest lock a
+scheduled finalization pass needs, so it can defer Codex finalization until
+`analyze` finishes and the next scheduled run comes around
+([#97](https://github.com/Wynelson94/longhand/issues/97)).
 
 ## Keeping capture current
 
@@ -93,8 +114,13 @@ that has a quiet thread to finalize, one thread per run.
 ### Faster capture with launchd (macOS)
 
 `scripts/com.longhand.codex-sync.plist.template` is a ready-made user
-LaunchAgent that runs `codex-sync` at login and every 60 seconds. Fill in the
-interpreter that has Longhand installed and your home directory, then load it:
+LaunchAgent that runs `codex-sync` at login and every 60 seconds, capped at
+`--limit 8` per run (the CLI's own default is 50 — edit the template if your
+Codex usage regularly produces more new/changed rollouts a minute than that).
+This file ships in the git repo, not in the `pip install longhand` wheel — if
+you installed from PyPI, either fetch just this one file from GitHub or clone
+the repo. Fill in the interpreter that has Longhand installed and your home
+directory, then load it:
 
 ```sh
 PY="$(command -v python3)"   # must be the Python that has longhand installed
@@ -142,7 +168,14 @@ Scheduler.
   preserved as an `unknown` event with its raw JSON intact, and surfaces in
   `longhand doctor`'s "Transcript format" row as `response_item/<kind>` or
   `event_msg/<kind>`. `tests/fixtures/codex_shapes/` regression-gates every
-  known shape.
+  known shape. Three record types are recognized and deliberately skipped
+  rather than stored: `token_usage_record` and `world_state` (bookkeeping,
+  since 1.1.0), and `compacted` (since 1.2.2) — Codex writes one when it
+  compacts a thread's context window, and its `replacement_history` re-lists
+  messages the rollout already carries. `doctor`'s drift row treats these
+  skip types as understood even on rows stored *before* the skip existed, so
+  upgrading doesn't produce a one-time false drift warning for data already
+  on disk.
 - **Shell commands are understood; scripts are text.** Commands run through
   Codex's shell tools, and the `cmd:` literals inside its `exec` scripts, feed
   error detection and git extraction, so commits made from Codex show up in

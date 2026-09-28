@@ -1,15 +1,15 @@
 # Security & Threat Model
 
-Longhand is a local-first tool that ingests Claude Code session transcripts into a SQLite database and a ChromaDB vector store, both stored in `~/.longhand/`. This document describes its threat model, the trust boundaries, and the hardening measures in place.
+Longhand is a local-first tool that ingests Claude Code session transcripts — and, since 1.1.0, Codex Desktop/CLI rollouts from `~/.codex/` — into a SQLite database and a ChromaDB vector store, both stored in `~/.longhand/` by default (relocatable with `LONGHAND_DATA_DIR` or `--data-dir`). This document describes its threat model, the trust boundaries, and the hardening measures in place.
 
 ## TL;DR
 
-- **Local-only.** Nothing you stored ever leaves your machine. Network activity is limited to: the one-time ChromaDB embedding model download (~80MB), an optional once-daily version check against pypi.org (interactive CLI only — never from hooks or the MCP server, enforced by tests; disable with `LONGHAND_NO_UPDATE_CHECK=1`; the request carries no data beyond the HTTP request itself), and commands you explicitly invoke (e.g. `git push`).
-- **No shell, no `eval`/`exec`.** Longhand never uses a shell, `os.system`, `os.popen`, `eval`, or `exec`. It does spawn fixed, list-form subprocesses — `launchctl` (to (un)load the optional reconciler) and detached background workers (`python -m longhand ingest` / `python -m longhand backfill-episodes`) — none of which interpolates user input or stored data, so the command-injection surface is zero.
-- **Parameterized SQL everywhere.** Every user-supplied value is a bound parameter, never interpolated into SQL. LIKE clauses escape `%` and `_` wildcards. (The one f-string in SQL is `PRAGMA table_info({table})` with a hardcoded internal table name — no user input.)
+- **Local-only.** Nothing you stored ever leaves your machine. Network activity is limited to: the one-time ChromaDB embedding model download (~80MB), a version check against pypi.org (disable with `LONGHAND_NO_UPDATE_CHECK=1`; the request carries no data beyond the HTTP request itself), and commands you explicitly invoke (e.g. `git push`). The version check is excluded from Claude Code's hooks and from the `mcp-server` entry point that `mcp install` actually configures — but not yet from `longhand shared-mcp`, `mcp serve`, or `demo`, which run it at process exit like any other CLI command ([#101](https://github.com/Wynelson94/longhand/issues/101)); and `doctor` (so also `setup`, which calls it) forces a synchronous fetch on every run with a 2-second timeout rather than respecting the usual 24-hour cache.
+- **No shell, no `eval`/`exec`.** Longhand never uses a shell, `os.system`, `os.popen`, `eval`, or `exec`. It does spawn fixed, list-form subprocesses — `launchctl` (to (un)load the optional reconciler) and detached background workers (`[sys.executable, "-m", "longhand", "ingest"]` / `[..., "backfill-episodes"]`) — none of which interpolates user input or stored data, so the command-injection surface is zero.
+- **Parameterized SQL everywhere.** Every user-supplied value reaches SQLite as a bound parameter, never interpolated into SQL. LIKE clauses escape `%`, `_`, and `\`. A handful of f-strings build SQL text, but only from fixed, internal strings — never user input: the `?` placeholder list for `IN (?, ?, ?)` clauses, `PRAGMA table_info({table})` with a hardcoded table name, the `redact` command's column/table names (from a fixed internal dict), and `get_events`' `ORDER BY {direction}` (one of two literal strings, `"ASC"`/`"DESC"`).
 - **Bounded inputs.** Stdin readers, file sizes, line lengths, and filter strings are all capped to prevent DoS.
-- **Read-only on the source data.** Longhand never writes back to `~/.claude/projects/` — it only reads JSONL files.
-- **The hooks fail open.** If anything goes wrong inside a hook, it returns `{}` and Claude Code proceeds as if Longhand wasn't there.
+- **Read-only on the source data.** Longhand never writes back to `~/.claude/projects/` or `~/.codex/` — it only reads JSONL/rollout files, whether from the hooks, `codex-sync`, or an explicit `ingest <PATH>` / `--transcript` argument.
+- **The hooks fail open, but not identically.** All three exit 0 on failure. `UserPromptSubmit` prints `{}`. `SessionEnd` (`ingest-session`) additionally writes a one-line breadcrumb to `logs/hook-errors-YYYY-MM-DD.log`, surfaced by `doctor`. `Stop` (`ingest-live`) fails silently — no output, no breadcrumb — by design, since it's the one hook that runs on every turn.
 
 If you find a hole, please open an issue or email me directly. I'd rather hear about it before it ships somewhere it shouldn't.
 
@@ -17,23 +17,37 @@ If you find a hole, please open an issue or email me directly. I'd rather hear a
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Claude Code session                                    │
-│  ├─ writes JSONL to ~/.claude/projects/<project>/*.jsonl│
-│  ├─ fires SessionEnd hook → longhand ingest-session     │
-│  └─ fires UserPromptSubmit hook → longhand __prompt-hook│
+│  Claude Code session              Codex Desktop / CLI    │
+│  ├─ writes JSONL to               ├─ writes rollouts to  │
+│  │  ~/.claude/projects/<p>/*.jsonl│  ~/.codex/(archived_)sessions │
+│  ├─ fires SessionEnd → ingest-session                    │
+│  ├─ fires Stop (per turn) → ingest-live (live tail)      │
+│  ├─ fires UserPromptSubmit → __prompt-hook-run           │
+│  └─                                └─ polled by codex-sync / reconcile │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼  (trust boundary)
 ┌─────────────────────────────────────────────────────────┐
 │  Longhand (local Python process)                        │
-│  ├─ reads JSONL files (read-only)                       │
+│  ├─ reads JSONL/rollout files (read-only)               │
 │  ├─ writes to ~/.longhand/longhand.db (SQLite)          │
-│  ├─ writes to ~/.longhand/chroma/ (ChromaDB)            │
-│  └─ stdout: Rich CLI output OR hook JSON                │
+│  ├─ writes to ~/.longhand/chroma/ (ChromaDB)             │
+│  ├─ writes logs/, cache/, .ingest.lock, update-check.json│
+│  └─ stdout: Rich CLI output, hook JSON, or MCP responses │
+└─────────────────────────────────────────────────────────┘
+                            │
+                            ▼  (second trust boundary, opt-in)
+┌─────────────────────────────────────────────────────────┐
+│  `longhand shared-mcp` (a.k.a. longhand-shared)          │
+│  Keyword-only read access to the WHOLE archive above —   │
+│  Claude transcripts included — for whatever second       │
+│  client/model provider it's registered with (e.g. Codex) │
 └─────────────────────────────────────────────────────────┘
 ```
 
-Anything outside `~/.longhand/` and `~/.claude/projects/` is out of scope. Longhand never touches the network, never modifies source files, and never executes shell commands derived from user input or stored data.
+Anything outside `~/.longhand/`, `~/.claude/projects/`, and `~/.codex/` is out of scope. Longhand never modifies source files and never executes shell commands derived from user input or stored data. It is not otherwise silent on the network, though — see the version-check and embedding-model bullets above — but no LLM or cloud service ever receives your data: the update check carries only its own HTTP request, and the ONNX model fetch is a fixed download, never an upload.
+
+**The shared-server boundary is worth calling out on its own.** `longhand shared-mcp` (registered as `longhand-shared` in Claude Code, `longhand` in Codex) is read-only, but it reads the *entire* archive — Claude Code transcripts and thinking blocks included — over SQLite in `mode=ro`, with no per-client partitioning. Registering it with a second AI client or model provider (exactly what the Codex integration does) gives that provider keyword search over everything Longhand has indexed, and `get_event_text(raw=true)` returns the stored raw JSON verbatim. That's the intended design — one shared archive for both clients — but it means the boundary for "does my Claude Code history reach a second model provider" is drawn at whether you run that command, not somewhere else.
 
 ## Threat Model
 
@@ -41,13 +55,13 @@ Anything outside `~/.longhand/` and `~/.claude/projects/` is out of scope. Longh
 
 | Threat                                  | Defense |
 |-----------------------------------------|---------|
-| Command injection via tool output       | No shell, `eval`, or `exec`. The two `subprocess` spawns use fixed, list-form argv (`launchctl …`, `python -m longhand ingest`) with no user- or tool-derived arguments. Tool output is never executed. |
+| Command injection via tool output       | No shell, `eval`, or `exec`. The two `subprocess` spawns use fixed, list-form argv (`launchctl …`, `[sys.executable, "-m", "longhand", "ingest"\|"backfill-episodes"]`) with no user- or tool-derived arguments. Tool output is never executed. |
 | SQL injection via search queries        | All SQL uses parameterized queries. LIKE wildcards escaped with `ESCAPE '\\'`. |
-| Path traversal via file_path filters    | File paths from queries are used only as LIKE substrings against the indexed `events` table. Longhand never opens files based on user input — it only opens JSONL files inside `~/.claude/projects/`. |
+| Path traversal via file_path filters    | File paths from `search`/`get_file_history` filters are used only as LIKE substrings against the indexed `events` table, never to open a file. Longhand does open files at paths you give it directly — `ingest <PATH>`, `--transcript`, the hooks' stdin `transcript_path`, and rollouts under `~/.codex/` — but that's an explicit ingest target, not a query-driven read. |
 | OOM via huge JSONL files                | Hard 500MB file size limit and 50MB per-line limit in `parser.py`. Lines exceeding the limit are skipped, not parsed. |
 | OOM via huge prompts in the hook        | Stdin is bounded to 256KB. Prompts are truncated to 8000 chars before recall. |
-| DoS via pathological LIKE patterns       | All keyword/path filters are length-capped (500 chars) and have `%`/`_`/`\\` escaped before use. |
-| Hook crashing Claude Code               | The hook handler wraps everything in try/except and returns `{}` on any failure. Claude Code never sees an exception. |
+| DoS via pathological LIKE patterns       | All keyword/path filters are length-capped (500 chars) and have `%`/`_`/`\\` escaped before use (the shared server's `project` filter is escaped but not yet length-capped). |
+| Hook crashing Claude Code               | Every hook handler wraps its full execution in try/except and exits 0 on any failure — Claude Code never sees an exception. `UserPromptSubmit` additionally prints `{}` so its output is always valid JSON. |
 | Malformed JSONL crashing the ingestor   | Lines that fail to parse as JSON are skipped, not crashed. The full parse continues. |
 | Duplicate uuids across subagent streams | Detected and disambiguated with a counter suffix at parse time. |
 | Embedding service exfiltration           | The default embedding model is ChromaDB's `all-MiniLM-L6-v2`, which runs locally via ONNX. No data is sent to OpenAI, Anthropic, or any other service. |
@@ -90,15 +104,15 @@ MAX_LIMIT = 1000        # max result count for any MCP tool
 MAX_OUTPUT_CHARS = 200000  # max output size for any MCP response
 ```
 
-All MCP tool `limit` parameters are capped at 1000 via `_limit()`. All `max_chars` parameters are capped at 200KB via `_max_chars()`. Integer and boolean parameters are coerced from strings via `_int()`/`_bool()` to handle MCP bridge type mismatches.
+All MCP tool `limit` parameters are capped at 1000 via `_limit()`. `max_chars` parameters are clamped to 200KB at the top end via `_max_chars()` — but `0` or a negative value disables truncation entirely, and 6 of the 13 tools (`get_file_history`, `replay_file`, `get_stats`, `find_episodes`, `list_plans`, `reconcile`) never call `_max_chars`/`_truncate_output` at all, so their output is unbounded by this mechanism regardless ([#103](https://github.com/Wynelson94/longhand/issues/103)). Integer and boolean parameters are coerced from strings via `_int()`/`_bool()` to handle MCP bridge type mismatches.
 
 ### SQLite concurrency
 
 ```python
-conn.execute("PRAGMA busy_timeout = 5000")
+conn.execute("PRAGMA busy_timeout = 30000")
 ```
 
-Every SQLite connection sets a 5-second busy timeout, preventing `SQLITE_BUSY` errors when the SessionEnd hook fires while a manual `longhand ingest` is running.
+Every SQLite connection sets a 30-second busy timeout, preventing `SQLITE_BUSY` errors when the SessionEnd hook fires while a manual `longhand ingest` is running.
 
 ### Input bounds (setup_commands.py)
 
@@ -111,27 +125,28 @@ The UserPromptSubmit hook reads at most 256KB from stdin. The prompt is truncate
 
 ### File permissions
 
-The `~/.longhand/` data directory is created with `mode=0o700` (owner-only read/write/execute). On shared systems, other users cannot read your session data, thinking blocks, or indexed content.
+`LonghandStore.__init__` creates `~/.longhand/` with `mode=0o700` (owner-only read/write/execute) on every store open, which covers the CLI, hooks, and MCP server. Two narrower paths don't yet apply that mode when they're the first thing to touch the directory: the update-check cache writer and `longhand config --set` both `mkdir(parents=True, exist_ok=True)` with no explicit mode ([#99](https://github.com/Wynelson94/longhand/issues/99)). On shared systems this only matters if one of those runs before anything else has created the directory.
 
 ### Configurable injection
 
 The `UserPromptSubmit` hook is tunable via `~/.longhand/config.json`:
 - `hook.min_relevance` — minimum relevance score to inject context (default 2.5)
 - `hook.max_inject_chars` — cap injection size to control token usage (default 2000 chars)
+- `hook.max_episodes` — max episodes considered per query (default 2)
 - `hook.enabled` — disable entirely without uninstalling
 
 Users concerned about token costs or stale context injection can raise the threshold or cap the size.
 
-### Fail-open hooks
+### Fail-open hooks, per hook
 
-All hook handlers wrap their full execution in try/except. On any exception they print `{}` to stdout and return cleanly. The intent is that Longhand can crash internally without ever crashing or hanging Claude Code.
+All hook handlers wrap their full execution in try/except and exit 0 on any failure — Longhand can crash internally without ever crashing or hanging Claude Code. What happens beyond the exit code differs by hook: `UserPromptSubmit` prints `{}` to stdout; `SessionEnd` prints one line to stderr and appends a breadcrumb to `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`); `Stop` (the per-turn live tail) does neither — it returns quietly with no output and no breadcrumb, since it must never add I/O to the path that runs on every assistant turn.
 
 ### Subprocess use — no shell, no injection
 
 Longhand uses `subprocess` in exactly two places. Both pass a fixed, list-form argv (never a shell string), and neither includes any value derived from user input, tool output, or stored data:
 
 - `longhand/setup_commands.py` — `["launchctl", "unload"|"load", RECONCILER_PLIST_PATH]`, run only when you explicitly install or uninstall the optional reconciler. The plist path is a fixed module constant.
-- `longhand/recall/project_fallback.py` — `subprocess.Popen([sys.executable, "-m", "longhand.cli", "ingest"], close_fds=True, start_new_session=True)`, a detached background re-ingest the recall pipeline may spawn when it notices a stale index.
+- `longhand/recall/project_fallback.py` — `subprocess.Popen([sys.executable, "-m", "longhand", "ingest"], close_fds=True, start_new_session=True)`, a detached background re-ingest the recall pipeline may spawn when it notices a stale index (the same `spawn_background` helper also spawns `[..., "backfill-episodes"]` on the analogous episode-backfill path). `-m longhand.cli` was the actual entry point through 0.11.1; it was a bug (fixed in 0.11.2), not the current behavior.
 
 There is no `shell=True`, no `os.system`/`os.popen`, and no `eval`/`exec` anywhere in the source — verify with:
 
@@ -144,17 +159,23 @@ Because every argv element is a string literal or an internal constant, there is
 
 ### Parameterized SQL
 
-Every user-supplied value reaches SQLite as a bound parameter — no user input is ever interpolated into SQL. The only dynamic SQL constructions are (1) the placeholder list for `IN (?, ?, ?)` clauses (fixed `?` strings, bound values), and (2) a single `PRAGMA table_info({table})` in `migrations.py`, where `{table}` is a hardcoded internal table name from a fixed dict — never user input.
+Every user-supplied value reaches SQLite as a bound parameter — no user input is ever interpolated into SQL; only fixed, internal strings ever go into an f-string that builds SQL text. Beyond the `IN (?, ?, ?)` placeholder list (fixed `?` strings, bound values) and `PRAGMA table_info({table})` in `migrations.py` (`{table}` is a hardcoded internal name from a fixed dict), this also covers: the `redact` command's per-table column/PK names, sourced from the fixed `_REDACT_TABLES` dict in `cli/_commands.py`; and `get_events`' `ORDER BY timestamp {direction}, sequence {direction}` in `sqlite_store.py`, where `{direction}` is one of exactly two literals (`"ASC"`/`"DESC"`) chosen by a boolean flag, never passed through from a caller.
 
 ### Read-only against source data
 
-`parser.py` opens JSONL files with mode `"r"`. Longhand never writes back to `~/.claude/projects/`. The only directories Longhand writes to are:
+`parser.py` and `codex.py` open transcript/rollout files with mode `"r"`. Longhand never writes back to `~/.claude/projects/` or `~/.codex/`. The paths Longhand does write to, beyond the SQLite and Chroma stores already named at the top of this document:
 
-- `~/.longhand/longhand.db` (SQLite)
-- `~/.longhand/chroma/` (ChromaDB persistent collections)
-- `~/.longhand/config.json` (only when you explicitly run `longhand config --set`)
-- `~/.claude/settings.json` (only when you explicitly run `longhand hook install` or `longhand prompt-hook install`)
-- `~/.claude/settings.json.longhand-backup` (created automatically before any settings.json modification)
+- `~/.longhand/longhand.db` (SQLite) and `~/.longhand/chroma/` (ChromaDB persistent collections)
+- `~/.longhand/config.json` (only when you explicitly run `longhand config --set` — this one path is written even with `LONGHAND_DATA_DIR`/`--data-dir` set to something else, [#96](https://github.com/Wynelson94/longhand/issues/96))
+- `~/.longhand/update-check.json` (the version-check cache; refreshed roughly once a day per most commands, forced on every `doctor`/`setup` run — see the network bullet above)
+- `~/.longhand/.ingest.lock` (held for the duration of an ingest/analyze/vacuum/reattribute run)
+- `~/.longhand/cache/jsonl_project_map.json` (drift-detection cache)
+- `~/.longhand/logs/` — `hook-errors-YYYY-MM-DD.log` (SessionEnd hook failures), `background-ingest-YYYY-MM-DD.log` / `backfill-episodes-YYYY-MM-DD.log` (detached workers), `reconcile.log` (the scheduled reconciler), `codex-sync.log` (the launchd Codex poller)
+- `~/Library/LaunchAgents/com.longhand.reconcile.plist` (only when you run `schedule install-reconciler`, macOS only) and the equivalent `com.longhand.codex-sync.plist` if you install the template from `docs/codex.md`
+- `~/Library/Application Support/Claude/claude_desktop_config.json` and its `.longhand-backup` (only when you run `longhand mcp install`/`mcp uninstall`, or `setup` without `--skip-mcp`)
+- `~/.claude/settings.json` (when you run `longhand hook install`, `prompt-hook install`, or `setup` without the matching `--skip-*` flag — also on the corresponding `uninstall` commands) and `~/.claude/settings.json.longhand-backup` (created automatically before any `settings.json` modification)
+- `~/.cache/chroma/onnx_models/` — chromadb's own cache directory for the downloaded embedding model, outside `~/.longhand/` entirely
+- `/tmp/longhand-demo-<timestamp>/` — the sandboxed store `longhand demo` creates and (by default) cleans up; `--keep` leaves it on disk
 
 ## Reporting Issues
 
