@@ -9,6 +9,47 @@ commits and tag annotations of those releases.
 
 ---
 
+## [1.2.3] — 2026-09-27
+
+Six user-facing bugs, found by checking every claim in the docs against the
+code. None changes stored data.
+
+### Fixed
+
+- **`get_session_timeline` with `tail` returned the middle of long sessions.**
+  It read the first 5,000 events in ascending order and sliced their end, so
+  on a longer session "how did it end" came back with events from the middle.
+  It now reads newest-first under the same cap and returns them in ascending
+  order. One session in the author's archive has 8,240 events.
+- **`setup` suggested a command that no longer exists.** Its closing hint was
+  `longhand recap --days 7`, removed at 1.0. It now suggests `longhand status
+  --days 7`, the documented successor.
+- **`setup` said it installed the MCP server "for Claude Code".**
+  `longhand mcp install` writes Claude Desktop's config only. The step now
+  says Claude Desktop, and prints the command that registers Longhand with
+  Claude Code (`claude mcp add longhand -s user -- longhand mcp-server`), the
+  same one `doctor` recommends.
+- **Recall and a tool description pointed Claude at a retired tool.** Recall's
+  three narrative footers and `get_session_timeline`'s description said to
+  use `search_in_context`, retired at 1.0. They now name `search` with
+  `session_id` and `context_events`.
+- **The `reconcile` tool's schema said `fix` defaults to true.** The handler
+  has defaulted to a dry run since 1.0. The schema now agrees, so an agent
+  that omits `fix` knows it gets a report, not a repair.
+- **`--skip-analysis` claimed to populate "SQLite only".** Events are always
+  stored and embedded; the flag skips the analysis pass (episodes, segments,
+  and session/project vectors). The `setup` and `ingest` help now says so.
+
+### Internal
+
+- Three new checks guard the text the program shows at runtime, the way the
+  README checks guard the docs: every `longhand <command>` it suggests must be
+  a registered command, and no tool description or recall footer may send
+  Claude to a retired tool.
+- The deeper findings from the same audit are filed as #96–#107.
+
+---
+
 ## [1.2.2] — 2026-09-27
 
 Recall now says when its best match is much older than the alternatives, a
