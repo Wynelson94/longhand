@@ -34,7 +34,7 @@ Longhand takes the opposite architectural stance from AI-summarization tools lik
 |                     | Summarization tools           | Longhand                       |
 | ------------------- | ----------------------------- | ------------------------------ |
 | What's stored       | AI-generated summaries        | Verbatim events from raw JSONL |
-| Who decides         | An LLM, at write time         | Nobody — everything is kept    |
+| Who decides         | An LLM, at write time         | Nobody — no summarizer filters it |
 | API calls / session | One or more                   | Zero                           |
 | Thinking blocks     | Usually folded into summaries | First-class, stored verbatim   |
 | Model portability   | Tied to summarizer's output   | Same data works across models  |

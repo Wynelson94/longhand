@@ -119,7 +119,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 | **Offline**          | No                                            | Yes                               |
 | **Scales with**      | Provider's pricing                           | Your hard drive                   |
 
-† Nine Claude Code entry types ([`KNOWN_SKIP_ENTRY_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/parser.py)) and three Codex record types ([`CODEX_SKIP_RECORD_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/codex.py)) — mostly pure harness bookkeeping (queue markers, progress pings, Codex's duplicate UI-mirror of each canonical message, and similar) — are recognized and skipped rather than stored. That's not quite "zero content dropped," though: one of those types, `attachment`, can carry a queued follow-up prompt in its own `attachment.prompt` field, and Codex's encrypted-reasoning and context-compaction (`compacted`) records are dropped outright. Everything else with real content — every ordinary message, tool call, file edit, and thinking block — is kept verbatim.
+† Nine Claude Code entry types ([`KNOWN_SKIP_ENTRY_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/parser.py)) and, on the Codex side, three top-level record types ([`CODEX_SKIP_RECORD_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/codex.py)) plus ten `event_msg` kinds ([`CODEX_SKIP_EVENT_MSG_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/codex.py): the UI mirrors of canonical messages, and turn bookkeeping) — mostly pure harness bookkeeping (queue markers, progress pings, usage and state snapshots) — are recognized and skipped rather than stored. That's not quite "zero content dropped," though: one of those types, `attachment`, can carry a queued follow-up prompt in its own `attachment.prompt` field, and Codex's encrypted-reasoning and context-compaction (`compacted`) records are dropped outright. Everything else with real content — every ordinary message, tool call, file edit, and thinking block — is kept verbatim.
 
 The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLite is from 2000. ChromaDB is a mature open-source vector store. Both run on a laptop. Longhand bypasses the crisis by ignoring it — your past sessions are already on disk, written by Claude Code itself, in JSONL files that contain every single event verbatim. Longhand reads those files, indexes them locally, and gives you semantic recall over your entire history without ever sending a token through someone else's API.
 
@@ -131,13 +131,13 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 ## Platform support
 
-**Python 3.10 – 3.14 are all fully supported and gated in CI** — every release must pass the full suite on all five before it can merge.
+**Python 3.10 – 3.14 are all fully supported and gated in CI** — branch protection requires the full suite to pass on all five before a PR merges (admins can bypass it — see [CONTRIBUTING.md](https://github.com/Wynelson94/longhand/blob/main/CONTRIBUTING.md)).
 
 Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
 
 **Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 12 core tests fail on every run (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
 
-One thing is macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op elsewhere (use cron/systemd-user on Linux; on Windows, use WSL2). `mcp install` also only ever writes Claude Desktop's macOS config path ([#105](https://github.com/Wynelson94/longhand/issues/105)) — there's no Claude Desktop release for Linux to point it at, and on Windows there's no CLI flag to redirect it, so a Windows install (via WSL2) needs `%APPDATA%\Claude\claude_desktop_config.json` hand-edited directly.
+Two things are macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op elsewhere (use cron/systemd-user on Linux; on Windows, use WSL2). `mcp install` also only ever writes Claude Desktop's macOS config path ([#105](https://github.com/Wynelson94/longhand/issues/105)) — there's no Claude Desktop release for Linux, and Windows isn't supported ([#112](https://github.com/Wynelson94/longhand/issues/112)); wiring a Windows Claude Desktop to a WSL2 install would mean hand-editing its config to launch Longhand through `wsl.exe`, which is untested.
 
 **Codex Desktop and Codex CLI** threads are captured into the same archive from 1.1.0 — see [Works with Codex](#works-with-codex).
 
@@ -164,7 +164,7 @@ Longhand 1.0 makes five promises, each backed by an enforcement artifact in the 
 |                            | claude-mem                                   | Longhand                                     |
 |----------------------------|----------------------------------------------|----------------------------------------------|
 | **What's stored**          | AI-generated summaries / "observations"      | Verbatim events from the raw JSONL           |
-| **Who decides what's kept**| An LLM, at write time                        | Nobody — everything is kept                  |
+| **Who decides what's kept**| An LLM, at write time                        | Nobody — no summarizer filters it            |
 | **Compression**            | Semantic (lossy, by design)                  | None (lossless)                              |
 | **API calls per session**  | One or more (calls Claude to summarize)      | Zero                                         |
 | **Thinking blocks**        | Typically folded into summaries              | First-class, stored verbatim                 |
@@ -493,7 +493,7 @@ longhand/
 ├── codex.py            — Codex rollout capture + 30-minute-quiet finalizer, shared archive
 ├── replay.py           — deterministic file state reconstruction
 ├── redaction.py        — opt-in secret-shaped-string masking
-├── update_check.py     — best-effort pypi.org freshness check (most commands; excluded from hooks)
+├── update_check.py     — best-effort pypi.org freshness check (most commands; the hooks and the hidden `mcp-server` are excluded)
 ├── types.py            — Pydantic models
 ├── storage/
 │   ├── migrations.py      — version-aware schema evolution
@@ -581,13 +581,13 @@ The single most common question: *does Longhand consume a lot of tokens when Cla
 - **Bigger-context-window approaches:** every prompt pays the full history, every time.
 - **Summarizer-based memory tools:** cheap per-query but they already threw away the thinking blocks.
 
-Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 sessions and recalling across 1,000 sessions both come back in the same token envelope. And **Longhand itself makes zero API calls** — the only tokens consumed are the MCP payload Claude reads back. No model sits between you and your data.
+Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 sessions and recalling across 1,000 sessions both come back in the same token envelope. And **Longhand itself makes zero API calls** — the only tokens consumed are the MCP payload Claude reads back. No LLM sits between you and your data.
 
 **Tuning:** the five tools listed above accept a `max_chars` parameter that can be lowered per-call. `summary_only: true` on `get_session_timeline` drops the `content` field and shrinks payloads ~10×.
 
 ---
 
-617 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (a couple of early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+617 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

@@ -57,10 +57,10 @@ Anything outside `~/.longhand/`, `~/.claude/projects/`, and `~/.codex/` is out o
 |-----------------------------------------|---------|
 | Command injection via tool output       | No shell, `eval`, or `exec`. The two `subprocess` spawns use fixed, list-form argv (`launchctl …`, `[sys.executable, "-m", "longhand", "ingest"\|"backfill-episodes"]`) with no user- or tool-derived arguments. Tool output is never executed. |
 | SQL injection via search queries        | All SQL uses parameterized queries. LIKE wildcards escaped with `ESCAPE '\\'`. |
-| Path traversal via file_path filters    | File paths from `search`'s `file_path_contains` filter are used only as LIKE substrings against the indexed `events` table, never to open a file; `get_file_history`'s `file_path` is an exact match (`WHERE file_path = ?`), not a substring search, and neither opens a file either way. Longhand does open files at paths you give it directly — `ingest <PATH>`, `--transcript`, the hooks' stdin `transcript_path`, and rollouts under `~/.codex/` — but that's an explicit ingest target, not a query-driven read. |
+| Path traversal via file_path filters    | `search`'s `file_path_contains` filter is a case-insensitive Python substring check on each vector hit's `file_path` metadata, applied after the Chroma query (no SQL involved) and never used to open a file; `get_file_history`'s `file_path` is an exact match (`WHERE file_path = ?`), not a substring search, and neither opens a file either way. Longhand does open files at paths you give it directly — `ingest <PATH>`, `--transcript`, the hooks' stdin `transcript_path`, and rollouts under `~/.codex/` — but that's an explicit ingest target, not a query-driven read. |
 | OOM via huge JSONL files                | Hard 500MB file size limit and 50MB per-line limit in `parser.py`. Lines exceeding the limit are skipped, not parsed. |
 | OOM via huge prompts in the hook        | Stdin is bounded to 256KB. Prompts are truncated to 8000 chars before recall. |
-| DoS via pathological LIKE patterns       | All keyword/path filters are length-capped (500 chars) and have `%`/`_`/`\\` escaped before use (the shared server's `project` filter is escaped but not yet length-capped). |
+| DoS via pathological LIKE patterns       | SQL-backed keyword/path filters are length-capped (500 chars) and have `%`/`_`/`\\` escaped before use (the shared server's `project` filter is escaped but not yet length-capped; `search`'s `file_path_contains` never reaches SQL — it's a Python substring check on vector hits — so it's neither capped nor escaped). |
 | Hook crashing Claude Code               | Every hook handler wraps its full execution in try/except and exits 0 on any failure — Claude Code never sees an exception. `UserPromptSubmit` additionally prints `{}` so its output is always valid JSON. |
 | Malformed JSONL crashing the ingestor   | Lines that fail to parse as JSON are skipped, not crashed. The full parse continues. |
 | Duplicate uuids across subagent streams | Detected and disambiguated with a counter suffix at parse time. |
@@ -95,7 +95,7 @@ A session file larger than 500MB raises immediately. A single line larger than 5
 MAX_FILTER_LENGTH = 500  # max length for any user-provided keyword/path filter
 ```
 
-Every keyword, file path, and project filter is truncated to 500 chars before use. The `_escape_like()` helper applies the truncation and escapes `%`, `_`, and `\`.
+Every keyword, file path, and project filter that reaches SQL is truncated to 500 chars before use (the exceptions are in the threat table above). The `_escape_like()` helper applies the truncation and escapes `%`, `_`, and `\`.
 
 ### Input bounds (mcp_server.py)
 
@@ -104,7 +104,7 @@ MAX_LIMIT = 1000        # max result count for any MCP tool
 MAX_OUTPUT_CHARS = 200000  # max output size for any MCP response
 ```
 
-All MCP tool `limit` parameters are capped at 1000 via `_limit()`. `max_chars` parameters are clamped to 200KB at the top end via `_max_chars()` — but `0` or a negative value disables truncation entirely, and 6 of the 13 tools (`get_file_history`, `replay_file`, `get_stats`, `find_episodes`, `list_plans`, `reconcile`) never call `_max_chars`/`_truncate_output` at all, so their output is unbounded by this mechanism regardless ([#103](https://github.com/Wynelson94/longhand/issues/103)). Integer and boolean parameters are coerced from strings via `_int()`/`_bool()` to handle MCP bridge type mismatches.
+All MCP tool `limit` parameters are capped at 1000 via `_limit()`. `max_chars` parameters are clamped to 200KB at the top end via `_max_chars()` — but `0` or a negative value disables truncation entirely, and 6 of the 13 tools (`get_file_history`, `replay_file`, `get_stats`, `find_episodes`, `list_plans`, `reconcile`) never call `_max_chars`/`_truncate_output` at all — and neither do `list_sessions(project_id=…)` or `list_projects(match=…)` — so their output is unbounded by this mechanism regardless ([#103](https://github.com/Wynelson94/longhand/issues/103)). Integer and boolean parameters are coerced from strings via `_int()`/`_bool()` to handle MCP bridge type mismatches.
 
 ### SQLite concurrency
 

@@ -59,7 +59,7 @@ commands — one archive is the whole point.
 | ------------------------------------------------- | ----------------------------- | -------------------------- |
 | Lists and pages Codex sessions                    | yes                           | yes                        |
 | Keyword search across both clients                | no                            | yes (`search`, literal)    |
-| `recall` and semantic search over Codex sessions  | 30 min after a thread quiets  | no                         |
+| `recall` and semantic search over Codex sessions  | first `codex-sync`/`reconcile --fix` run after 30 quiet min | no |
 | Commits made in Codex                             | yes (`find_commits`)          | through `search`           |
 | Loads the embedding model                         | yes                           | never                      |
 
@@ -90,9 +90,10 @@ stage `archived`): every message, reasoning summary, tool call, and output is
 stored verbatim and keyword-searchable, with no vector model loaded — the same
 reason Claude's per-turn Stop hook skips embeddings. Codex sends no session-end
 signal, so quiet stands in for it: once a rollout has been untouched for 30
-minutes (`--finalize-after`, in seconds) it gets the full pipeline —
-embeddings, episodes, project inference — and `recall` and semantic `search`
-see it. A finalized thread that resumes is captured exact-only again and
+minutes (`--finalize-after`, in seconds), the next `codex-sync` or `reconcile
+--fix` run gives it the full pipeline — embeddings, episodes, project
+inference — and `recall` and semantic `search` see it. Nothing finalizes
+unless one of those runs, so keep one scheduled (see below). A finalized thread that resumes is captured exact-only again and
 finalized again once it settles: one re-embed per resume. `longhand codex-sync
 --semantic` runs the full pipeline immediately on everything that scan
 discovers (still bounded by `--limit`, default 50), and `--no-finalize` keeps
@@ -108,8 +109,8 @@ and triggers a fresh capture. The doctor "Codex finalizer" row goes quiet for
 it too, since it also counts by the `archived` stage. Separately, a
 long-running `longhand analyze --all` also holds the same ingest lock a
 scheduled finalization pass needs, which can delay (not block) other threads'
-finalization until the next scheduled run. Both effects are tracked in
-[#97](https://github.com/Wynelson94/longhand/issues/97).
+finalization until the next scheduled run. [#97](https://github.com/Wynelson94/longhand/issues/97)
+tracks the permanent skip; the lock delay is the ingest lock working as designed.
 
 ## Keeping capture current
 
@@ -194,7 +195,9 @@ follow the Linux guidance above.
   error detection and git extraction, so commits made from Codex show up in
   `find_commits` and `longhand git-log`. Patches and the rest of a script stay
   recorded text — they are not translated into Claude-style file replay.
-- **Redaction and locks apply.** Opt-in secret redaction covers Codex records.
+- **Redaction and locks apply.** Opt-in secret redaction covers Codex records,
+  except commit messages parsed from `exec` commands, which only a later
+  `redact --apply` masks ([#110](https://github.com/Wynelson94/longhand/issues/110)).
   Capture runs under the same ingest lock as the hooks; a Claude hook that
   fires while a capture holds the lock skips that turn, and the reconciler
   heals it.
