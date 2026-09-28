@@ -51,6 +51,7 @@ def build_narrative(
     segments: list[dict[str, Any]] | None = None,
     fallback_snippets: list[dict[str, Any]] | None = None,
     secondary_segments: list[dict[str, Any]] | None = None,
+    age_gap_note: str | None = None,
 ) -> str:
     """Produce a markdown narrative from the recall results."""
     lines: list[str] = []
@@ -85,6 +86,10 @@ def build_narrative(
     when = _humanize_timestamp(top.get("started_at"))
     session_short = (top.get("session_id") or "")[:8]
     lines.append(f"**Found it:** {project_name} · {when} · session `{session_short}`\n")
+
+    # Issue #82: stated before the answer, so an old match can't read as current.
+    if age_gap_note:
+        lines.append(f"⚠ **Older than the other matches** — {age_gap_note}\n")
 
     # Problem
     if top.get("problem_description"):

@@ -79,7 +79,7 @@ def test_hook_injects_context_when_recall_matches(monkeypatch, tmp_path):
         "diagnosis_summary": "the session cookie was dropped on cross-origin requests",
         "fix_summary": "set SameSite on the authentication token refresh middleware cookie",
     }
-    recall_result = SimpleNamespace(episodes=[episode], artifacts=None)
+    recall_result = SimpleNamespace(episodes=[episode], artifacts=None, age_gap_note=None)
 
     prompt = "Why is the authentication token refresh middleware failing again?"
     out = _run_hook(monkeypatch, tmp_path, prompt, recall_result)
@@ -94,6 +94,74 @@ def test_hook_injects_context_when_recall_matches(monkeypatch, tmp_path):
 
 def test_hook_emits_empty_object_when_no_context(monkeypatch, tmp_path):
     """With no relevant episodes the hook must still emit a valid, silent ``{}``."""
-    recall_result = SimpleNamespace(episodes=[], artifacts=None)
+    recall_result = SimpleNamespace(episodes=[], artifacts=None, age_gap_note=None)
     out = _run_hook(monkeypatch, tmp_path, "some unrelated prompt text here", recall_result)
     assert out == "{}"
+
+
+# ─── issue #82: an old best match says so ──────────────────────────────────
+
+_AGE_GAP_NOTE = "The best match is from 5 months ago, but newer related work exists from yesterday."
+
+
+def _matching_episode(**overrides):
+    episode = {
+        "episode_id": "ep_old",
+        "session_id": "abcdef1234567890",
+        "started_at": "2026-04-28T12:00:00",
+        "confidence": 0.5,
+        "project_id": None,
+        "problem_description": "authentication token refresh middleware was failing",
+        "diagnosis_summary": "the session cookie was dropped on cross-origin requests",
+        "fix_summary": "set SameSite on the authentication token refresh middleware cookie",
+    }
+    episode.update(overrides)
+    return episode
+
+
+def test_hook_states_the_age_gap_note(monkeypatch, tmp_path):
+    """The hook injects past context into the prompt without being asked, which is
+    exactly where an old match quietly reads as current. Name the gap."""
+    recall_result = SimpleNamespace(
+        episodes=[_matching_episode(), _matching_episode(episode_id="ep_fresh")],
+        artifacts=None,
+        age_gap_note=_AGE_GAP_NOTE,
+    )
+    prompt = "Why is the authentication token refresh middleware failing again?"
+    out = _run_hook(monkeypatch, tmp_path, prompt, recall_result)
+
+    context_text = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert _AGE_GAP_NOTE in context_text
+
+
+def test_context_drops_the_note_when_the_project_filter_removes_episodes(monkeypatch, tmp_path):
+    """The note compares the top match with the runner-ups recall returned. Once
+    `--project` filters some of those away, it describes episodes that are no
+    longer there."""
+    from longhand.cli._commands import context
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    monkeypatch.setattr("longhand.cli._commands._get_store", lambda data_dir=None: store)
+    recall_result = SimpleNamespace(
+        episodes=[
+            _matching_episode(project_id="p_keep"),
+            _matching_episode(episode_id="ep_fresh", project_id="p_other"),
+        ],
+        artifacts=None,
+        age_gap_note=_AGE_GAP_NOTE,
+    )
+    monkeypatch.setattr("longhand.recall.recall", lambda *a, **k: recall_result)
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        context(
+            query="Why is the authentication token refresh middleware failing again?",
+            max_episodes=2,
+            min_relevance=0.0,
+            project="p_keep",
+            silent_if_empty=False,
+            data_dir=None,
+        )
+    out = captured.getvalue()
+    assert "[Longhand recall" in out, "the kept episode should still be injected"
+    assert _AGE_GAP_NOTE not in out

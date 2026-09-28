@@ -1846,6 +1846,8 @@ def context(
             print(f"(longhand error: {e})", file=sys.stderr)
         return
 
+    age_gap_note = result.age_gap_note
+
     # Project filter (post-recall)
     if project and result.episodes:
         proj_id = None
@@ -1856,7 +1858,11 @@ def context(
             if matches:
                 proj_id = matches[0]["project_id"]
         if proj_id:
-            result.episodes = [e for e in result.episodes if e.get("project_id") == proj_id]
+            kept = [e for e in result.episodes if e.get("project_id") == proj_id]
+            if len(kept) != len(result.episodes):
+                # The note compared the top match with runner-ups that are gone now.
+                age_gap_note = None
+            result.episodes = kept
 
     # Quality gate — only inject if we have a strong match
     if not result.episodes:
@@ -1900,6 +1906,9 @@ def context(
     # Time
     when = top.get("started_at", "")[:16]
     lines.append(f"Found in session {top['session_id'][:8]} at {when}")
+    # Issue #82: context injected unasked must not let an old match read as current.
+    if age_gap_note:
+        lines.append(f"Note: {age_gap_note}")
     lines.append("")
 
     # Problem
