@@ -22,7 +22,7 @@ When a user asks about past work:
 - **Never use `search` without `session_id`** when you know which session to look in. Unscoped search returns noise from all sessions.
 - **Never skip `recall`** for "do you remember" questions. It was built for exactly this use case.
 - **Don't call the retired names** — `search_in_context`, `get_latest_events`, `get_project_timeline`, `get_session_commits`, `get_episode`, `match_project` left the tool listing at 1.0. They still answer forever (with a migration preamble) so older docs never hard-fail. Most surviving tools take the same parameters directly (`search_in_context(session_id, context_events)` → `search(session_id, context_events)`); two were renamed: `get_latest_events(limit)` → `get_session_timeline(tail)`, and `match_project(query, top_k)` → `list_projects(match, limit)`.
-- **The in-progress session isn't visible to `recall` or `search`.** Both are vector-backed, and embeddings only happen at `SessionEnd`. For "what are we doing right now" questions about the CURRENT session, use `get_session_timeline` (works immediately via the Stop hook's live tail) — or, for a Codex thread that's still active, the `longhand-shared` server's keyword `search`.
+- **The in-progress session usually isn't visible to `recall` or `search`.** Both are vector-backed, and the Stop hook's live tail never embeds and never sets `project_id`. Embeddings normally land at `SessionEnd` — or sooner if a `reconcile(fix=true)` pass runs first, since a live-tailed session's missing `project_id` puts it in reconcile's re-ingest bucket. For "what are we doing right now" questions about the CURRENT session, use `get_session_timeline` (works immediately via the Stop hook's live tail) — or, for a Codex thread that's still active, the `longhand-shared` server's keyword `search`.
 
 ## Tool Pairing Patterns
 
@@ -55,7 +55,7 @@ When a user asks about past work:
 
 Beyond the decision tree above: `get_session_timeline` with `tail` (the last N events, replaces get_latest_events), `find_episodes` with `episode_id` (full detail: referenced events, diff, post-fix file state), `list_projects` with `match` (fuzzy candidates with scored reasons — "which project did you mean?"), `list_plans` (browse plan-file writes), `get_stats` (store health), and `reconcile` (re-ingest drift) — **`reconcile` defaults to a dry run; pass `fix=true` to actually heal.**
 
-Output size: `search`, `get_session_timeline`, `recall`, `recall_project_status`, and `find_commits` accept `max_chars` and truncate with a pagination hint. `get_file_history` and `replay_file` do not — a file with a long edit history or a large replayed file comes back whole, so scope `get_file_history` to a `session_id` when you can, and prefer `replay_file`'s `at_event_id` over reading a huge file in full.
+Output size: `search`, `get_session_timeline`, `recall`, `recall_project_status`, and `find_commits` accept `max_chars` and truncate with a pagination hint. `get_file_history` and `replay_file` do not, but not in the same way: `get_file_history` cuts each entry's `old_content`/`new_content` to 800 characters, so what's unbounded is the *number* of edit rows — scope it to a `session_id` when a file has a long history. `replay_file` returns the complete file as of the point you asked for; `at_event_id` only picks *which* point in time, not how much of the file comes back, so it doesn't help with a large file.
 
 ## Codex sessions (1.1.0+)
 

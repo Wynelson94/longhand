@@ -10,7 +10,7 @@ Scope: these promises bind all of **1.x**. Breaking any of them requires 2.0.
 
 The CLI commands and MCP tools shipped at 1.0 keep working through 1.x. Removals and renames happen only at a major version, and anything slated for removal warns for **one full minor** first.
 
-**Enforced by:** the 0.13 deprecation cycle (every 1.0 removal warned in 0.13, one full minor ahead), the retired MCP names, which left `list_tools()` at 1.0 but keep answering from `_DISPATCH` **forever** with a migration preamble — see `_RETIRED_TOOLS` in `longhand/mcp_server.py` — and `tests/test_surface_consistency.py`, which fails CI if a retired name leaks back into the listing, stops dispatching, or a tool description points at one (plus `tests/test_mcp_tools.py:64-79` exercising the surviving call shapes directly).
+**Enforced by:** the 0.13 deprecation cycle (every 1.0 removal warned in 0.13, one full minor ahead), the retired MCP names, which left `list_tools()` at 1.0 but keep answering from `_DISPATCH` **forever** with a migration preamble — see `_RETIRED_TOOLS` in `longhand/mcp_server.py` — and `tests/test_surface_consistency.py`, which fails CI if a retired name leaks back into the listing, stops dispatching, or a tool description points at one (plus `tests/test_mcp_tools.py`'s `test_*_absorbs_*` tests, e.g. `test_search_absorbs_context_mode` through `test_list_projects_absorbs_match`, exercising the surviving call shapes directly).
 
 That last part is deliberate. Users paste tool names into their own `CLAUDE.md` files, and those files are not ours to update. A retired name must never hard-fail; it answers, tells you what replaced it, and does the work anyway.
 
@@ -50,7 +50,7 @@ Readers accept both the inline and normalized forms of preserved entries, indefi
 
 Error, fix, and resolved counts reflect real signals. Longhand does not inflate what it found, and it does not recommend a remedy that cannot work.
 
-**Enforced by:** the verification gate and context-aware error suppression in `longhand/extractors/errors.py` (which cut optimistic bias from both directions — benign noise no longer becomes a "problem," and real errors are suppressed by context rather than by deleting patterns), the class-aware hook-error remedy in `_hook_errors_status()`, and the runtime-text checks in `tests/test_surface_consistency.py` that fail CI if `setup`, a tool description, or a recall narrative ever suggests a command or tool that doesn't exist.
+**Enforced by:** the verification gate and context-aware error suppression in `longhand/extractors/errors.py` (which cut optimistic bias from both directions — benign noise no longer becomes a "problem," and real errors are suppressed by context rather than by deleting patterns), the class-aware hook-error remedy in `_hook_errors_status()`, and the runtime-text checks in `tests/test_surface_consistency.py`: one fails CI if `setup` or any runtime string suggests a `longhand <cmd>` that isn't a registered command at all; two narrower ones fail if a tool description or a recall narrative names one of the six specific retired MCP tool names (which still work, just aren't the current name) rather than any arbitrary nonexistent tool.
 
 That last one earned its place. Through 0.13, `doctor` told every hook error to run `reconcile --fix`. But `reconcile` enumerates from **disk**, so a transcript that never landed is invisible to it forever — the advice was a no-op for that entire class. Over the bake, **21 of 23** real hook errors were exactly that class. The row now splits the remedy by class and says plainly when there is nothing to heal.
 
@@ -62,4 +62,4 @@ That last one earned its place. Through 0.13, `doctor` told every hook error to 
 - **Performance characteristics.** Ingest and recall latency may change in either direction.
 - **The Chroma vector index on disk.** It is a derived cache. Any release may require a re-index; your SQLite store is the source of truth and is covered by Promise 2.
 - **Python versions below the floor in `pyproject.toml`.** Dropping an end-of-life Python is a minor-version change, not a major one.
-- **Windows.** CI-tested on a best-effort basis (`windows-latest × py3.12`, non-blocking). Not a supported tier — see the README for the current evidence.
+- **Windows.** Not supported — use WSL2. A `windows-latest × py3.12` leg runs on every PR, but it's non-blocking and currently fails 12 core tests every run ([#112](https://github.com/Wynelson94/longhand/issues/112)); see the README's Platform support section.

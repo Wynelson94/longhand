@@ -14,9 +14,9 @@ python scripts/check_version_sync.py
 pytest --cov=longhand --cov-report=term-missing --cov-fail-under=60
 ```
 
-That's Tests on Python 3.10 through 3.14 (all five required), Ruff, Version sync, and mypy. A Windows leg (`windows-latest × py3.12`) runs on every PR too but is non-blocking evidence, not a gate — see the README's Platform support section for what that evidence has shown so far.
+That's Tests on Python 3.10 through 3.14 (all five required), Ruff, Version sync, and mypy. A Windows leg (`windows-latest × py3.12`) runs on every PR too but is non-blocking and currently red — 12 core tests fail every run ([#112](https://github.com/Wynelson94/longhand/issues/112)), hidden behind `continue-on-error` — so don't read a green PR as Windows working. See the README's Platform support section.
 
-Work on a branch and open a PR — `main` is protected and takes no direct pushes. In practice that means the checks above must be green; the branch protection rule itself requires zero approving reviews and does not enforce against admins, so green CI is the actual gate, not a human sign-off.
+Work on a branch and open a PR — `main` is protected and takes no direct pushes for non-admins. In practice that means the checks above must be green for a regular contributor's PR to merge; the branch protection rule itself requires zero approving reviews and doesn't enforce against admins, so for a repo admin, green CI is a norm to follow, not something GitHub enforces — an admin can push directly or merge without green checks if they choose to.
 
 Dev setup: `pip install -e ".[dev]"` pulls in pytest, pytest-cov, ruff, and mypy alongside the package itself.
 

@@ -44,7 +44,7 @@ Your database needs nothing. Migrations are automatic and a 0.11+ store opens on
 
 **Upgrading to 1.2.x?** No removals, just fixes worth knowing about:
 
-- **1.2.3:** MCP `get_session_timeline`'s `tail` now returns the true last N events on sessions over 5,000 events — it used to return the middle. `setup` and the recall/timeline footers stopped pointing at names removed at 1.0 (`recap`, `search_in_context`) and now suggest `status --days 7` and `search(session_id=…, query=…, context_events=5)`.
+- **1.2.3:** MCP `get_session_timeline`'s `tail` now returns the true last N events on sessions over 5,000 events — it used to return the middle. `setup`'s closing hint stopped suggesting `recap` (removed at 1.0) and now suggests `status --days 7`. Recall's footers and `get_session_timeline`'s own tool description stopped naming `search_in_context` (retired from the tool listing at 1.0, though it still answers) and now point at `search` — the footers spell out the call, `search(session_id=…, query=…, context_events=5)`.
 - **1.2.2:** `recall` says so when its top match is much older than the alternatives instead of letting a stale fix read as current (see [Recall Example](#recall-example)). A Codex context-compaction record (`compacted`) no longer trips `doctor`'s transcript-format-drift warning.
 - **1.2.1:** MCP `get_session_timeline` had a sentinel bug that made every call return exactly one event, ignoring `limit`/`offset`, unless `tail` was passed explicitly — fixed. `search`'s project auto-scoping no longer overrides an explicit `session_id`.
 
@@ -59,7 +59,7 @@ Your database needs nothing. Migrations are automatic and a 0.11+ store opens on
 
 **Upgrading to 0.9.0?** Live ingestion captures sessions in flight, plan history is preserved as first-class data, and an optional reconciler job keeps the index honest in the background:
 
-- New `longhand ingest-live` command runs from Claude Code's `Stop` hook to tail the active transcript between assistant turns. The in-progress session becomes queryable immediately via `list_sessions`, `get_session_timeline`/`timeline`, `get_file_history`, and `replay_file` — it writes events only, no embeddings, so `recall` and semantic `search` still need the SessionEnd pass to see it.
+- New `longhand ingest-live` command runs from Claude Code's `Stop` hook to tail the active transcript between assistant turns. The in-progress session becomes queryable immediately via `list_sessions`, `get_session_timeline`/`timeline`, `get_file_history`, and `replay_file` — it writes events only, no embeddings, so `recall` and semantic `search` still need the SessionEnd pass (or a `reconcile --fix` pass, which re-ingests with analysis) to see it.
 - New `longhand plans list` command and `list_plans` MCP tool surface every Write/Edit to `~/.claude/plans/*.md` across your entire history. Plans are now extracted as their own entity alongside episodes.
 - New `longhand schedule install-reconciler` installs an optional launchd job that runs `reconcile --fix` periodically — catches anything the live and post-session hooks missed without you ever thinking about it.
 - The Stop hook coexists with the existing SessionEnd hook: live tails the transcript as it grows; SessionEnd does the full analysis pass when the session closes.
@@ -119,7 +119,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 | **Offline**          | No                                            | Yes                               |
 | **Scales with**      | Provider's pricing                           | Your hard drive                   |
 
-† A short, named list of pure harness bookkeeping (queue markers, progress pings, Codex's duplicate UI-mirror of each canonical message, and a few others) is recognized and skipped rather than stored — see [Architecture](#architecture) for the exact list. Everything with actual content — every message, tool call, file edit, and thinking block — is kept verbatim.
+† Nine Claude Code entry types ([`KNOWN_SKIP_ENTRY_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/parser.py)) and three Codex record types ([`CODEX_SKIP_RECORD_TYPES`](https://github.com/Wynelson94/longhand/blob/main/longhand/codex.py)) — mostly pure harness bookkeeping (queue markers, progress pings, Codex's duplicate UI-mirror of each canonical message, and similar) — are recognized and skipped rather than stored. That's not quite "zero content dropped," though: one of those types, `attachment`, can carry a queued follow-up prompt in its own `attachment.prompt` field, and Codex's encrypted-reasoning and context-compaction (`compacted`) records are dropped outright. Everything else with real content — every ordinary message, tool call, file edit, and thinking block — is kept verbatim.
 
 The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLite is from 2000. ChromaDB is a mature open-source vector store. Both run on a laptop. Longhand bypasses the crisis by ignoring it — your past sessions are already on disk, written by Claude Code itself, in JSONL files that contain every single event verbatim. Longhand reads those files, indexes them locally, and gives you semantic recall over your entire history without ever sending a token through someone else's API.
 
@@ -135,9 +135,9 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
 
-**Windows: CI-tested, best-effort.** A `windows-latest × py3.12` leg runs on every PR and has gone green on every run since v0.13.0, but it is non-blocking and covers one Python version on GitHub's runners. That is honest evidence, not a support tier — **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI. Windows bugs are welcome as issues; they just aren't release-blocking.
+**Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 12 core tests fail on every run (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
 
-Two things are macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op on other platforms (use cron/systemd on Linux, Task Scheduler on Windows), and `mcp install` currently writes Claude Desktop's macOS config path on every OS ([#105](https://github.com/Wynelson94/longhand/issues/105)) — on Linux/Windows, point it at your platform's actual Claude Desktop config location by hand for now.
+One thing is macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op elsewhere (use cron/systemd-user on Linux; on Windows, use WSL2). `mcp install` also only ever writes Claude Desktop's macOS config path ([#105](https://github.com/Wynelson94/longhand/issues/105)) — there's no Claude Desktop release for Linux to point it at, and on Windows there's no CLI flag to redirect it, so a Windows install (via WSL2) needs `%APPDATA%\Claude\claude_desktop_config.json` hand-edited directly.
 
 **Codex Desktop and Codex CLI** threads are captured into the same archive from 1.1.0 — see [Works with Codex](#works-with-codex).
 
@@ -242,9 +242,9 @@ Longhand reads those files. Then it gives you:
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
 - **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
-- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass
+- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass, or for a `reconcile --fix` pass to pick it up (the live tail never sets `project_id`, so reconcile treats it as needing a full re-ingest)
 - **Plan history** — every Write/Edit to `~/.claude/plans/*.md` is captured as a first-class entity, queryable via `longhand plans list` and the `list_plans` MCP tool
-- **Secret redaction (opt-in)** — `longhand config --set redact.enabled=true` masks secret-shaped strings (API keys, tokens, JWTs, DB passwords) at ingest before they reach the index; `longhand redact --apply` retroactively masks data ingested earlier
+- **Secret redaction (opt-in)** — `longhand config --set redact.enabled=true` masks secret-shaped strings (API keys, tokens, JWTs, DB passwords) at ingest before they reach the index; `longhand redact --apply` retroactively masks data ingested earlier (see [SECURITY.md](https://github.com/Wynelson94/longhand/blob/main/SECURITY.md) for the current gap in git commit message coverage, [#110](https://github.com/Wynelson94/longhand/issues/110))
 - **Background reconciler** — optional launchd job (`longhand schedule install-reconciler`) keeps the index honest without manual `reconcile --fix` runs
 - **Context injection** — `UserPromptSubmit` hook auto-injects relevant past context before Claude sees your message (configurable threshold and size cap); prints the same age-gap `Note: …` line as `recall` when the injected context is old and stale-looking relative to fresher work
 - **Configurable** — `longhand config` to tune injection relevance, token budget, and behavior without editing code
@@ -286,7 +286,7 @@ longhand config                       # view/tune hook behavior (relevance thres
 longhand doctor                       # verify everything is wired up
 ```
 
-`longhand ingest-live` isn't in this list on purpose — it's the hidden entry point the Stop hook calls, expects `transcript_path` on stdin, and isn't meant for standalone use.
+`longhand ingest-live` isn't in this list on purpose — it's primarily the hidden entry point the Stop hook calls (reading `transcript_path` from stdin JSON), though it also accepts `--transcript <path>` directly if you want to run it by hand.
 </details>
 
 ---
@@ -344,7 +344,9 @@ longhand plans list --limit 100             # raise the row cap (default 50)
 longhand schedule install-reconciler        # background launchd job (macOS); runs reconcile --fix
 longhand reattribute                        # dry-run: find sessions attributed to the wrong project
 longhand reattribute --fix                  # apply the moves (idempotent)
-longhand db vacuum --prune-aux              # reclaim disk space; --prune-aux also drops stored aux/unknown events
+longhand db vacuum --prune-aux              # reclaim disk space; --prune-aux deletes ALL event_type='unknown' rows —
+                                             #   not just harness noise, but doctor's drift records and the deliberately
+                                             #   preserved summary/pr-link/worktree-state/frame-link rows too
 ```
 
 Session IDs accept prefix matches — `longhand timeline cf86` is enough if only one session starts with that.
@@ -391,7 +393,7 @@ Other candidates (4)
 
 That's one local command. No API call. The fix came from a session file Claude Code wrote to your disk weeks ago and Longhand had been waiting with the answer the whole time.
 
-Two things not shown above. First, if the top match had been weeks older than the runner-up and the query carried no time phrase, a line would appear right after "Found it:" — *Older than the other matches — the best match is from 6 months ago, but newer related work exists from 2 months ago. If you meant current work, add a time phrase like "this week" or "this month".* Ranking is unchanged; it's a warning, not a re-sort — add a time phrase to skip the check. Second, when a candidate comes from conversation segments rather than a clean episode, or shows up as a weaker "also possibly relevant" match, the footer names the exact follow-up call instead of leaving you to guess parameters: `search(session_id="a4ba29d1", query="...", context_events=5)`.
+Two things not shown above. First, the age-gap warning fires only when the top match is at least 30 days old *and* at least 30 days older than the newest runner-up, with no time phrase in the query — not just "weeks older." When it fires, a line appears right after "Found it:" — *Older than the other matches — the best match is from 6 months ago, but newer related work exists from 2 months ago. If you meant current work, add a time phrase like "this week" or "this month".* Ranking is unchanged; it's a warning, not a re-sort. Second, when a candidate comes from conversation segments rather than a clean episode, its footer names the exact follow-up call with the real session id filled in: `search(session_id="a4ba29d1", query="...", context_events=5)`. The weaker "Also possibly relevant" footer (what episodes-recall shows when segments exist in other sessions) currently prints that same call shape with a literal `session_id="<session>"` placeholder instead — copy the real id from the bullet above it.
 
 ---
 
@@ -434,7 +436,7 @@ After restarting the client, it has thirteen tools:
 
 **Left the tool listing at v1.0, still answer forever with a migration preamble:** `search_in_context` → `search(context_events)` · `get_latest_events` → `get_session_timeline(tail)` · `get_project_timeline` → `list_sessions(project_id)` · `get_session_commits` → `find_commits(session_id)` · `get_episode` → `find_episodes(episode_id)` · `match_project` → `list_projects(match)`
 
-Output capping is uneven, not universal: `search`, `get_session_timeline`, `recall`, `recall_project_status`, and `find_commits` accept `max_chars` (pass `0` or negative to disable it, though that's rarely what you want); `list_sessions` and `list_projects` truncate at a fixed 16,000 characters with no parameter to change it; `get_file_history`, `replay_file`, `get_stats`, `find_episodes`, `list_plans`, and `reconcile` return whatever the query produces, uncapped ([#103](https://github.com/Wynelson94/longhand/issues/103)). See [Token budget](#token-budget) for the full breakdown.
+Output capping is uneven, not universal: `search`, `get_session_timeline`, `recall`, `recall_project_status`, and `find_commits` accept `max_chars` (pass `0` or negative to disable it, though that's rarely what you want); `list_sessions` and `list_projects` truncate at a fixed 16,000 characters *only in their default modes* — `list_sessions(project_id=…)` and `list_projects(match=…)` are on the uncapped path below; `get_file_history`, `replay_file`, `get_stats`, `find_episodes` (its list mode returns up to `limit` — default 20, max 1000 — not one episode; only `episode_id` detail mode is scoped to one), `list_plans`, and `reconcile` return whatever the query produces, uncapped ([#103](https://github.com/Wynelson94/longhand/issues/103)). See [Token budget](#token-budget) for the full breakdown.
 
 Once installed, you can ask Claude things like *"what did we decide about the auth middleware in last week's session?"* and it will actually search its own past work.
 
@@ -459,7 +461,7 @@ Once installed, you can ask Claude things like *"what did we decide about the au
 
 Both commands read `transcript_path` from the hook's stdin JSON, so no flags are needed in the hook entry itself.
 
-- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass. A failure here is silent by design — no stdout, no breadcrumb — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
+- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. A failure here is silent by design — no stdout, no breadcrumb — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
 - **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0.
 
 Both are non-blocking and run in one to two seconds. You don't have to think about either of them again.
@@ -491,7 +493,7 @@ longhand/
 ├── codex.py            — Codex rollout capture + 30-minute-quiet finalizer, shared archive
 ├── replay.py           — deterministic file state reconstruction
 ├── redaction.py        — opt-in secret-shaped-string masking
-├── update_check.py     — best-effort pypi.org freshness check (interactive CLI only)
+├── update_check.py     — best-effort pypi.org freshness check (most commands; excluded from hooks)
 ├── types.py            — Pydantic models
 ├── storage/
 │   ├── migrations.py      — version-aware schema evolution
@@ -559,7 +561,7 @@ Latency, benchmarked on the same corpus and date — warm, in-process, the 8 `sc
 
 The single most common question: *does Longhand consume a lot of tokens when Claude uses it?*
 
-**Mostly no — but the cap isn't universal, so read this table.** Five of the 13 tools truncate their output and append a pagination hint before Claude ever sees it; two more cap at a fixed size you can't change; six return whatever the query produces, uncapped ([#103](https://github.com/Wynelson94/longhand/issues/103)). In practice this rarely bites — `get_file_history`/`replay_file`/`find_episodes` scope naturally to one file or episode — but it's not the hard ceiling the table below might imply on its own.
+**Mostly no — but the cap isn't universal, so read this table.** Five of the 13 tools truncate their output and append a pagination hint before Claude ever sees it; two more cap at a fixed size, but only in their default mode; six return whatever the query produces, uncapped ([#103](https://github.com/Wynelson94/longhand/issues/103)). In practice `get_file_history`/`replay_file` are naturally scoped to one file (though a long edit history or a big file can still come back large); `find_episodes` is the one to watch — its default *list* mode has no natural scope and can return up to `limit` (max 1000) full episode rows uncapped, while only its `episode_id` *detail* mode is scoped to a single episode.
 
 | Tool | Default output cap | Adjustable? |
 |---|---:|---|
@@ -568,7 +570,8 @@ The single most common question: *does Longhand consume a lot of tokens when Cla
 | `get_session_timeline` | 16,000 chars | `max_chars` |
 | `recall`, `recall_project_status` | 16,000 chars | `max_chars` |
 | `find_commits` | 12,000 chars | `max_chars` |
-| `list_sessions`, `list_projects` | 16,000 chars | no — fixed |
+| `list_sessions`, `list_projects` (default mode) | 16,000 chars | no — fixed |
+| `list_sessions(project_id=…)`, `list_projects(match=…)` | none | no — uncapped |
 | `get_file_history`, `replay_file`, `get_stats`, `find_episodes`, `list_plans`, `reconcile` | none | no — uncapped |
 | Ceiling on the `max_chars` *parameter* (`MAX_OUTPUT_CHARS`) | 200,000 chars | pass `0` or negative to disable truncation entirely |
 
@@ -584,7 +587,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-617 unit tests passing, covering all 13 MCP tools. Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (a couple of early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+617 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (a couple of early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

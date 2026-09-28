@@ -8,7 +8,7 @@ Installing the Longhand plugin gives Claude Code 13 MCP tools for searching and 
 
 - **`recall`** — fuzzy, proactive recall for "do you remember when..." questions. Returns matching projects, episodes, and narrative in one call.
 - **`recall_project_status`** — git-aware "where did we leave off on X" across recent commits, unresolved issues, and the last session's outcome.
-- **`search`** — semantic search, with surrounding conversation when you pass `context_events`.
+- **`search`** — semantic search, with surrounding conversation when you pass both `session_id` and `context_events`.
 - **`get_file_history`** / **`replay_file`** — reconstruct any file's state at any point.
 - **`find_episodes`** — structured problem → fix retrieval with the exact diffs that resolved it; pass `episode_id` for full detail on one.
 
@@ -23,7 +23,7 @@ pip install longhand
 longhand setup
 ```
 
-`longhand setup` is idempotent — it backfills your existing `~/.claude/projects/` history, installs the hooks so new and in-progress sessions auto-ingest, registers Longhand's MCP server for Claude Desktop, and verifies everything works. This plugin is what gives *Claude Code* the same 13 tools, via the bundled MCP configuration below — `setup` itself doesn't need to touch Claude Code's config for that.
+`longhand setup` is idempotent — it backfills your existing `~/.claude/projects/` history, installs the hooks so new and in-progress sessions auto-ingest, registers Longhand's MCP server for Claude Desktop, and verifies everything works. This plugin is what gives *Claude Code* the same 13 tools, via this repo's bundled `.mcp.json` at its root — `setup` itself doesn't need to touch Claude Code's config for that.
 
 If the plugin is enabled without the CLI installed, you'll see a clear `SessionStart` message telling you what to run.
 

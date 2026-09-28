@@ -71,10 +71,14 @@ to one session — there's no prefix matching here, unlike the main `longhand`
 server. `search` and `get_session_timeline` return 2,000-character excerpts
 per event, each with a `total_chars` field so you know how much more there
 is; every tool's `limit` is capped at 50. `get_session_timeline` orders by
-timestamp (not just sequence) and returns `is_sidechain` per event, so a
-Claude Code subagent thread — stored under its parent `session_id` with its
-own sequence starting at 0 — reads in the right order instead of interleaved
-with the parent (fixed in 1.2.1). It reads the same SQLite rows both clients
+`timestamp ASC, sequence ASC` rather than sequence alone (fixed in 1.2.1) —
+a Claude Code subagent thread is stored under its parent `session_id` with
+its own sequence restarting at 0, so ordering by sequence alone used to mix
+rows from unrelated threads out of chronological order entirely. Timestamp
+ordering fixes that, but a subagent that ran concurrently with its parent
+still interleaves with it row-by-row in the output, chronologically — the
+per-event `is_sidechain` field is what tells a subagent row from a parent
+one, not physical separation. It reads the same SQLite rows both clients
 write, never opens Chroma, and never loads a model; `get_event_text` pages
 longer text or raw JSON in 8,000-character slices via its `offset` parameter.
 A broad query on a large archive can hit the server's instruction budget —
@@ -93,11 +97,19 @@ finalized again once it settles: one re-embed per resume. `longhand codex-sync
 --semantic` runs the full pipeline immediately on everything that scan
 discovers (still bounded by `--limit`, default 50), and `--no-finalize` keeps
 a run exact-only. `doctor` shows a "Codex finalizer" row while any thread is
-archived; `analyze` never embeds events, so it is not the remedy for one —
-and a long-running `longhand analyze --all` holds the same ingest lock a
-scheduled finalization pass needs, so it can defer Codex finalization until
-`analyze` finishes and the next scheduled run comes around
-([#97](https://github.com/Wynelson94/longhand/issues/97)).
+archived; `analyze` never embeds events, so it is not the remedy for one. If
+`analyze --all`/`--session` reaches an archived Codex thread anyway (it isn't
+excluded from the session list `analyze` iterates), it stamps that thread
+`analyzed` without ever calling the event-embedding step — and since the
+finalizer only looks at rollouts *not already* `analyzed`, that thread is
+then permanently skipped: not just deferred to the next scheduled run, but
+invisible to `recall`/semantic `search` until the rollout file changes again
+and triggers a fresh capture. The doctor "Codex finalizer" row goes quiet for
+it too, since it also counts by the `archived` stage. Separately, a
+long-running `longhand analyze --all` also holds the same ingest lock a
+scheduled finalization pass needs, which can delay (not block) other threads'
+finalization until the next scheduled run. Both effects are tracked in
+[#97](https://github.com/Wynelson94/longhand/issues/97).
 
 ## Keeping capture current
 
@@ -145,8 +157,9 @@ without deleting any archived history, `launchctl bootout "gui/$(id -u)"` the
 plist and remove it.
 
 On Linux, run `--watch` in a persistent terminal or schedule `longhand
-codex-sync` with a systemd timer or cron. On Windows, `--watch` or Task
-Scheduler.
+codex-sync` with a systemd timer or cron. Windows isn't a supported platform
+(see the README's Platform support section) — run Longhand under WSL2 and
+follow the Linux guidance above.
 
 ## What is captured, and what is not
 
