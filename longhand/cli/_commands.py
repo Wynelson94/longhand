@@ -42,6 +42,9 @@ from longhand.parser import JSONLParser, discover_sessions
 from longhand.recall import recall as recall_pipeline
 from longhand.replay import ReplayEngine
 from longhand.setup_commands import (
+    CLAUDE_CODE_MCP_ADD,
+)
+from longhand.setup_commands import (
     doctor as _doctor,
 )
 from longhand.setup_commands import (
@@ -141,28 +144,29 @@ def setup(
         False,
         "--skip-analysis",
         help=(
-            "Skip episodes, segments, and vector embeddings during the backfill "
-            "pass. Populates SQLite only — fast path for very large corpora. "
-            "Run `longhand analyze --all` later to fill in the vectors."
+            "Skip the analysis pass during the backfill: no episodes, segments, or "
+            "session/project vectors. Events are still stored and embedded, so "
+            "`search` works. Run `longhand analyze --all` later to add the rest."
         ),
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
 ):
     """One-command setup: ingest existing sessions, install hooks, configure MCP.
 
-    This wraps the five commands you would otherwise run individually:
-      - longhand ingest          (backfill existing Claude Code history)
-      - longhand analyze --all   (run analysis on every session)
-      - longhand hook install    (auto-ingest future sessions)
-      - longhand prompt-hook install  (auto-inject past context — optional)
-      - longhand mcp install     (expose tools to Claude Code)
-      - longhand doctor          (verify everything)
+    Five steps, each of which you could run on its own:
+      1. longhand ingest               (backfill Claude Code history, analysis included)
+      2. longhand hook install         (SessionEnd + Stop: auto-ingest future sessions)
+      3. longhand prompt-hook install  (auto-inject past context; --skip-prompt-hook)
+      4. longhand mcp install          (Claude Desktop; setup prints the Claude Code command)
+      5. longhand doctor               (verify everything)
 
-    Takes ~2 minutes on a laptop with a year of sessions. Safe to re-run.
+    Takes about two minutes on a laptop with a year of sessions. Safe to re-run;
+    it re-ingests every session.
 
-    For huge histories (>1GB of ~/.claude/projects), pass ``--skip-analysis``
-    to get a working SQLite store in under a minute and defer embeddings to
-    a later ``longhand analyze --all`` run.
+    For huge histories (>1GB of ~/.claude/projects), pass ``--skip-analysis`` to
+    defer episode and segment extraction to a later ``longhand analyze --all``
+    run. Events are still stored and embedded, so it saves the analysis time,
+    not the embedding time.
     """
     console.print("[bold cyan]→ Longhand setup[/bold cyan]\n")
 
@@ -171,7 +175,7 @@ def setup(
     # 1. Ingest existing history
     if not skip_ingest:
         label = (
-            "Ingesting existing Claude Code sessions (SQLite only, --skip-analysis)..."
+            "Ingesting existing Claude Code sessions (events only, --skip-analysis)..."
             if skip_analysis
             else "Ingesting existing Claude Code sessions..."
         )
@@ -228,12 +232,16 @@ def setup(
 
     # 4. MCP install
     if not skip_mcp:
-        console.print("\n[bold]4/5[/bold] Installing MCP server for Claude Code...")
+        console.print("\n[bold]4/5[/bold] Installing MCP server for Claude Desktop...")
         try:
             _mcp_install()
             console.print("[green]   ✓[/green] MCP server registered")
         except Exception as e:
             console.print(f"[red]   ✗ MCP install failed: {e}[/red]")
+        console.print(
+            f"   [dim]Claude Code: run [cyan]{CLAUDE_CODE_MCP_ADD}[/cyan] "
+            "(or install the Longhand plugin).[/dim]"
+        )
     else:
         console.print("\n[dim]4/5[/dim] Skipping MCP install")
 
@@ -266,7 +274,7 @@ def setup(
         console.print(f'Or:  [cyan]longhand status "{top_project}"[/cyan]')
     else:
         console.print("Or:  [cyan]longhand status <project-name>[/cyan]")
-    console.print("Or:  [cyan]longhand recap --days 7[/cyan]")
+    console.print("Or:  [cyan]longhand status --days 7[/cyan]")
     console.print(
         "\n[dim]If Longhand earns its keep, a star helps others find it: "
         "[/dim][cyan]https://github.com/Wynelson94/longhand[/cyan]"
@@ -442,9 +450,9 @@ def ingest(
         False,
         "--skip-analysis",
         help=(
-            "Populate SQLite only — skip episodes, segments, and vector "
-            "embeddings. Fast path for huge corpora. Run `longhand analyze --all` "
-            "afterwards to fill in the vectors."
+            "Skip the analysis pass: no episodes, segments, or session/project "
+            "vectors. Events are still stored and embedded. Run "
+            "`longhand analyze --all` afterwards to add the rest."
         ),
     ),
 ):
@@ -454,10 +462,11 @@ def ingest(
     vector embeddings for events, sessions, projects, segments, and
     problem→fix episodes. Semantic recall works immediately.
 
-    Pass ``--skip-analysis`` to populate SQLite only. Exact-text search,
-    file history, and timelines all still work; semantic ``recall`` needs
-    ``longhand analyze --all`` to run afterwards. Useful when the first-time
-    backfill of a multi-GB corpus would otherwise take a long time.
+    Pass ``--skip-analysis`` to store and embed events but defer the analysis
+    pass. ``search``, file history, and timelines all work; ``recall`` has no
+    episodes or segments until ``longhand analyze --all`` runs. It shortens a
+    first-time backfill of a multi-GB corpus by the analysis time; the event
+    embeddings still run.
     """
     from rich.progress import (
         BarColumn,
@@ -505,7 +514,7 @@ def ingest(
     if limit > 0:
         files = files[:limit]
 
-    suffix = " (SQLite only, --skip-analysis)" if skip_analysis else ""
+    suffix = " (events only, --skip-analysis)" if skip_analysis else ""
     console.print(f"[cyan]Found {len(files)} session file(s){suffix}[/cyan]")
 
     ingested = 0

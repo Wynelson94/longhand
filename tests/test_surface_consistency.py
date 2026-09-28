@@ -116,6 +116,69 @@ def test_docs_do_not_advertise_removed_commands():
                     raise AssertionError(f"{doc.name} still shows `longhand {name}` as usable")
 
 
+# ─── Runtime text ────────────────────────────────────────────────────────────
+#
+# The docs tests above guard README and CLAUDE.md. The program also tells users
+# and agents what to run next — setup's closing hints, recall's footers, tool
+# descriptions — and at 1.2.2 all three still pointed at things 1.0 removed.
+
+
+def test_runtime_command_suggestions_name_real_commands():
+    """`setup` ended by suggesting `longhand recap`, removed at 1.0.
+
+    Suggestions are written as `longhand X` in backticks or [cyan]longhand X
+    in Rich markup; each X must be a registered command (hidden ones count —
+    they are real entry points).
+    """
+    import typer.main
+
+    registered = set(typer.main.get_command(app).commands)
+    package = Path(mcp_server.__file__).parent
+    unknown = []
+    for path in sorted(package.rglob("*.py")):
+        for match in re.finditer(r"(?:\[cyan\]|`)longhand ([a-z][a-z0-9-]*)", path.read_text()):
+            if match.group(1) not in registered:
+                unknown.append(f"{path.relative_to(package)}: longhand {match.group(1)}")
+    assert not unknown, f"runtime text suggests commands that do not exist: {unknown}"
+
+
+def test_tool_descriptions_never_send_claude_to_a_retired_tool():
+    """get_session_timeline told Claude to "use search_in_context instead"."""
+    retired = set(mcp_server._RETIRED_TOOLS)
+    offenders = []
+    for tool in asyncio.run(mcp_server.list_tools()):
+        properties = tool.inputSchema.get("properties") or {}
+        texts = [tool.description or ""] + [p.get("description") or "" for p in properties.values()]
+        for text in texts:
+            for name in retired:
+                if re.search(rf"\buse\s+`?{name}\b", text):
+                    offenders.append(f"{tool.name} -> {name}")
+    assert not offenders, f"tool descriptions point at retired tools: {offenders}"
+
+
+def test_recall_narratives_never_send_claude_to_a_retired_tool():
+    """All three recall footers told Claude to call `search_in_context(...)`."""
+    from longhand.recall.narrative import build_narrative
+
+    segment = {
+        "session_id": "abcdef1234567890",
+        "topic": "the login bug",
+        "summary": "we fixed the login bug",
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "ended_at": "2026-09-01T11:00:00+00:00",
+    }
+    episode = {"session_id": "0123456789abcdef", "problem_description": "login fails"}
+    snippet = {"session_id": "fedcba9876543210", "content": "login", "timestamp": None}
+    narratives = {
+        "segments": build_narrative("login bug", [], [], {}, segments=[segment]),
+        "fallback": build_narrative("login bug", [], [], {}, fallback_snippets=[snippet]),
+        "secondary": build_narrative("login bug", [], [episode], {}, secondary_segments=[segment]),
+    }
+    for mode, text in narratives.items():
+        for name in mcp_server._RETIRED_TOOLS:
+            assert name not in text, f"{mode} narrative tells Claude to call retired {name}"
+
+
 # ─── Measured figures ────────────────────────────────────────────────────────
 
 
