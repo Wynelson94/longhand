@@ -1218,3 +1218,68 @@ def test_shared_timeline_orders_by_time_across_sidechains(
     assert "dupe#1" not in ids, "parser collision duplicates must stay hidden"
     # The reader can tell a subagent row from a parent row without guessing.
     assert {r["is_sidechain"] for r in rows} == {0, 1}
+
+
+# ─── Found by the 1.2.2 docs audit ───────────────────────────────────────────
+
+
+def _long_session(tmp_path, n, session_id="long-session"):
+    """A session file of n user turns, one second apart — past the 60-minute
+    range the paginated fixture above can express."""
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 4, 9, 10, 0, 0, tzinfo=timezone.utc)
+    path = tmp_path / "long.jsonl"
+    with path.open("w") as fh:
+        for i in range(n):
+            stamp = (base + timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            fh.write(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": f"u-{i}",
+                        "parentUuid": None,
+                        "sessionId": session_id,
+                        "timestamp": stamp,
+                        "cwd": "/Users/tester/test-project",
+                        "isSidechain": False,
+                        "message": {"role": "user", "content": f"message number {i}"},
+                    }
+                )
+                + "\n"
+            )
+    return path
+
+
+def test_timeline_tail_reaches_the_end_of_a_session_over_5000_events(tmp_path, temp_store):
+    """tail read the FIRST 5,000 events in ascending order and sliced their end,
+    so on a longer session "how did it end" returned events from the middle."""
+    parser = JSONLParser(_long_session(tmp_path, 5010))
+    events = list(parser.parse_events())
+    session = parser.build_session(events)
+    # SQLite only: the tool reads events, and embedding 5,010 of them buys nothing.
+    temp_store.sqlite.upsert_session(session)
+    temp_store.sqlite.insert_events(events)
+
+    payload = _payload(
+        _call(
+            mcp_server._tool_get_session_timeline,
+            temp_store,
+            {"session_id": session.session_id, "tail": 3},
+        )
+    )
+
+    assert [e["content"] for e in payload["events"]] == [
+        "message number 5007",
+        "message number 5008",
+        "message number 5009",
+    ]
+
+
+def test_reconcile_schema_default_matches_the_handler():
+    """The schema advertised fix=True by default while the handler dry-runs, so an
+    agent omitting `fix` expected a repair and got a report."""
+    reconcile = next(t for t in asyncio.run(mcp_server.list_tools()) if t.name == "reconcile")
+    fix = reconcile.inputSchema["properties"]["fix"]
+    assert fix["default"] is False
+    assert "default True" not in fix["description"]

@@ -30,6 +30,10 @@ CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 CLAUDE_DESKTOP_CONFIG_PATH = (
     Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
 )
+# `mcp install` writes Claude Desktop's config only; Claude Code registers the
+# server with its own CLI (or gets it from the plugin). setup and doctor both
+# print this, so it lives in one place.
+CLAUDE_CODE_MCP_ADD = "claude mcp add longhand -s user -- longhand mcp-server"
 
 
 def _backup(path: Path) -> Path | None:
@@ -626,8 +630,9 @@ def ingest_single_session(
     Called by the SessionEnd hook (``hook_mode=True``, transcript from stdin)
     and by humans passing an explicit ``--transcript`` (``hook_mode=False``).
     Non-blocking, fast (~1-2s) when analysis runs; even faster when skipped.
-    Pass ``run_analysis=False`` to populate SQLite only (no episodes,
-    segments, or vectors). Power users can defer the analysis pass via
+    Pass ``run_analysis=False`` to skip the analysis pass (no episodes,
+    segments, or session/project vectors); events are still stored and
+    embedded. Power users can run the analysis later via
     ``longhand analyze --all``.
 
     Hook mode never exits nonzero: a failing hook must not crash the Claude
@@ -1453,7 +1458,7 @@ def doctor(json_out: bool = False) -> None:
     else:
         _row(
             "Claude Code MCP",
-            "[dim]—[/dim] not installed (run [bold]claude mcp add longhand -s user -- longhand mcp-server[/bold])",
+            f"[dim]—[/dim] not installed (run [bold]{CLAUDE_CODE_MCP_ADD}[/bold])",
         )
 
     # 4. Data directory

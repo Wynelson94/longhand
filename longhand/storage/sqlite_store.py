@@ -490,11 +490,15 @@ class SQLiteStore:
         limit: int = 500,
         offset: int = 0,
         dedup_suffixes: bool = True,
+        newest_first: bool = False,
     ) -> list[dict[str, Any]]:
         """Return events with optional filters. When `dedup_suffixes` is
         True (default), collision-resolution duplicates produced by the
         parser (event_id containing `#`) are hidden — users only see the
         primary row per logical event.
+
+        `newest_first` reverses the timeline order, so `limit` keeps the most
+        recent rows instead of the oldest.
         """
         with self.connect() as conn:
             conditions: list[str] = []
@@ -526,7 +530,8 @@ class SQLiteStore:
             query = "SELECT * FROM events"
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
-            query += " ORDER BY timestamp ASC, sequence ASC LIMIT ? OFFSET ?"
+            direction = "DESC" if newest_first else "ASC"
+            query += f" ORDER BY timestamp {direction}, sequence {direction} LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]

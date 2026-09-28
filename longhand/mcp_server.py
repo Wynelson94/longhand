@@ -378,7 +378,8 @@ async def list_tools() -> list[Tool]:
                 "session ended, the latest user message, the most recent tool call "
                 "(this replaces get_latest_events). Use 'offset' to paginate through long sessions. "
                 "NOT for searching — if you're looking for something specific in a session, "
-                "use search_in_context instead of paginating this tool in a loop."
+                "use search with session_id and context_events instead of paginating this "
+                "tool in a loop."
             ),
             inputSchema={
                 "type": "object",
@@ -640,8 +641,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "fix": {
                         "type": "boolean",
-                        "default": True,
-                        "description": "Re-ingest missing/null-project transcripts (default True). Pass false for a dry-run summary.",
+                        "default": False,
+                        "description": "Apply the repairs: re-ingest missing/null-project transcripts. Defaults to false, which returns a dry-run summary.",
                     },
                 },
             },
@@ -1155,12 +1156,17 @@ async def _tool_get_session_timeline(
     summary_only = _bool(arguments.get("summary_only"), False)
 
     if tail:
-        # For tail: fetch all events (up to a reasonable cap) then slice the end
+        # The end of the same ascending timeline the paginated branch returns:
+        # fetch newest-first under the cap, then restore ascending order.
+        # Fetching ascending and slicing the end returned the middle of any
+        # session longer than the cap.
         all_events = store.sqlite.get_events(
             session_id=full_id,
             event_type=arguments.get("event_type"),
             limit=5000,
+            newest_first=True,
         )
+        all_events.reverse()
         if not include_thinking:
             all_events = [e for e in all_events if e["event_type"] != "assistant_thinking"]
         # Filter out epoch-timestamp unknown events by default

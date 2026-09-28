@@ -157,7 +157,8 @@ def build_narrative(
             seg_topic = (seg.get("topic") or seg.get("summary") or "")[:120].replace("\n", " ")
             lines.append(f"- session `{seg_short}` ({seg_when}): {seg_topic}")
         lines.append(
-            f'[Use `search_in_context("<session>", "{query[:50]}")` to read full context.]'
+            f'[Use `search(session_id="<session>", query="{query[:50]}", context_events=5)` '
+            "to read full context.]"
         )
 
     return "\n".join(lines)
@@ -210,7 +211,7 @@ def _build_segment_narrative(
 
     # Drill-down hint
     lines.append(
-        f'[Use `search_in_context("{session_short}", "{query[:50]}")` '
+        f'[Use `search(session_id="{session_short}", query="{query[:50]}", context_events=5)` '
         f"to read the full conversation.]\n"
     )
 
@@ -247,7 +248,8 @@ def _build_fallback_narrative(
         lines.append(f"### From session `{session_short}` ({when})")
         lines.append(f"> {content}\n")
         lines.append(
-            f'[Use `search_in_context("{session_short}", "{query[:50]}")` for full context.]\n'
+            f'[Use `search(session_id="{session_short}", query="{query[:50]}", '
+            f"context_events=5)` for full context.]\n"
         )
 
     return "\n".join(lines)
