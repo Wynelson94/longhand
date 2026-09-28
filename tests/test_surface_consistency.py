@@ -136,7 +136,9 @@ def test_runtime_command_suggestions_name_real_commands():
     package = Path(mcp_server.__file__).parent
     unknown = []
     for path in sorted(package.rglob("*.py")):
-        for match in re.finditer(r"(?:\[cyan\]|`)longhand ([a-z][a-z0-9-]*)", path.read_text()):
+        for match in re.finditer(
+            r"(?:\[cyan\]|`)longhand ([a-z][a-z0-9-]*)", path.read_text(encoding="utf-8")
+        ):
             if match.group(1) not in registered:
                 unknown.append(f"{path.relative_to(package)}: longhand {match.group(1)}")
     assert not unknown, f"runtime text suggests commands that do not exist: {unknown}"
