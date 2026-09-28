@@ -4,7 +4,7 @@
   Longhand: capture Codex sessions into the shared archive on a timer (macOS).
 
   Fill the two placeholders and install as a user LaunchAgent — see
-  docs/codex.md, "Automatic capture with launchd (macOS)":
+  docs/codex.md, "Faster capture with launchd (macOS)":
 
     __PYTHON__  absolute path of the Python interpreter that has longhand installed
     __HOME__    your home directory (the archive and log live under ~/.longhand)
