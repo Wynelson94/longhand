@@ -4,18 +4,21 @@ Longhand is a personal-memory tool that runs on every Claude Code turn. That sha
 
 ## The gate
 
-Every pull request must pass, and these are required checks on `main`:
+Every pull request must pass, and these are required status checks on `main` (`branches/main/protection` — required, verified live):
 
 ```
 ruff check longhand tests
 ruff format --check longhand tests
 mypy longhand
-pytest
+python scripts/check_version_sync.py
+pytest --cov=longhand --cov-report=term-missing --cov-fail-under=60
 ```
 
-Tests run on Python 3.10 through 3.14. A Windows leg (`windows-latest × py3.12`) runs non-blocking as evidence, not as a gate.
+That's Tests on Python 3.10 through 3.14 (all five required), Ruff, Version sync, and mypy. A Windows leg (`windows-latest × py3.12`) runs on every PR too but is non-blocking and currently red — 12 core tests fail every run ([#112](https://github.com/Wynelson94/longhand/issues/112)), hidden behind `continue-on-error` — so don't read a green PR as Windows working. See the README's Platform support section.
 
-Work on a branch and open a PR — `main` is protected and takes no direct pushes.
+Work on a branch and open a PR — `main` is protected and takes no direct pushes for non-admins. In practice that means the checks above must be green for a regular contributor's PR to merge; the branch protection rule itself requires zero approving reviews and doesn't enforce against admins, so for a repo admin, green CI is a norm to follow, not something GitHub enforces — an admin can push directly or merge without green checks if they choose to.
+
+Dev setup: `pip install -e ".[dev]"` pulls in pytest, pytest-cov, ruff, and mypy alongside the package itself.
 
 ## Before you change the schema
 
@@ -28,7 +31,7 @@ Read the **migration authoring policy** in the header of `longhand/storage/migra
 
 ## Before you change the hooks
 
-Read `tests/test_hook_guarantees.py` first. Hooks never raise, never touch the network, and never block the prompt (Promise 3). A hook that fails must exit 0, leave a breadcrumb, and let `reconcile` clean up later. If your change can make a hook slow, raise, or reach the network, it needs a different design rather than a passing test.
+Read `tests/test_hook_guarantees.py` first. Hooks never raise, never touch the network, and never block the prompt (Promise 3). A hook that fails must exit 0 — `SessionEnd` additionally leaves a breadcrumb for `reconcile` to clean up later, but `Stop` (the per-turn live tail) fails silently by design, since it must never add I/O to that path. If your change can make a hook slow, raise, or reach the network, it needs a different design rather than a passing test.
 
 ## Before you change the CLI or MCP surface
 
@@ -41,6 +44,8 @@ Retired MCP tool names stay in `_DISPATCH` **forever**. Users paste tool names i
 Write the test first and watch it fail. A test that has never been red has not been shown to test anything.
 
 Prefer a test that pins the behavior a user depends on over one that pins the current implementation. When a test encodes a decision, say why in the test or a comment near it — the reason is the part that gets lost.
+
+`tests/test_surface_consistency.py` gates README.md and CLAUDE.md against the actual tool listing, CLI surface, and test count — but it does not read `.claude-plugin/README.md` or the [wiki](https://github.com/Wynelson94/longhand/wiki) ([#107](https://github.com/Wynelson94/longhand/issues/107)). A PR that changes the MCP tool count, retires a CLI command, or shifts the test count should grep those by hand until that gap is closed.
 
 ## Reporting a bug
 

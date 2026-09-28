@@ -49,10 +49,10 @@ PR adding one line under **🧠 Knowledge & Memory**. Format follows the list's 
 **Exact line to add** (alphabetized — place where `Wynelson94/...` fits):
 
 ```markdown
-- [Wynelson94/longhand](https://github.com/Wynelson94/longhand) 🐍 🏠 🍎 🪟 🐧 - Persistent local memory for Claude Code. Indexes every session JSONL verbatim into SQLite + ChromaDB for semantic recall (~126ms) over your entire history. Zero API calls, never summarizes.
+- [Wynelson94/longhand](https://github.com/Wynelson94/longhand) 🐍 🏠 🍎 🐧 - Persistent local memory for Claude Code. Indexes every session JSONL verbatim into SQLite + ChromaDB for semantic recall (~128ms median) over your entire history. Zero API calls, never summarizes.
 ```
 
-Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🪟 Windows · 🐧 Linux.
+Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🐧 Linux. No 🪟 Windows badge — the Windows CI leg fails 12 core tests every run ([#112](https://github.com/Wynelson94/longhand/issues/112)); Windows isn't a supported platform.
 
 **PR steps:**
 
@@ -65,7 +65,7 @@ git checkout -b add-longhand
 git add README.md
 git commit -m "Add Wynelson94/longhand to Knowledge & Memory"
 git push -u origin add-longhand
-gh pr create --title "Add Wynelson94/longhand to Knowledge & Memory" --body "Adds [Longhand](https://github.com/Wynelson94/longhand), persistent local memory for Claude Code. Indexes session JSONL files verbatim into SQLite + ChromaDB for ~126ms semantic recall with zero API calls. Published to PyPI (\`pip install longhand\`) and available as a Claude Code plugin. MIT licensed."
+gh pr create --title "Add Wynelson94/longhand to Knowledge & Memory" --body "Adds [Longhand](https://github.com/Wynelson94/longhand), persistent local memory for Claude Code. Indexes session JSONL files verbatim into SQLite + ChromaDB for ~128ms median semantic recall with zero API calls. Published to PyPI (\`pip install longhand\`) and available as a Claude Code plugin. MIT licensed."
 ```
 
 ---

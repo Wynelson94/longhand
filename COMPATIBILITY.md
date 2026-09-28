@@ -10,11 +10,11 @@ Scope: these promises bind all of **1.x**. Breaking any of them requires 2.0.
 
 The CLI commands and MCP tools shipped at 1.0 keep working through 1.x. Removals and renames happen only at a major version, and anything slated for removal warns for **one full minor** first.
 
-**Enforced by:** the 0.13 deprecation cycle (every 1.0 removal warned in 0.13, one full minor ahead) and the retired MCP names, which left `list_tools()` at 1.0 but keep answering from `_DISPATCH` **forever** with a migration preamble — see `_RETIRED_TOOLS` in `longhand/mcp_server.py`.
+**Enforced by:** the 0.13 deprecation cycle (every 1.0 removal warned in 0.13, one full minor ahead), the retired MCP names, which left `list_tools()` at 1.0 but keep answering from `_DISPATCH` **forever** with a migration preamble — see `_RETIRED_TOOLS` in `longhand/mcp_server.py` — and `tests/test_surface_consistency.py`, which fails CI if a retired name leaks back into the listing, stops dispatching, or a tool description points at one (plus `tests/test_mcp_tools.py`'s `test_*_absorbs_*` tests, e.g. `test_search_absorbs_context_mode` through `test_list_projects_absorbs_match`, exercising the surviving call shapes directly).
 
 That last part is deliberate. Users paste tool names into their own `CLAUDE.md` files, and those files are not ours to update. A retired name must never hard-fail; it answers, tells you what replaced it, and does the work anyway.
 
-**Additive changes are always allowed:** new commands, new tools, new optional parameters, new fields in a response.
+**Additive changes are always allowed:** new commands, new tools, new optional parameters, new fields in a response. The 1.1 surface added under this promise — `codex-sync` and its flags, and the `longhand-shared` server's four tools — is bound by it the same as everything from 1.0.
 
 ## 2. Forward data compatibility
 
@@ -28,17 +28,19 @@ The promise is **forward-shaped**, and the distinction matters: older code does 
 
 Longhand's Claude Code hooks **never raise, never touch the network, and never block your prompt**.
 
-This is the promise that matters most in daily use, because a hook runs on every turn. A memory tool that occasionally breaks your editor is worse than no memory tool. When a hook fails it exits 0, writes a one-line breadcrumb to `logs/hook-errors-YYYY-MM-DD.log`, and leaves the transcript for `reconcile` to pick up.
+This is the promise that matters most in daily use, because a hook runs on every turn. A memory tool that occasionally breaks your editor is worse than no memory tool. All three hooks exit 0 on failure, but they don't fail identically: `SessionEnd` (`ingest-session`) writes a one-line breadcrumb to `logs/hook-errors-YYYY-MM-DD.log` and leaves the transcript for `reconcile` to pick up; `Stop` (`ingest-live`) swallows a failure with no breadcrumb at all — it runs on every turn, so it stays silent rather than adding I/O to that path, and `SessionEnd`/`reconcile` are the backstop; `UserPromptSubmit` (`__prompt-hook-run`) prints `{}` and injects nothing.
+
+"Never touch the network" has one shared, disclosed exception: the first time a hook needs the local embedding model and it isn't cached yet, ChromaDB downloads it (~80MB, one time, from a fixed URL — not pypi.org). No hook makes the interactive CLI's update-check request; that one is structurally excluded (see SECURITY.md).
 
 **Enforced by:** `tests/test_hook_guarantees.py`, CI-gated on every PR.
 
-**Field record:** across the v0.13 bake (2026-07-11 → 08-12) there were 23 hook failures. Every one exited 0, left a breadcrumb, and never blocked a prompt.
+**Field record:** across the v0.13 bake (2026-07-11 → 08-12) there were 23 `SessionEnd` hook failures — the only hook that leaves a breadcrumb, so the only one this count can see. Every one exited 0, left a breadcrumb, and never blocked a prompt.
 
 ## 4. Upstream drift is never silent
 
-Claude Code's transcript format is not ours to control. When an unknown entry type appears, Longhand **preserves it** (stored as `raw_json`), **surfaces it** (the "Transcript format" row in `longhand doctor`), and **regression-gates it** (transcript-shapes fixture test). It does not drop data it does not recognize, and it does not pretend nothing changed.
+Claude Code's transcript format is not ours to control — and neither is Codex's, since 1.1.0. When an unknown entry type appears, Longhand **preserves it** (stored as `raw_json`), **surfaces it** (the "Transcript format" row in `longhand doctor`), and **regression-gates it** (a fixture test). It does not drop data it does not recognize, and it does not pretend nothing changed. Codex's `response_item`/`event_msg` envelopes are unwrapped one level so the row names the actual kind (`response_item/<kind>`, `event_msg/<kind>`) instead of the generic envelope type.
 
-**Enforced by:** the doctor row, the fixture test under `tests/fixtures/transcript_shapes/`, and the raw_json preservation path in the parser.
+**Enforced by:** the doctor row; `tests/fixtures/transcript_shapes/` + the raw_json preservation path in the parser for Claude Code; `tests/fixtures/codex_shapes/` + `tests/test_codex_shapes.py` for Codex, covering both CLI generations' rollout shapes.
 
 ### raw_json storage compatibility
 
@@ -48,7 +50,7 @@ Readers accept both the inline and normalized forms of preserved entries, indefi
 
 Error, fix, and resolved counts reflect real signals. Longhand does not inflate what it found, and it does not recommend a remedy that cannot work.
 
-**Enforced by:** the verification gate and context-aware error suppression in `longhand/extractors/errors.py` (which cut optimistic bias from both directions — benign noise no longer becomes a "problem," and real errors are suppressed by context rather than by deleting patterns), plus the class-aware hook-error remedy in `_hook_errors_status()`.
+**Enforced by:** the verification gate and context-aware error suppression in `longhand/extractors/errors.py` (which cut optimistic bias from both directions — benign noise no longer becomes a "problem," and real errors are suppressed by context rather than by deleting patterns), the class-aware hook-error remedy in `_hook_errors_status()`, and the runtime-text checks in `tests/test_surface_consistency.py`: one fails CI if a `longhand <cmd>` suggestion written in backticks or `[cyan]` markup anywhere in the package isn't a registered command; a second fails if a tool description tells Claude to *use* one of the six retired MCP tool names (they still work, but aren't the current names); a third fails if any of three synthetic recall narratives mentions a retired name at all.
 
 That last one earned its place. Through 0.13, `doctor` told every hook error to run `reconcile --fix`. But `reconcile` enumerates from **disk**, so a transcript that never landed is invisible to it forever — the advice was a no-op for that entire class. Over the bake, **21 of 23** real hook errors were exactly that class. The row now splits the remedy by class and says plainly when there is nothing to heal.
 
@@ -60,4 +62,4 @@ That last one earned its place. Through 0.13, `doctor` told every hook error to 
 - **Performance characteristics.** Ingest and recall latency may change in either direction.
 - **The Chroma vector index on disk.** It is a derived cache. Any release may require a re-index; your SQLite store is the source of truth and is covered by Promise 2.
 - **Python versions below the floor in `pyproject.toml`.** Dropping an end-of-life Python is a minor-version change, not a major one.
-- **Windows.** CI-tested on a best-effort basis (`windows-latest × py3.12`, non-blocking). Not a supported tier — see the README for the current evidence.
+- **Windows.** Not supported — use WSL2. A `windows-latest × py3.12` leg runs on every PR, but it's non-blocking and currently fails 12 core tests every run ([#112](https://github.com/Wynelson94/longhand/issues/112)); see the README's Platform support section.
