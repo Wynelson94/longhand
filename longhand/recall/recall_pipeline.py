@@ -20,7 +20,7 @@ from typing import Any
 
 from longhand.parser import discover_sessions
 from longhand.recall.episode_search import find_episodes
-from longhand.recall.narrative import build_narrative
+from longhand.recall.narrative import _humanize_timestamp, build_narrative
 from longhand.recall.project_fallback import trigger_background_episode_backfill
 from longhand.recall.project_match import ProjectMatch, match_projects
 from longhand.recall.segment_search import find_segments
@@ -79,6 +79,7 @@ class RecallResult:
     segments: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
     narrative: str = ""
+    age_gap_note: str | None = None
 
 
 @dataclass
@@ -148,6 +149,52 @@ def _load_episode_artifacts(store: LonghandStore, episode: dict[str, Any]) -> di
             artifacts["diagnosis"] = diag_event.get("content")
 
     return artifacts
+
+
+# Issue #82: an old episode can outrank fresh work on the same topic, because
+# recency is worth at most 0.5 points in _rank_score against 10 per keyword
+# hit. Re-weighting would break "what did I do last year", so recall states the
+# gap instead of reordering: the top episode must be at least this many days
+# old, and at least this many days older than the newest runner-up.
+_AGE_GAP_DAYS = 30
+
+
+def _episode_time(ep: dict[str, Any]) -> datetime | None:
+    """When an episode happened: started_at (what the narrative shows), else ended_at."""
+    stamp = ep.get("started_at") or ep.get("ended_at")
+    if not stamp:
+        return None
+    try:
+        when = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _age_gap_note(episodes: list[dict[str, Any]], now: datetime, time_scoped: bool) -> str | None:
+    """Name the gap when the best match is much older than the alternatives.
+
+    Returns None when the query carried a time phrase (old results were asked
+    for), when there is no dated runner-up to compare against, or when the gap
+    is under _AGE_GAP_DAYS. Adds information only: `episodes` is never
+    reordered.
+    """
+    if time_scoped or len(episodes) < 2:
+        return None
+    top = _episode_time(episodes[0])
+    runner_ups = [t for t in map(_episode_time, episodes[1:]) if t is not None]
+    if top is None or not runner_ups:
+        return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    newest = max(runner_ups)
+    if (now - top).days < _AGE_GAP_DAYS or (newest - top).days < _AGE_GAP_DAYS:
+        return None
+    return (
+        f"The best match is from {_humanize_timestamp(top.isoformat())}, but newer "
+        f"related work exists from {_humanize_timestamp(newest.isoformat())}. If you "
+        'meant current work, add a time phrase like "this week" or "this month".'
+    )
 
 
 def recall(
@@ -302,11 +349,13 @@ def recall(
         # baseline climbed into the top results. Confirmed as index growth, not
         # a code change, by reproducing a byte-identical diff on the v0.13.0 tag.
         #
-        # Deliberately not fixed yet: a ranking change validated on a corpus
-        # that barely exhibits the problem is a guess wearing a test. Revisit
-        # at ~600 and ~800 sessions per the issue. Raising this weight is
-        # probably the WRONG fix — "what did I do last year" needs old results
-        # to win. See the issue for the shape that is more likely right.
+        # Still not re-weighted, on purpose: raising this weight would break
+        # "what did I do last year", which needs old results to win. Instead
+        # _age_gap_note() states the gap when an untimed query's top episode
+        # is much older than the newest runner-up — information added, order
+        # unchanged. Re-measured 2026-09-27 at 792 sessions (baseline never
+        # re-captured): 6 of 8 queries shifted, the same as at 728; most
+        # sessions entering a top five postdated the baseline.
         recency_boost = 0.0
         ended_at = ep.get("ended_at")
         if ended_at:
@@ -446,6 +495,10 @@ def recall(
     if episodes:
         artifacts = _load_episode_artifacts(store, episodes[0])
 
+    # 9.5. Issue #82 — when an untimed query's best episode is much older than
+    # the runner-ups, say so. Ranking above is untouched.
+    age_gap_note = _age_gap_note(episodes, now, time_scoped=since is not None or until is not None)
+
     # 10. Build narrative
     narrative = build_narrative(
         query=query,
@@ -456,6 +509,7 @@ def recall(
         segments=segments if use_segments_as_primary else [],
         fallback_snippets=fallback_snippets if use_fallback else [],
         secondary_segments=secondary_segments,
+        age_gap_note=age_gap_note,
     )
 
     return RecallResult(
@@ -466,6 +520,7 @@ def recall(
         segments=segments,
         artifacts=artifacts,
         narrative=narrative,
+        age_gap_note=age_gap_note,
     )
 
 
