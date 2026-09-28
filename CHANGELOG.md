@@ -9,6 +9,57 @@ commits and tag annotations of those releases.
 
 ---
 
+## [1.2.2] — 2026-09-27
+
+Recall now says when its best match is much older than the alternatives, a
+Codex record no longer trips the doctor's format-drift warning, and CI stops
+crashing on Python 3.13.
+
+### Added
+
+- **Recall flags an old best match instead of letting it read as current
+  (#82).** Recency is worth at most 0.5 points in episode ranking against 10
+  per keyword hit, so an old episode can outrank fresh work on the same topic.
+  Re-weighting would break "what did I do last year", so nothing is reordered.
+  When a query carries no time phrase and the top episode is at least 30 days
+  old and at least 30 days older than the newest runner-up, recall says so
+  before the answer: *"The best match is from 6 months ago, but newer related
+  work exists from 2 months ago. If you meant current work, add a time phrase
+  like "this week" or "this month"."* It leads the narrative (MCP `recall`,
+  `longhand recall`, the demo), appears in the UserPromptSubmit hook's
+  injected context, and is on `RecallResult.age_gap_note` for programmatic
+  callers. Measured before shipping at 792 sessions: 6 of the 8 `recall_diff`
+  queries had shifted since the August baseline, most toward newer sessions;
+  the note fires on 3 of the 8.
+
+### Fixed
+
+- **`longhand doctor` reported "the transcript format has drifted" for a Codex
+  `compacted` record.** Codex writes one when it compacts a thread's context
+  window. Its `replacement_history` re-lists messages the rollout already
+  carries (26 of 27 on the live record), plus injected developer context and
+  an encrypted item. It is now skipped, like `token_usage_record` and
+  `world_state`, and the drift row treats Codex skip types stored before their
+  skip existed as understood — the rule it already applied to Claude types.
+- **`scripts/recall_diff.py` always printed "0 queries changed".** It counted
+  changed queries by re-parsing its own output, whose headers begin with a
+  newline, so the count matched nothing. It now counts directly and prints
+  the denominator ("6 of 8").
+
+### Internal
+
+- **CI's Python 3.13 leg crashed with `Illegal instruction` on some runners.**
+  `chroma-hnswlib` 0.7.6 has no cp313/cp314 wheel, so pip builds it with
+  `-march=native`, and the pip cache restored that CPU-specific build onto
+  runners with a different CPU. Builds are now portable
+  (`HNSWLIB_NO_NATIVE=1`), and cached hnswlib wheels are evicted before
+  install. A local install builds hnswlib for the machine it runs on, so
+  this was a CI problem, not a user-facing one.
+- The retired fieldnotes notes moved to `docs/fieldnotes-archive/`, and the
+  `.fieldnotes/` machinery is gone.
+
+---
+
 ## [1.2.1] — 2026-09-17
 
 Three MCP-path fixes. The `longhand timeline` CLI reads `get_events` directly
