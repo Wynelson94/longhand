@@ -1244,9 +1244,7 @@ def analyze(
             console.print("\n[cyan]Rebuilding episode embeddings...[/cyan]")
             try:
                 store.vectors.client.delete_collection(name="episodes")
-                store.vectors.episodes_collection = store.vectors.client.get_or_create_collection(
-                    name="episodes"
-                )
+                store.vectors.episodes_collection = store.vectors._recreate_collection("episodes")
             except Exception:
                 pass
 
