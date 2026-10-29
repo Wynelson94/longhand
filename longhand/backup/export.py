@@ -80,6 +80,11 @@ def session_source(session_id: str) -> str:
     return "codex" if session_id.startswith(CODEX_PREFIX) else "claude"
 
 
+def transcript_base_name(source: str) -> str:
+    """``rollout`` for Codex (the file name Codex itself uses), ``transcript`` for Claude Code."""
+    return "rollout" if source == "codex" else "transcript"
+
+
 def session_dir_name(session_id: str) -> str:
     """A directory name that is safe on every filesystem git runs on.
 
@@ -343,7 +348,7 @@ def export_session(
     source = session_source(session_id)
     rel_dir = session_rel_dir(row)
     session_dir = dest_root / Path(rel_dir)
-    base_name = "rollout" if source == "codex" else "transcript"
+    base_name = transcript_base_name(source)
 
     stream = _SessionLines(sqlite, session_id)
     mask_counts: dict[str, int] = {}

@@ -17,6 +17,8 @@ import pytest
 
 from longhand.backup.export import (
     BACKUP_FORMAT,
+    PART_BYTES_DEFAULT,
+    SessionExport,
     export_session,
     iter_session_lines,
     mask_line,
@@ -24,11 +26,13 @@ from longhand.backup.export import (
     read_session_json,
     read_session_lines,
     session_rel_dir,
+    transcript_base_name,
     write_manifest,
     write_readme_if_absent,
     write_session_files,
     write_session_meta,
 )
+from longhand.backup.merge import reconcile_session
 from longhand.parser import JSONLParser
 
 CODEX_FIXTURE = Path(__file__).parent / "fixtures" / "codex_shapes" / "entries.jsonl"
@@ -335,3 +339,170 @@ def test_readme_written_only_when_absent(tmp_path):
     readme.write_text("edited", encoding="utf-8")
     write_readme_if_absent(tmp_path)
     assert readme.read_text(encoding="utf-8") == "edited"
+
+
+# ─── Never-shrink reconcile against the repo ──────────────────────────────────
+
+REL = "sessions/claude/2026/04/merge-1"
+
+
+def _stage(
+    root: Path,
+    rel_dir: str,
+    lines: list[str],
+    *,
+    source: str = "claude",
+    part_bytes: int = PART_BYTES_DEFAULT,
+) -> SessionExport:
+    """A hand-built staged export: parts plus session.json, the shape export_session writes."""
+    session_dir = root / Path(rel_dir)
+    files = write_session_files(
+        lines, session_dir, transcript_base_name(source), part_bytes=part_bytes
+    )
+    session_id = rel_dir.rsplit("/", 1)[-1]
+    meta: dict[str, Any] = {
+        "format": BACKUP_FORMAT,
+        "longhand_version": "test",
+        "session_id": session_id,
+        "source": source,
+        "rel_dir": rel_dir,
+        "parts": list(files.parts),
+        "lines": files.lines,
+        "bytes": files.bytes,
+        "sha256": files.sha256,
+        "event_count": len(lines),
+        "last_event_timestamp": None,
+        "exported_at": "2026-10-29T00:00:00+00:00",
+        "masked": True,
+        "original_transcript_path": None,
+        "session": {"session_id": session_id},
+    }
+    write_session_meta(session_dir, meta)
+    return SessionExport(
+        session_id=session_id,
+        source=source,
+        rel_dir=rel_dir,
+        files=files,
+        mask_counts={},
+        meta=meta,
+    )
+
+
+def test_transcript_base_name_by_source():
+    assert transcript_base_name("claude") == "transcript"
+    assert transcript_base_name("codex") == "rollout"
+
+
+def test_reconcile_new_moves_staged_into_repo(temp_store, sample_session_file, tmp_path):
+    _ingest(temp_store, sample_session_file)
+    row = temp_store.sqlite.get_session("test-session-1")
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    exp = export_session(temp_store.sqlite, row, staging)
+    result = reconcile_session(exp, staging, repo)
+    assert result.outcome == "new"
+    assert result.meta == exp.meta
+    repo_dir = repo / exp.rel_dir
+    assert sorted(p.name for p in repo_dir.iterdir()) == ["session.json", "transcript.jsonl"]
+    assert read_session_json(repo_dir) == exp.meta
+    assert not (staging / exp.rel_dir).exists()
+
+
+def test_reconcile_new_replaces_a_partial_repo_dir(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    partial = repo / Path(REL)
+    partial.mkdir(parents=True)
+    (partial / "transcript.part-0001.jsonl").write_text("stale\n", encoding="utf-8")
+    staged = _stage(staging, REL, ["a", "b"])
+    result = reconcile_session(staged, staging, repo)
+    assert result.outcome == "new"
+    assert sorted(p.name for p in partial.iterdir()) == ["session.json", "transcript.jsonl"]
+    assert list(read_session_lines(partial, result.meta)) == ["a", "b"]
+
+
+def test_reconcile_unchanged_when_sha_matches(temp_store, sample_session_file, tmp_path):
+    _ingest(temp_store, sample_session_file)
+    row = temp_store.sqlite.get_session("test-session-1")
+    repo = tmp_path / "repo"
+    first = export_session(temp_store.sqlite, row, tmp_path / "staging-1")
+    assert reconcile_session(first, tmp_path / "staging-1", repo).outcome == "new"
+    before = (repo / first.rel_dir / "session.json").read_bytes()
+    second = export_session(temp_store.sqlite, row, tmp_path / "staging-2")
+    result = reconcile_session(second, tmp_path / "staging-2", repo)
+    assert result.outcome == "unchanged"
+    assert result.meta == first.meta
+    assert (repo / first.rel_dir / "session.json").read_bytes() == before
+    assert not (tmp_path / "staging-2" / second.rel_dir).exists()
+
+
+def test_reconcile_subset_leaves_repo_untouched(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    repo_export = _stage(repo, REL, ["l1", "l2", "l3", "l4", "l5"])
+    before = (repo / Path(REL) / "session.json").read_bytes()
+    staged = _stage(staging, REL, ["l1", "l2", "l3", "l4"])
+    result = reconcile_session(staged, staging, repo)
+    assert result.outcome == "subset"
+    assert result.meta["sha256"] == repo_export.files.sha256
+    assert (repo / Path(REL) / "session.json").read_bytes() == before
+    assert list(read_session_lines(repo / Path(REL), result.meta)) == ["l1", "l2", "l3", "l4", "l5"]
+    assert not (staging / Path(REL)).exists()
+
+
+def test_reconcile_subset_with_reordered_lines_is_still_a_subset(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    _stage(repo, REL, ["a", "b", "c"])
+    staged = _stage(staging, REL, ["c", "a"])
+    assert reconcile_session(staged, staging, repo).outcome == "subset"
+
+
+def test_reconcile_grown_writes_union_in_repo_order(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    _stage(repo, REL, ["a", "b", "c"])
+    staged = _stage(staging, REL, ["a", "c", "d"])
+    result = reconcile_session(staged, staging, repo)
+    assert result.outcome == "grown"
+    repo_dir = repo / Path(REL)
+    assert list(read_session_lines(repo_dir, result.meta)) == ["a", "b", "c", "d"]
+    assert result.meta["lines"] == 4
+    assert result.meta["bytes"] == 8
+    assert result.meta["sha256"] == hashlib.sha256(b"a\nb\nc\nd\n").hexdigest()
+    assert result.meta["parts"] == ["transcript.jsonl"]
+    assert result.meta["session_id"] == staged.meta["session_id"]
+    assert result.meta["exported_at"] != staged.meta["exported_at"]
+    assert read_session_json(repo_dir) == result.meta
+    assert sorted(p.name for p in repo_dir.iterdir()) == ["session.json", "transcript.jsonl"]
+    assert not (staging / Path(REL)).exists()
+    assert not list(staging.rglob("*.merge*"))
+
+
+def test_reconcile_grown_splits_parts_and_drops_stale_ones(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    old_lines = [f"x{i}" + "x" * 8 for i in range(3)]  # distinct 10-byte lines
+    new_lines = [f"y{i}" + "y" * 8 for i in range(3)]
+    _stage(repo, REL, old_lines, part_bytes=25)  # the repo holds two parts
+    staged = _stage(staging, REL, new_lines, part_bytes=25)
+    result = reconcile_session(staged, staging, repo, part_bytes=25)
+    assert result.outcome == "grown"
+    repo_dir = repo / Path(REL)
+    assert result.meta["parts"] == [f"transcript.part-000{i}.jsonl" for i in (1, 2, 3)]
+    assert sorted(p.name for p in repo_dir.glob("*.jsonl")) == result.meta["parts"]
+    assert list(read_session_lines(repo_dir, result.meta)) == old_lines + new_lines
+
+
+def test_reconcile_grown_collapses_duplicate_lines_in_the_staged_copy(tmp_path):
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    _stage(repo, REL, ["a"])
+    staged = _stage(staging, REL, ["b", "b", "a"])
+    result = reconcile_session(staged, staging, repo)
+    assert result.outcome == "grown"
+    assert list(read_session_lines(repo / Path(REL), result.meta)) == ["a", "b"]
+
+
+def test_reconcile_grown_codex_uses_rollout_parts(tmp_path):
+    rel = "sessions/codex/2026/09/thread-1"
+    staging, repo = tmp_path / "staging", tmp_path / "repo"
+    _stage(repo, rel, ["m"], source="codex")
+    staged = _stage(staging, rel, ["m", "n"], source="codex")
+    result = reconcile_session(staged, staging, repo)
+    assert result.outcome == "grown"
+    assert result.meta["parts"] == ["rollout.jsonl"]
+    assert sorted(p.name for p in (repo / Path(rel)).iterdir()) == ["rollout.jsonl", "session.json"]
