@@ -183,7 +183,7 @@ def test_config_rejects_unknown_namespace(runner: CliRunner, tmp_path: Path, mon
     monkeypatch.setenv("HOME", str(tmp_path))
     result = runner.invoke(app, ["config", "--set", "bogus.key=1"])
     assert result.exit_code == 0
-    assert "Only hook.* and redact.* keys" in plain(result.stdout)
+    assert "Only hook.*, redact.* and backup.* keys" in plain(result.stdout)
 
 
 def test_config_accepts_redact_namespace(runner: CliRunner, tmp_path: Path, monkeypatch):

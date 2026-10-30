@@ -236,3 +236,34 @@ def temp_store(tmp_path: Path):
 
     store = LonghandStore(data_dir=tmp_path / "longhand")
     yield store
+
+
+# ─── Git fixtures for the backup tests ────────────────────────────────────────
+
+
+@pytest.fixture
+def isolated_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's global git config (identity, signing, hooks) out of a test."""
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def bare_remote(tmp_path: Path, isolated_git_config: None) -> Path:
+    """An empty bare repository whose HEAD points at main, standing in for a remote."""
+    import shutil
+    import subprocess
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed")
+    remote = tmp_path / "remote.git"
+    subprocess.run([git, "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(
+        [git, "--git-dir", str(remote), "symbolic-ref", "HEAD", "refs/heads/main"], check=True
+    )
+    return remote

@@ -18,14 +18,17 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from longhand.cli.backup_commands import backup_app, restore
 from longhand.cli.helpers import (
     _format_timestamp,
     _get_store,
@@ -71,6 +74,9 @@ from longhand.setup_commands import (
 from longhand.setup_commands import (
     run_prompt_hook as _run_prompt_hook,
 )
+
+if TYPE_CHECKING:
+    from longhand.storage import LonghandStore
 
 app = typer.Typer(
     name="longhand",
@@ -585,6 +591,27 @@ def ingest(
 # -----------------------------------------------------------------------------
 
 
+def _maybe_auto_backup(store: LonghandStore) -> None:
+    """The scheduled reconciler's backup hook (only when backup.auto is on; at most hourly).
+
+    maybe_auto_backup never raises; the guard here is belt and braces so the
+    reconciler's exit status can never depend on the backup.
+    """
+    try:
+        from longhand.backup.service import maybe_auto_backup
+
+        report = maybe_auto_backup(store.sqlite, store.data_dir)
+    except Exception:
+        return
+    if report is None:
+        return
+    pushed = "pushed" if report.pushed else "not pushed"
+    line = f"[bold]Backup[/bold] {report.added} added, {report.grown} updated, {pushed}"
+    if report.error:
+        line += f" [red]{escape(report.error)}[/red]"
+    console.print(line)
+
+
 @app.command(
     rich_help_panel="Data",
     epilog="See also: longhand reattribute — re-derives project ownership for "
@@ -622,6 +649,8 @@ def reconcile(
     if report.files_on_disk == 0 and report.codex_on_disk == 0:
         console.print("[yellow]No session files found on disk.[/yellow]")
         console.print("Default location: ~/.claude/projects (Codex: ~/.codex/sessions)")
+        if fix:
+            _maybe_auto_backup(store)
         return
 
     if report.files_on_disk:
@@ -685,6 +714,7 @@ def reconcile(
 
     if not fixable_claude and not fixable_codex:
         console.print("\n[green]Nothing to fix.[/green]")
+        _maybe_auto_backup(store)
         return
 
     n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
@@ -704,6 +734,7 @@ def reconcile(
             f" ([dim]{report.codex_settling} settling[/dim])" if report.codex_settling else ""
         )
         console.print(f"[bold]Finalized {report.codex_finalized}[/bold] Codex thread(s){settling}")
+    _maybe_auto_backup(store)
 
 
 # -----------------------------------------------------------------------------
@@ -1577,6 +1608,9 @@ def config(
     - hook.max_episodes: max episodes to consider (default 2)
     - hook.enabled: true/false to enable/disable without uninstalling
     - redact.enabled: true/false — mask secret-shaped strings at ingest (default false)
+    - backup.auto: true/false — let the scheduled reconciler push the backup hourly
+      (enable backups first with `longhand backup init`; backup.enabled/remote/path are
+      written by init)
     """
     import json as _json
 
@@ -1589,10 +1623,19 @@ def config(
             return
         key_path, value_str = set_key.split("=", 1)
         parts = key_path.split(".")
-        if len(parts) != 2 or parts[0] not in ("hook", "redact"):
+        if len(parts) != 2 or parts[0] not in ("hook", "redact", "backup"):
             console.print(
-                "[red]Only hook.* and redact.* keys are supported. "
-                "E.g. --set hook.min_relevance=3.0 or --set redact.enabled=true[/red]"
+                "[red]Only hook.*, redact.* and backup.* keys are supported. "
+                "E.g. --set hook.min_relevance=3.0, --set redact.enabled=true "
+                "or --set backup.auto=true[/red]"
+            )
+            return
+
+        if parts[0] == "backup" and parts[1] != "auto":
+            console.print(
+                "[red]backup.enabled, backup.remote and backup.path are written by "
+                "longhand backup init, after its consent screen. Here you can set "
+                "backup.auto=true|false (the same switch as longhand backup auto on|off).[/red]"
             )
             return
 
@@ -1651,6 +1694,24 @@ def config(
         str(redaction_enabled()),
         "Mask secret-shaped strings (API keys, tokens) at ingest",
     )
+
+    from longhand.backup.gitrepo import redact_remote
+    from longhand.backup.service import BackupConfig
+    from longhand.storage.store import resolve_data_dir
+
+    backup_cfg = BackupConfig.load(resolve_data_dir(data_dir))
+    table.add_row(
+        "backup.enabled", str(backup_cfg.enabled), "Git-backed backup of the archive (opt-in)"
+    )
+    table.add_row(
+        "backup.auto", str(backup_cfg.auto), "Hourly pushes from the scheduled reconciler"
+    )
+    table.add_row(
+        "backup.remote",
+        redact_remote(backup_cfg.remote) if backup_cfg.remote else "—",
+        "Where the backup goes (set by backup init)",
+    )
+    table.add_row("backup.path", backup_cfg.path or "—", "The clone (default <data dir>/backup)")
 
     console.print(table)
     console.print(f"\n[dim]Config file: {config_path}[/dim]")
@@ -2641,6 +2702,8 @@ schedule_app = typer.Typer(
 )
 
 app.add_typer(db_app, name="db", rich_help_panel="Data")
+app.add_typer(backup_app, name="backup", rich_help_panel="Data")
+app.command("restore", rich_help_panel="Data")(restore)
 app.add_typer(hook_app, name="hook", rich_help_panel="Plumbing")
 app.add_typer(mcp_app, name="mcp", rich_help_panel="Plumbing")
 app.add_typer(schedule_app, name="schedule", rich_help_panel="Plumbing")
