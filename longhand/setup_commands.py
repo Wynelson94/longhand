@@ -1529,6 +1529,11 @@ def doctor(json_out: bool = False) -> None:
     )
     _row("Storage", f"SQLite {_human_size(db_size)} · vectors {_human_size(chroma_size)}")
 
+    # 8. Opt-in git backup: off unless `longhand backup init` ran on this machine.
+    from longhand.backup.service import backup_status_line
+
+    _row("Backup", backup_status_line(store.data_dir))
+
     with store.sqlite.connect() as conn:
         aux_events = conn.execute(
             "SELECT COUNT(*) FROM events WHERE event_type = 'unknown'"

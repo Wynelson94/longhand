@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -72,6 +74,9 @@ from longhand.setup_commands import (
 from longhand.setup_commands import (
     run_prompt_hook as _run_prompt_hook,
 )
+
+if TYPE_CHECKING:
+    from longhand.storage import LonghandStore
 
 app = typer.Typer(
     name="longhand",
@@ -586,6 +591,27 @@ def ingest(
 # -----------------------------------------------------------------------------
 
 
+def _maybe_auto_backup(store: LonghandStore) -> None:
+    """The scheduled reconciler's backup hook (only when backup.auto is on; at most hourly).
+
+    maybe_auto_backup never raises; the guard here is belt and braces so the
+    reconciler's exit status can never depend on the backup.
+    """
+    try:
+        from longhand.backup.service import maybe_auto_backup
+
+        report = maybe_auto_backup(store.sqlite, store.data_dir)
+    except Exception:
+        return
+    if report is None:
+        return
+    pushed = "pushed" if report.pushed else "not pushed"
+    line = f"[bold]Backup[/bold] {report.added} added, {report.grown} updated, {pushed}"
+    if report.error:
+        line += f" [red]{escape(report.error)}[/red]"
+    console.print(line)
+
+
 @app.command(
     rich_help_panel="Data",
     epilog="See also: longhand reattribute — re-derives project ownership for "
@@ -623,6 +649,8 @@ def reconcile(
     if report.files_on_disk == 0 and report.codex_on_disk == 0:
         console.print("[yellow]No session files found on disk.[/yellow]")
         console.print("Default location: ~/.claude/projects (Codex: ~/.codex/sessions)")
+        if fix:
+            _maybe_auto_backup(store)
         return
 
     if report.files_on_disk:
@@ -686,6 +714,7 @@ def reconcile(
 
     if not fixable_claude and not fixable_codex:
         console.print("\n[green]Nothing to fix.[/green]")
+        _maybe_auto_backup(store)
         return
 
     n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
@@ -705,6 +734,7 @@ def reconcile(
             f" ([dim]{report.codex_settling} settling[/dim])" if report.codex_settling else ""
         )
         console.print(f"[bold]Finalized {report.codex_finalized}[/bold] Codex thread(s){settling}")
+    _maybe_auto_backup(store)
 
 
 # -----------------------------------------------------------------------------

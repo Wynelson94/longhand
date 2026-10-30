@@ -408,3 +408,96 @@ def test_config_set_accepts_backup_namespace(
     assert shown.exit_code == 0, shown.output
     assert "backup.auto" in shown.output
     assert "backup.enabled" in shown.output
+
+
+# ─── reconcile hook and doctor row (Task 8) ───────────────────────────────────
+
+
+def test_reconcile_fix_calls_maybe_auto_backup(
+    runner: CliRunner, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from longhand.recall import reconcile as reconcile_mod
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [])
+    calls: list[Path] = []
+
+    def fake(sqlite: Any, dd: Path, **kwargs: Any) -> None:
+        calls.append(dd)
+        return None
+
+    monkeypatch.setattr("longhand.backup.service.maybe_auto_backup", fake)
+
+    plain = runner.invoke(app, ["reconcile", "--data-dir", str(data_dir)])
+    assert plain.exit_code == 0, plain.output
+    assert calls == []
+
+    fixed = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(data_dir)])
+    assert fixed.exit_code == 0, fixed.output
+    assert calls == [data_dir]  # runs on every --fix pass, even when nothing needed re-ingesting
+
+
+def test_reconcile_fix_prints_the_auto_backup_outcome(
+    runner: CliRunner, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from longhand.backup.service import RunReport
+    from longhand.recall import reconcile as reconcile_mod
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [])
+    monkeypatch.setattr(
+        "longhand.backup.service.maybe_auto_backup",
+        lambda sqlite, dd, **kw: RunReport(planned=2, added=1, grown=1, commits=1, pushed=True),
+    )
+
+    result = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Backup" in result.output
+        and "1 added, 1 updated" in result.output
+        and "pushed" in result.output
+    )
+
+
+def test_reconcile_fix_survives_a_broken_backup_hook(
+    runner: CliRunner, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from longhand.recall import reconcile as reconcile_mod
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [])
+
+    def boom(sqlite: Any, dd: Path, **kwargs: Any) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("longhand.backup.service.maybe_auto_backup", boom)
+
+    result = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(data_dir)])
+    assert result.exit_code == 0, result.output
+
+
+def test_doctor_shows_backup_row(runner: CliRunner, data_dir: Path) -> None:
+    off = runner.invoke(app, ["doctor", "--json"])
+    assert off.exit_code == 0, off.output
+    assert json.loads(off.stdout)["Backup"] == "off"
+
+    BackupConfig(enabled=True, remote="/r.git").save(data_dir)
+    on = runner.invoke(app, ["doctor", "--json"])
+    assert on.exit_code == 0, on.output
+    assert json.loads(on.stdout)["Backup"] == "on · never pushed"
+
+
+def test_reconcile_fix_prints_a_bracketed_backup_error_safely(
+    runner: CliRunner, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from longhand.backup.service import RunReport
+    from longhand.recall import reconcile as reconcile_mod
+
+    monkeypatch.setattr(reconcile_mod, "discover_sessions", lambda *a, **kw: [])
+    monkeypatch.setattr(
+        "longhand.backup.service.maybe_auto_backup",
+        lambda sqlite, dd, **kw: RunReport(commits=1, error="push failed: [remote rejected] x"),
+    )
+
+    result = runner.invoke(app, ["reconcile", "--fix", "--data-dir", str(data_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert "[remote rejected]" in result.output
