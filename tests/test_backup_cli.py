@@ -387,11 +387,14 @@ def test_backup_status_and_auto_and_disable(
 
 
 def test_backup_help_lists_subcommands(runner: CliRunner) -> None:
+    from rich.text import Text
+
     result = runner.invoke(app, ["backup", "--help"])
 
     assert result.exit_code == 0, result.output
+    plain = Text.from_ansi(result.output).plain  # CI forces colour; option names get styled
     for name in ("init", "status", "auto", "disable", "--dry-run", "--no-mask"):
-        assert name in result.output
+        assert name in plain
 
 
 # ─── config namespace ─────────────────────────────────────────────────────────
