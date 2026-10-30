@@ -8,7 +8,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-617%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-802%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -93,7 +93,7 @@ longhand analyze --all           # fill in episodes + segments + project/session
 
 `search`, timelines, file history, and commit lookup all work immediately after `--skip-analysis` — every event is embedded regardless of this flag. `recall`'s episode/segment narrative and `recall_project_status` need the `analyze --all` pass to have data to draw on. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.2.3 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 617 unit tests passing.*
+> *Status: v1.2.3 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 802 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -219,6 +219,8 @@ Your Claude Code history is yours. It goes into a SQLite file and a ChromaDB dir
 
 One boring exception, disclosed in full: the interactive CLI checks pypi.org for a newer Longhand version. Most commands respect a 24-hour cache and print any hint only after their own output, so nothing you're waiting on is delayed. `doctor` (and `setup`, which runs it) is the exception — it forces a fresh, synchronous fetch every time, with a 2-second timeout, before it prints its table. The request carries nothing but itself — no telemetry, no identifiers, nothing about your corpus. It's excluded from Claude Code's hooks and from the `mcp-server` entry point `mcp install` actually configures for Claude Desktop, but not yet from `longhand shared-mcp`, `mcp serve`, or `demo` — those currently run the same check at exit like any other command ([#101](https://github.com/Wynelson94/longhand/issues/101)). `LONGHAND_NO_UPDATE_CHECK=1` turns all of it off. "Zero API calls" means what it always meant: no LLM or cloud service ever touches your data.
 
+The second exception is one you turn on yourself. `longhand backup` writes the verbatim record of every session into a git repository you own and pushes it there, so a crashed or replaced computer does not take the history with it. It is off until `longhand backup init` has shown you exactly what would leave the machine — session count, upload size, that the content is verbatim transcripts including thinking and tool output, that nothing is encrypted, which secret-shaped strings are masked in the copy — and you have typed `yes`. A public GitHub repository is refused. Secret-shaped strings are masked in the uploaded copy only; the local store is never changed. `longhand backup disable` turns it off. [docs/backup.md](docs/backup.md) has the whole contract.
+
 ---
 
 ## What It Actually Does
@@ -332,6 +334,11 @@ longhand git-log --query "fix parser"       # search commit messages
 longhand export latest-fix                  # most recent resolved episode
 longhand export ep_<id> --out fix.md        # specific episode to file
 longhand export <session-id-prefix>         # full session timeline
+
+# Backup (opt-in; nothing leaves this machine until you type yes at the consent screen)
+longhand backup init --remote <url>         # a private git remote you own; shows what would be uploaded, asks
+longhand backup                             # export changed sessions, commit, push (secrets masked in the copy)
+longhand restore --from <url>               # rebuild the archive on a new machine
 
 # Configuration
 longhand config                             # show current hook settings
@@ -470,6 +477,12 @@ Both are non-blocking and run in one to two seconds. You don't have to think abo
 
 ---
 
+## Backup
+
+Most of a mature archive exists only in `~/.longhand/longhand.db` — Claude Code rotates transcripts away, and on the author's machine 90% of the sessions in the store no longer existed anywhere else (792 of 879, measured 2026-10-29). `longhand backup` is the opt-in answer: the verbatim record of every session, reconstructed line by line, in a private git repository you own, with secret-shaped strings masked in the copy and nothing encrypted. `longhand restore --from <url>` rebuilds the store on a new machine by re-parsing those transcripts with the current parser. Manual, or hourly from the background reconciler with `longhand backup auto on`. Nothing is uploaded until `longhand backup init` has shown you the consent screen and you have typed `yes`. Everything else — layout, masking, multi-machine behaviour, limits, what is not backed up — is in [docs/backup.md](docs/backup.md).
+
+---
+
 ## Works with Codex
 
 Use Codex Desktop or the Codex CLI too? Longhand captures those threads into the same archive, so a question asked in Claude Code can be answered from work done in Codex, and the other way round.
@@ -587,7 +600,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-617 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+802 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

@@ -9,6 +9,46 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+Opt-in backup of the archive to a git remote you own, and restore from it.
+Nothing leaves the machine until `backup init` has shown the consent
+screen and you have typed `yes`.
+
+### Added
+
+- **`longhand backup init --remote <url>`** validates the remote (https, ssh,
+  scp-like, file, or an absolute path; a leading `-` or any `::` transport
+  helper is refused), refuses a public or organization-internal GitHub
+  repository (checked through `gh`; `--create` makes it private first),
+  measures the archive, prints what would be uploaded, and enables backups
+  only after you type `yes` (plus `private` when the remote cannot be
+  verified). `--yes` for scripts; without a terminal it refuses.
+- **`longhand backup`** exports every changed session as its verbatim
+  transcript (one line per distinct stored line, 40 MB parts), with every
+  `longhand redact` pattern masked in the copy only, commits in 500 MB
+  batches and pushes. A session in the repository never shrinks: two
+  machines' copies are merged as a union. `--dry-run`, `--no-push`, and
+  `--no-mask` (needs a terminal and the typed word `verbatim`).
+- **`longhand backup status`**, **`backup auto on|off`** (the scheduled
+  `reconcile --fix` pushes at most hourly, only when something changed,
+  masking always on, failures to `logs/backup.log`), **`backup disable`**.
+- **`longhand restore [--from <url>|<path>] [--skip-analysis]`** clones the
+  backup and re-parses every transcript with the current parser into the
+  store under the ingest lock; sessions already present are skipped by
+  content hash, one broken session never aborts the rest, and `config.json`
+  is restored only when the data dir has none.
+- `backup.*` keys in `config.json` (`longhand config --set backup.auto=true`)
+  and a `Backup` row in `longhand doctor`.
+- [docs/backup.md](docs/backup.md).
+
+### Changed
+
+- README principle 8 ("Local or nothing") now discloses the second, opt-in
+  exception beside the version check; SECURITY.md lists the third
+  `subprocess` call site (`longhand/backup/gitrepo.py`, argv-only with
+  `protocol.ext.allow=never`) and the new paths under `~/.longhand/`.
+
 ## [1.2.3] — 2026-09-27
 
 Six user-facing bugs, found by checking every claim in the docs against the
