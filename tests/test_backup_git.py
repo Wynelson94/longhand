@@ -17,6 +17,7 @@ import pytest
 
 from longhand.backup import gitrepo
 from longhand.backup.gitrepo import (
+    GitConflictError,
     GitError,
     GitRepo,
     git_executable,
@@ -27,30 +28,10 @@ from longhand.backup.gitrepo import (
     validate_remote,
 )
 
-pytestmark = pytest.mark.skipif(git_executable() is None, reason="git is not installed")
-
-
-@pytest.fixture(autouse=True)
-def _isolated_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    empty = tmp_path / "empty-gitconfig"
-    empty.write_text("")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-        monkeypatch.delenv(name, raising=False)
-
-
-@pytest.fixture
-def bare_remote(tmp_path: Path) -> Path:
-    git = git_executable()
-    assert git is not None
-    remote = tmp_path / "remote.git"
-    subprocess.run([git, "init", "-q", "--bare", str(remote)], check=True)
-    subprocess.run(
-        [git, "--git-dir", str(remote), "symbolic-ref", "HEAD", "refs/heads/main"],
-        check=True,
-    )
-    return remote
+pytestmark = [
+    pytest.mark.skipif(git_executable() is None, reason="git is not installed"),
+    pytest.mark.usefixtures("isolated_git_config"),
+]
 
 
 def _commit_file(repo: GitRepo, name: str, text: str, message: str) -> None:
@@ -327,9 +308,23 @@ def test_fetch_and_ff_conflict_aborts_and_raises(tmp_path: Path, bare_remote: Pa
     a.push()
     _commit_file(b, "f.txt", "b2\n", "ours")
 
-    with pytest.raises(GitError):
+    with pytest.raises(GitConflictError) as info:
         b.fetch_and_ff()
+    assert isinstance(info.value, GitError)
     assert not (b.path / ".git" / "rebase-merge").exists()
     assert not (b.path / ".git" / "rebase-apply").exists()
     assert (b.path / "f.txt").read_text() == "b2\n"
     assert b.has_changes() is False
+
+
+def test_unpushed_commits_counts_local_commits(tmp_path: Path, bare_remote: Path) -> None:
+    a = GitRepo.init(tmp_path / "a", str(bare_remote))
+    assert a.unpushed_commits() == 0
+    _commit_file(a, "f1.txt", "one\n", "first")
+    assert a.unpushed_commits() == 1
+    a.push()
+    assert a.unpushed_commits() == 0
+    _commit_file(a, "f2.txt", "two\n", "second")
+    assert a.unpushed_commits() == 1
+    b = GitRepo.clone(str(bare_remote), tmp_path / "b")
+    assert b.unpushed_commits() == 0

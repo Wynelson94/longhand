@@ -46,6 +46,10 @@ class GitError(RuntimeError):
         super().__init__(f"{message}: {detail}" if detail else message)
 
 
+class GitConflictError(GitError):
+    """Local commits could not be rebased onto the remote; the rebase was aborted."""
+
+
 def git_executable() -> str | None:
     return shutil.which("git")
 
@@ -223,10 +227,24 @@ class GitRepo:
             proc = self.run("rebase", "-q", upstream, check=False)
             if proc.returncode != 0:
                 self.run("rebase", "--abort", check=False)
-                raise GitError(
+                raise GitConflictError(
                     "could not rebase local backup commits onto the remote", stderr=proc.stderr
                 )
         return self.head() != before
+
+    def unpushed_commits(self) -> int:
+        """Commits on the current branch that origin does not have yet (0 when unborn)."""
+        if self.head() is None:
+            return 0
+        upstream = f"refs/remotes/origin/{self.current_branch()}"
+        if self.run("rev-parse", "--verify", "-q", upstream, check=False).returncode == 0:
+            proc = self.run("rev-list", "--count", f"{upstream}..HEAD", check=False)
+        else:
+            proc = self.run("rev-list", "--count", "HEAD", check=False)
+        try:
+            return int(proc.stdout.strip() or 0)
+        except ValueError:
+            return 0
 
     def add_all(self) -> None:
         self.run("add", "-A", "--", ".")
