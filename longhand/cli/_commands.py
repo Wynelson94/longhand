@@ -26,6 +26,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from longhand.cli.backup_commands import backup_app
 from longhand.cli.helpers import (
     _format_timestamp,
     _get_store,
@@ -1579,6 +1580,9 @@ def config(
     - hook.max_episodes: max episodes to consider (default 2)
     - hook.enabled: true/false to enable/disable without uninstalling
     - redact.enabled: true/false — mask secret-shaped strings at ingest (default false)
+    - backup.auto: true/false — let the scheduled reconciler push the backup hourly
+      (enable backups first with `longhand backup init`; backup.enabled/remote/path are
+      written by init)
     """
     import json as _json
 
@@ -1591,10 +1595,11 @@ def config(
             return
         key_path, value_str = set_key.split("=", 1)
         parts = key_path.split(".")
-        if len(parts) != 2 or parts[0] not in ("hook", "redact"):
+        if len(parts) != 2 or parts[0] not in ("hook", "redact", "backup"):
             console.print(
-                "[red]Only hook.* and redact.* keys are supported. "
-                "E.g. --set hook.min_relevance=3.0 or --set redact.enabled=true[/red]"
+                "[red]Only hook.*, redact.* and backup.* keys are supported. "
+                "E.g. --set hook.min_relevance=3.0, --set redact.enabled=true "
+                "or --set backup.auto=true[/red]"
             )
             return
 
@@ -1653,6 +1658,24 @@ def config(
         str(redaction_enabled()),
         "Mask secret-shaped strings (API keys, tokens) at ingest",
     )
+
+    from longhand.backup.gitrepo import redact_remote
+    from longhand.backup.service import BackupConfig
+    from longhand.storage.store import resolve_data_dir
+
+    backup_cfg = BackupConfig.load(resolve_data_dir(data_dir))
+    table.add_row(
+        "backup.enabled", str(backup_cfg.enabled), "Git-backed backup of the archive (opt-in)"
+    )
+    table.add_row(
+        "backup.auto", str(backup_cfg.auto), "Hourly pushes from the scheduled reconciler"
+    )
+    table.add_row(
+        "backup.remote",
+        redact_remote(backup_cfg.remote) if backup_cfg.remote else "—",
+        "Where the backup goes (set by backup init)",
+    )
+    table.add_row("backup.path", backup_cfg.path or "—", "The clone (default <data dir>/backup)")
 
     console.print(table)
     console.print(f"\n[dim]Config file: {config_path}[/dim]")
@@ -2643,6 +2666,7 @@ schedule_app = typer.Typer(
 )
 
 app.add_typer(db_app, name="db", rich_help_panel="Data")
+app.add_typer(backup_app, name="backup", rich_help_panel="Data")
 app.add_typer(hook_app, name="hook", rich_help_panel="Plumbing")
 app.add_typer(mcp_app, name="mcp", rich_help_panel="Plumbing")
 app.add_typer(schedule_app, name="schedule", rich_help_panel="Plumbing")
