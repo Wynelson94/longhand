@@ -97,7 +97,7 @@ def session_dir_name(session_id: str) -> str:
     name = _UNSAFE_CHARS.sub("_", bare)
     if not name.strip("."):
         # "" / "." / ".." would escape the sessions tree; name it by digest.
-        name = "session-" + hashlib.sha1(session_id.encode("utf-8")).hexdigest()[:16]
+        name = "session-" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
     return name
 
 
@@ -138,7 +138,7 @@ def session_rel_dir(row: dict[str, Any]) -> str:
 class _SessionLines:
     """Distinct ``raw_json`` lines of one session in store order, streamed.
 
-    Dedupe is by sha1 of the line: sub-events from one transcript line and the
+    Dedupe is by a digest of the line: sub-events from one transcript line and the
     parser's ``#``-suffixed collision rows all share it. ``last_timestamp`` is
     the newest event timestamp seen, duplicates included, once iteration ends.
     """
@@ -158,7 +158,7 @@ class _SessionLines:
                     self.last_timestamp = timestamp
                 if not isinstance(raw, str):
                     continue
-                key = hashlib.sha1(raw.encode("utf-8")).digest()
+                key = hashlib.blake2b(raw.encode("utf-8"), digest_size=16).digest()
                 if key in seen:
                     continue
                 seen.add(key)

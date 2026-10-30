@@ -252,7 +252,7 @@ def test_backup_init_create_calls_gh(
 
     elsewhere = runner.invoke(app, _init_args(data_dir, "/tmp/elsewhere.git", "--create", "--yes"))
     assert elsewhere.exit_code == 1, elsewhere.output
-    assert "github.com" in elsewhere.output
+    assert "needs a github.com remote" in " ".join(elsewhere.output.split())
 
 
 def test_backup_init_without_git_refuses(

@@ -52,7 +52,7 @@ class ReconcileResult:
 
 
 def _digest(line: str) -> bytes:
-    return hashlib.sha1(line.encode("utf-8")).digest()
+    return hashlib.blake2b(line.encode("utf-8"), digest_size=16).digest()
 
 
 def _discard(path: Path) -> None:
