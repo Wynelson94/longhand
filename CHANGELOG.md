@@ -9,7 +9,7 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.3.0] — 2026-10-30
 
 Opt-in backup of the archive to a git remote you own, and restore from it.
 Nothing leaves the machine until `backup init` has shown the consent
@@ -48,6 +48,9 @@ screen and you have typed `yes`.
   exception beside the version check; SECURITY.md lists the third
   `subprocess` call site (`longhand/backup/gitrepo.py`, argv-only with
   `protocol.ext.allow=never`) and the new paths under `~/.longhand/`.
+- README and the repo docs got an accuracy pass against 1.2.3 (#109); the
+  runtime-command surface check reads package sources as UTF-8 so it passes
+  on Windows (#111).
 
 ## [1.2.3] — 2026-09-27
 
