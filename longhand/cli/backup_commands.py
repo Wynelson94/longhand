@@ -112,8 +112,8 @@ def _run(*, dry_run: bool, push: bool, mask: bool, data_dir: str | None) -> None
                 progress=lambda line: status.update(f"Backing up… {escape(line)}"),
             )
     except BackupDisabledError as exc:
-        _not_enabled()
-        console.print(f"[dim]{escape(str(exc))}[/dim]")
+        console.print(f"[red]✗ {escape(str(exc))}[/red]", soft_wrap=True)
+        console.print(f"[dim]Enable or repair with: {INIT_HINT}[/dim]")
         raise typer.Exit(1) from None
 
     masks = _mask_summary(report.mask_counts, report.sessions_masked)
@@ -198,7 +198,7 @@ def backup_init(
         redact_remote,
         validate_remote,
     )
-    from longhand.backup.service import BackupConfig, estimate_export
+    from longhand.backup.service import BackupConfig, estimate_export, is_backup_repo
     from longhand.redaction import redaction_enabled
 
     if git_executable() is None:
@@ -286,6 +286,21 @@ def backup_init(
         ):
             console.print("[yellow]Aborted — nothing changed, nothing uploaded.[/yellow]")
             raise typer.Exit(1)
+
+    if (repo_path / ".git").exists() and not is_backup_repo(GitRepo(repo_path)):
+        console.print(
+            f"[red]✗ {escape(str(repo_path))} holds another repository, not a Longhand "
+            "backup. Choose another --path.[/red]",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    if repo_path.exists() and not (repo_path / ".git").exists() and any(repo_path.iterdir()):
+        console.print(
+            f"[red]✗ {escape(str(repo_path))} is not empty. Choose another --path, or "
+            "empty it first.[/red]",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
 
     try:
         if (repo_path / ".git").exists():
@@ -469,7 +484,26 @@ def restore(
             repo_root = default_path
             remote_hint = remote
             if (repo_root / ".git").exists():
-                console.print(f"[dim]Using the existing clone at {escape(str(repo_root))}[/dim]")
+                origin = _origin_of(repo_root)
+                if origin != remote:
+                    console.print(
+                        f"[red]✗ The clone at {escape(str(repo_root))} points at "
+                        f"{escape(redact_remote(origin or 'no remote'))}, not the remote you "
+                        "named. Pass --from with that clone's path, or remove it.[/red]",
+                        soft_wrap=True,
+                    )
+                    raise typer.Exit(1)
+                try:
+                    with console.status("Fetching the backup…"):
+                        GitRepo(repo_root).fetch_and_ff()
+                except GitError as exc:
+                    console.print(f"[red]✗ {escape(str(exc))}[/red]")
+                    raise typer.Exit(1) from None
+                console.print(
+                    f"[dim]Using the existing clone at {escape(str(repo_root))}, brought up "
+                    "to date[/dim]",
+                    soft_wrap=True,
+                )
             else:
                 try:
                     with console.status("Cloning the backup…"):

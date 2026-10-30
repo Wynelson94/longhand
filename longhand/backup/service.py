@@ -10,32 +10,38 @@ did in ``backup-state.json`` next to the store.
 from __future__ import annotations
 
 import json
+import os
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from longhand.backup.export import (
+    MANIFEST_FILENAME,
     PART_BYTES_DEFAULT,
-    SESSION_META_FILENAME,
     SESSIONS_DIR,
     export_session,
     iter_session_lines,
     mask_line,
     read_manifest,
+    session_rel_dir,
     session_source,
+    write_gitignore_if_absent,
     write_manifest,
     write_readme_if_absent,
 )
-from longhand.backup.gitrepo import GitConflictError, GitError, GitRepo, redact_remote
+from longhand.backup.gitrepo import GitError, GitRepo, redact_remote
 from longhand.backup.merge import (
     OUTCOME_GROWN,
     OUTCOME_NEW,
     OUTCOME_SUBSET,
     OUTCOME_UNCHANGED,
+    index_repo_sessions,
     reconcile_session,
+    recover_interrupted,
 )
 from longhand.backup.state import BackupState, changed_sessions, session_marks
 from longhand.timeutil import utcnow
@@ -47,7 +53,8 @@ CONFIG_NAMESPACE = "backup"
 CONFIG_FILENAME = "config.json"
 AUTO_MIN_INTERVAL_SECONDS = 3600
 BATCH_BYTES_DEFAULT = 500_000_000
-STAGING_DIRNAME = "backup-staging"
+STAGING_DIRNAME = ".staging"  # inside the clone (ignored there), so every move is a rename
+LOCK_FILENAME = "backup.lock"
 LOG_FILENAME = "backup.log"
 LEFTOVER_MESSAGE = "longhand backup: leftover from an interrupted run"
 
@@ -56,6 +63,48 @@ Progress = Callable[[str], None]
 
 class BackupDisabledError(RuntimeError):
     """Backups are not enabled on this machine, or the repository is missing."""
+
+
+class BackupBusyError(RuntimeError):
+    """Another backup run holds the lock."""
+
+
+@contextmanager
+def _backup_lock(data_dir: Path) -> Iterator[None]:
+    """Exclusive lock for one run; a lock left by a dead process is taken over."""
+    from longhand.recall.project_fallback import _lock_holder_alive
+
+    path = data_dir / LOCK_FILENAME
+    for attempt in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            holder: int | None = None
+            try:
+                holder = int(path.read_text(encoding="utf-8").strip() or 0)
+            except (OSError, ValueError):
+                holder = None
+            if holder and _lock_holder_alive(holder):
+                raise BackupBusyError(
+                    f"another backup run is in progress (pid {holder}); try again later"
+                ) from None
+            if attempt == 0:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                continue
+            raise BackupBusyError("could not take the backup lock") from None
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"{os.getpid()}\n")
+        break
+    try:
+        yield
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -190,6 +239,7 @@ class RunReport:
     pushed: bool = False
     error: str | None = None
     dry_run: bool = False
+    failed: int = 0
 
 
 class _Committer:
@@ -231,10 +281,7 @@ class _Committer:
 
 
 def _count_sessions(repo_root: Path) -> int:
-    sessions_dir = repo_root / SESSIONS_DIR
-    if not sessions_dir.is_dir():
-        return 0
-    return sum(1 for _ in sessions_dir.rglob(SESSION_META_FILENAME))
+    return len(index_repo_sessions(repo_root))
 
 
 def _manifest_stale(repo_root: Path) -> bool:
@@ -258,6 +305,49 @@ def _copy_config(data_dir: Path, repo_root: Path) -> None:
     target = repo_root / CONFIG_FILENAME
     if not target.exists() or target.read_bytes() != payload:
         target.write_bytes(payload)
+
+
+def is_backup_repo(repo: GitRepo) -> bool:
+    """An empty repository, or one that already holds a Longhand backup."""
+    if repo.head() is None:
+        return True
+    return (repo.path / MANIFEST_FILENAME).exists() or (repo.path / SESSIONS_DIR).is_dir()
+
+
+def check_repo(repo: GitRepo, config: BackupConfig) -> None:
+    """Refuse a clone that is not the one init validated: wrong origin, or not a backup."""
+    if not repo.exists():
+        raise BackupDisabledError(
+            f"no backup repository at {repo.path}; run longhand backup init first"
+        )
+    origin = repo.run("remote", "get-url", "origin", check=False).stdout.strip()
+    if not config.remote or origin != config.remote:
+        raise BackupDisabledError(
+            f"the clone at {repo.path} points at {redact_remote(origin) or 'no remote'}, not "
+            f"backup.remote ({redact_remote(config.remote) if config.remote else 'unset'}); "
+            "run longhand backup init again"
+        )
+    if not is_backup_repo(repo):
+        raise BackupDisabledError(
+            f"{repo.path} is not a Longhand backup repository (no manifest.json or sessions/ "
+            "and a history of its own); choose another --path at longhand backup init"
+        )
+
+
+def prune_marks(state: BackupState, index: dict[str, tuple[str, str | None]]) -> list[str]:
+    """Drop every mark the clone does not back: missing session, or a different sha256.
+
+    The state file says what was exported; the clone says what is actually
+    there. After a re-created clone, a new --path, or a reset to the remote,
+    the two disagree, and the clone wins: those sessions are exported again.
+    """
+    dropped = []
+    for session_id, mark in list(state.sessions.items()):
+        entry = index.get(session_id)
+        if entry is None or entry[1] != mark.sha256:
+            del state.sessions[session_id]
+            dropped.append(session_id)
+    return sorted(dropped)
 
 
 def _tally(report: RunReport, outcome: str) -> None:
@@ -309,26 +399,25 @@ def run_backup(
 ) -> RunReport:
     """Export every changed session into the backup repository, commit, push.
 
-    Raises ``BackupDisabledError`` unless backups are enabled and the repository
-    exists. A push failure is reported, never raised: the commits stay local
-    and the next run pushes them.
+    Raises ``BackupDisabledError`` unless backups are enabled and the clone
+    is the one init validated, ``BackupBusyError`` while another run holds
+    the lock. A push failure or a session that fails to export is reported,
+    never raised: the commits stay local and the next run pushes them, the
+    session is tried again next time. Any other failure is recorded in the
+    state before it propagates, so doctor shows it.
     """
     say: Progress = progress or (lambda message: None)
     config = BackupConfig.load(data_dir)
     if not config.enabled:
         raise BackupDisabledError("backups are off on this machine; run longhand backup init first")
     repo = GitRepo(config.repo_path(data_dir))
-    if not repo.exists():
-        raise BackupDisabledError(
-            f"no backup repository at {repo.path}; run longhand backup init first"
-        )
+    check_repo(repo, config)
 
     state = BackupState.load(data_dir)
-    marks = session_marks(sqlite)
-    changed = changed_sessions(marks, state)
-    say(f"{len(changed)} session(s) changed since the last run")
-
     if dry_run:
+        prune_marks(state, index_repo_sessions(repo.path))
+        changed = changed_sessions(session_marks(sqlite), state)
+        say(f"{len(changed)} session(s) to export")
 
         def _measured(index: int, total: int) -> None:
             if index == total or index % 25 == 0:
@@ -343,26 +432,74 @@ def run_backup(
             dry_run=True,
         )
 
-    report = RunReport(planned=len(changed))
-    committer = _Committer(repo, push=push, say=say)
-    errors: list[str] = []
+    with _backup_lock(data_dir):
+        report = RunReport()
+        committer = _Committer(repo, push=push, say=say)
+        errors: list[str] = []
+        try:
+            _run_locked(
+                sqlite,
+                data_dir,
+                repo,
+                state,
+                report,
+                committer,
+                errors,
+                mask=mask,
+                batch_bytes=batch_bytes,
+                part_bytes=part_bytes,
+                say=say,
+            )
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            _finish(state, report, committer, errors, data_dir)
+            raise
+        return _finish(state, report, committer, errors, data_dir)
+
+
+def _run_locked(
+    sqlite: SQLiteStore,
+    data_dir: Path,
+    repo: GitRepo,
+    state: BackupState,
+    report: RunReport,
+    committer: _Committer,
+    errors: list[str],
+    *,
+    mask: bool,
+    batch_bytes: int,
+    part_bytes: int,
+    say: Progress,
+) -> None:
+    for touched in recover_interrupted(repo.path):
+        say(f"finished an interrupted swap: {touched}")
+    staging = repo.path / STAGING_DIRNAME
+    shutil.rmtree(staging, ignore_errors=True)
 
     if repo.has_changes():
         say("committing files left behind by an interrupted run")
         committer.commit(LEFTOVER_MESSAGE)
 
     try:
-        if repo.fetch_and_ff():
-            say("brought the repository up to date with the remote")
-    except GitConflictError as exc:
-        errors.append(str(exc))
-        return _finish(state, report, committer, errors, data_dir)
+        outcome = repo.fetch_and_ff()
     except GitError as exc:
         errors.append(f"fetch failed: {exc}")
         say("fetch failed; continuing without the remote")
+    else:
+        if outcome == "fast-forward":
+            say("brought the repository up to date with the remote")
+        elif outcome == "reset":
+            say("the remote and this clone had both moved: took the remote, re-exporting")
 
-    staging = data_dir / STAGING_DIRNAME
-    shutil.rmtree(staging, ignore_errors=True)
+    index = index_repo_sessions(repo.path)
+    pruned = prune_marks(state, index)
+    if pruned:
+        say(f"{len(pruned)} session(s) no longer in the clone will be exported again")
+    marks = session_marks(sqlite)
+    changed = changed_sessions(marks, state)
+    report.planned = len(changed)
+    say(f"{len(changed)} session(s) to export")
+
     staging.mkdir(parents=True, exist_ok=True)
     committed_added = committed_grown = 0
 
@@ -372,15 +509,31 @@ def run_backup(
         return f"longhand backup: {added} added, {grown} updated"
 
     try:
+        write_gitignore_if_absent(repo.path)
         _copy_config(data_dir, repo.path)
         write_readme_if_absent(repo.path)
         batch = 0
-        for index, session_id in enumerate(changed, 1):
+        for position, session_id in enumerate(changed, 1):
             row = sqlite.get_session(session_id)
             if row is None:
                 continue
-            exported = export_session(sqlite, row, staging, part_bytes=part_bytes, mask=mask)
-            result = reconcile_session(exported, staging, repo.path, part_bytes=part_bytes)
+            kept = index.get(session_id)
+            try:
+                exported = export_session(sqlite, row, staging, part_bytes=part_bytes, mask=mask)
+                result = reconcile_session(
+                    exported,
+                    staging,
+                    repo.path,
+                    part_bytes=part_bytes,
+                    repo_rel_dir=kept[0] if kept else None,
+                )
+            except Exception as exc:
+                report.failed += 1
+                state.sessions.pop(session_id, None)
+                errors.append(f"{session_id}: {type(exc).__name__}: {exc}")
+                say(f"{position}/{len(changed)} {session_id}: FAILED ({type(exc).__name__})")
+                shutil.rmtree(staging / Path(session_rel_dir(row)), ignore_errors=True)
+                continue
             _tally(report, result.outcome)
             report.bytes_exported += exported.files.bytes
             if exported.mask_counts:
@@ -389,7 +542,7 @@ def run_backup(
             state.sessions[session_id] = replace(
                 marks[session_id], sha256=result.meta.get("sha256")
             )
-            say(f"{index}/{len(changed)} {session_id}: {result.outcome}")
+            say(f"{position}/{len(changed)} {session_id}: {result.outcome}")
             batch += exported.files.bytes
             if batch >= batch_bytes:
                 write_manifest(repo.path, _count_sessions(repo.path))
@@ -403,8 +556,6 @@ def run_backup(
         committer.commit_and_push(_message())
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-
-    return _finish(state, report, committer, errors, data_dir)
 
 
 # ─── Status ───────────────────────────────────────────────────────────────────
@@ -440,6 +591,8 @@ def backup_status(data_dir: Path, sqlite: SQLiteStore) -> dict[str, Any]:
     state = BackupState.load(data_dir)
     repo = GitRepo(config.repo_path(data_dir))
     exists = repo.exists()
+    if exists:
+        prune_marks(state, index_repo_sessions(repo.path))  # read-only: never saved here
     pending = len(changed_sessions(session_marks(sqlite), state)) if config.enabled else 0
     unpushed = 0
     if exists:
@@ -471,11 +624,9 @@ def backup_status_line(data_dir: Path) -> str:
         return "off"
     state = BackupState.load(data_dir)
     mode = "auto" if config.auto else "on"
-    last_run = _parse_iso(state.last_run_at)
-    last_push = _parse_iso(state.last_push_at)
-    if state.last_error and last_run is not None and (last_push is None or last_push < last_run):
-        return f"{mode} · last push FAILED {_age_text(state.last_run_at)}"
-    if last_push is None:
+    if state.last_error:
+        return f"{mode} · last run FAILED {_age_text(state.last_run_at)}"
+    if state.last_push_at is None:
         return f"{mode} · never pushed"
     return f"{mode} · last push {_age_text(state.last_push_at)}"
 
@@ -518,7 +669,7 @@ def maybe_auto_backup(
         report = run_backup(sqlite, data_dir, mask=True, push=True)
         summary = (
             f"auto backup: {report.added} added, {report.grown} updated, "
-            f"{report.commits} commit(s), pushed={report.pushed}"
+            f"{report.failed} failed, {report.commits} commit(s), pushed={report.pushed}"
         )
         if report.error:
             summary += f"; error: {report.error}"

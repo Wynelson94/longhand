@@ -506,3 +506,148 @@ def test_reconcile_grown_codex_uses_rollout_parts(tmp_path):
     assert result.outcome == "grown"
     assert result.meta["parts"] == ["rollout.jsonl"]
     assert sorted(p.name for p in (repo / Path(rel)).iterdir()) == ["rollout.jsonl", "session.json"]
+
+
+# ─── Masking: review fixes C1 / C2 ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("prefix", ["line one\n", "\t", "→ ", "value: \r\n"])
+def test_mask_line_masks_a_token_after_whitespace_or_non_ascii(prefix: str) -> None:
+    line = json.dumps({"type": "user", "message": {"content": f"{prefix}{TOKEN} rest"}})
+
+    masked, counts = mask_line(line)
+
+    assert TOKEN not in masked
+    assert counts == {"github_token": 1}
+    assert json.loads(masked)["message"]["content"] == f"{prefix}ghp_…AAAA (len=40) rest"
+
+
+def test_mask_line_masks_a_private_key_block_whole() -> None:
+    body = "MIIEow" + "A" * 58 + "\n" + "B" * 64 + "\n"
+    pem = f"-----BEGIN RSA PRIVATE KEY-----\n{body}-----END RSA PRIVATE KEY-----"
+    line = json.dumps({"type": "tool_result", "content": f"cat id_rsa\n{pem}\ndone"})
+
+    masked, counts = mask_line(line)
+
+    assert "MIIEow" not in masked
+    assert "B" * 64 not in masked
+    assert counts == {"ssh_private_key": 1}
+    content = json.loads(masked)["content"]
+    assert content.startswith("cat id_rsa\n")
+    assert content.endswith("\ndone")
+    assert "PRIVATE KEY" in content
+
+
+def test_mask_line_masks_a_truncated_private_key_to_the_end_of_the_string() -> None:
+    pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n" + "C" * 70 + "\n" + "D" * 70
+    line = json.dumps({"content": pem})
+
+    masked, counts = mask_line(line)
+
+    assert "C" * 70 not in masked
+    assert "D" * 70 not in masked
+    assert counts == {"ssh_private_key": 1}
+
+
+def test_mask_line_masks_pkcs8_and_encrypted_private_keys() -> None:
+    for kind in ("", "ENCRYPTED "):
+        pem = (
+            f"-----BEGIN {kind}PRIVATE KEY-----\n" + "E" * 64 + f"\n-----END {kind}PRIVATE KEY-----"
+        )
+        masked, counts = mask_line(json.dumps({"content": pem}))
+        assert "E" * 64 not in masked
+        assert counts == {"ssh_private_key": 1}
+
+
+def test_mask_line_invalid_json_masks_private_keys_and_tokens() -> None:
+    text = (
+        "{not json -----BEGIN EC PRIVATE KEY-----\\nFFFFFFFF\\n-----END EC PRIVATE KEY----- "
+        + TOKEN
+    )
+
+    masked, counts = mask_line(text)
+
+    assert "FFFFFFFF" not in masked
+    assert TOKEN not in masked
+    assert counts["ssh_private_key"] == 1
+    assert counts["github_token"] == 1
+
+
+# ─── Review fix I1: interrupted swaps are recovered before anything else ──────
+
+
+def test_recover_interrupted_restores_a_complete_merge_sidecar(tmp_path: Path) -> None:
+    from longhand.backup.merge import recover_interrupted
+
+    live = tmp_path / "sessions" / "claude" / "2026" / "05" / "s-one"
+    merge = live.with_name(live.name + ".merge")
+    old = live.with_name(live.name + ".old")
+    merge.mkdir(parents=True)
+    (merge / "transcript.jsonl").write_text('{"a":1}\n')
+    (merge / "session.json").write_text(json.dumps({"session_id": "s-one"}))
+    old.mkdir()
+    (old / "transcript.jsonl").write_text("older\n")
+
+    fixed = recover_interrupted(tmp_path)
+
+    assert (live / "transcript.jsonl").read_text() == '{"a":1}\n'
+    assert not merge.exists() and not old.exists()
+    assert len(fixed) >= 1
+
+
+def test_recover_interrupted_drops_an_incomplete_sidecar_and_a_stale_old_dir(
+    tmp_path: Path,
+) -> None:
+    from longhand.backup.merge import recover_interrupted
+
+    live = tmp_path / "sessions" / "claude" / "2026" / "05" / "s-one"
+    live.mkdir(parents=True)
+    (live / "transcript.jsonl").write_text("live\n")
+    (live / "session.json").write_text(json.dumps({"session_id": "s-one"}))
+    merge = live.with_name(live.name + ".merge")
+    merge.mkdir()
+    (merge / "transcript.jsonl").write_text("partial\n")  # no session.json: incomplete
+    old = live.with_name(live.name + ".old")
+    old.mkdir()
+    (old / "transcript.jsonl").write_text("older\n")
+
+    recover_interrupted(tmp_path)
+
+    assert (live / "transcript.jsonl").read_text() == "live\n"
+    assert not merge.exists() and not old.exists()
+
+
+def test_recover_interrupted_restores_the_old_dir_when_nothing_else_is_left(
+    tmp_path: Path,
+) -> None:
+    from longhand.backup.merge import recover_interrupted
+
+    live = tmp_path / "sessions" / "claude" / "2026" / "05" / "s-one"
+    old = live.with_name(live.name + ".old")
+    old.mkdir(parents=True)
+    (old / "transcript.jsonl").write_text("older\n")
+    (old / "session.json").write_text(json.dumps({"session_id": "s-one"}))
+
+    recover_interrupted(tmp_path)
+
+    assert (live / "transcript.jsonl").read_text() == "older\n"
+    assert not old.exists()
+
+
+def test_index_repo_sessions_maps_ids_to_dirs_and_shas(tmp_path: Path) -> None:
+    from longhand.backup.merge import index_repo_sessions
+
+    a = tmp_path / "sessions" / "claude" / "2026" / "01" / "a"
+    b = tmp_path / "sessions" / "codex" / "undated" / "b"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+    (a / "session.json").write_text(json.dumps({"session_id": "a", "sha256": "aa"}))
+    (b / "session.json").write_text(json.dumps({"session_id": "codex:b", "sha256": "bb"}))
+    (tmp_path / "sessions" / "claude" / "2026" / "01" / "junk").mkdir()
+
+    index = index_repo_sessions(tmp_path)
+
+    assert index == {
+        "a": ("sessions/claude/2026/01/a", "aa"),
+        "codex:b": ("sessions/codex/undated/b", "bb"),
+    }

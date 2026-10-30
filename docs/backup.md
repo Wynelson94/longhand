@@ -38,15 +38,19 @@ Nothing is uploaded until you type yes.
 ```
 
 Then it creates the clone (or clones the remote when it already has commits)
-and writes `backup.enabled` to `~/.longhand/config.json`. Nothing has been
-uploaded yet; `longhand backup` does that.
+and writes `backup.enabled` to `config.json` in the data directory
+(`~/.longhand/` by default). Nothing has been uploaded yet; `longhand backup`
+does that.
 
 `--remote` accepts `https://…`, `ssh://…`, `git@host:path`, `file://…`, or
 an absolute path (an external drive or a NAS mount). A remote that starts
 with `-` or names a transport helper (`ext::`) is refused. `--path` puts the
 clone somewhere other than `<data dir>/backup`. `--yes` accepts the consent
-text without a prompt, for scripts; without a terminal and without `--yes`,
-`init` prints the text and refuses.
+text without a prompt, for scripts, and stands in for the `private`
+attestation below; without a terminal and without `--yes`, `init` prints the
+text and refuses. `init` refuses a `--path` that holds another repository or
+is not empty, and every run refuses a clone whose origin is not the remote
+you named at `init`.
 
 ### Private only
 
@@ -64,8 +68,9 @@ visibility cannot be checked (no `gh`, or a remote that is not github.com),
   and Codex rollouts both.
 - **`config.json`**, minus the `backup` section (the clone path is
   machine-specific).
-- A `README.md` explaining the layout and how to restore, and a
-  `manifest.json` with the format version and the session count.
+- A `README.md` explaining the layout and how to restore, a `manifest.json`
+  with the format version and the session count, and a `.gitignore` for the
+  working files a run may leave behind.
 
 Nothing is encrypted. Whoever can read the remote can read your sessions.
 Encryption at rest is a follow-up; until then, treat the repository like the
@@ -93,9 +98,11 @@ Every string matching one of `longhand redact`'s patterns (API keys, GitHub
 and Slack and Stripe tokens, AWS keys, private-key headers, database URLs
 with passwords, JWTs, SSNs, card numbers that pass the Luhn check) is
 replaced in the uploaded copy with the same mask `longhand redact` uses:
-`ghp_…AAAA (len=40)`. The local store is never changed. The consent screen,
-`--dry-run`, and every run print counts per pattern and the number of
-sessions touched; values are never printed.
+`ghp_…AAAA (len=40)`. Private-key blocks are masked whole in the copy, header
+to footer (`longhand redact` masks only the header line locally; the copy
+leaves the machine, so it gets more). The local store is never changed. The
+consent screen, `--dry-run`, and every run print counts per pattern and the
+number of sessions touched; values are never printed.
 
 `longhand backup --no-mask` uploads verbatim. It needs a terminal and asks
 you to type `verbatim`. Mixing masked and verbatim runs leaves near-duplicate
@@ -120,22 +127,33 @@ is what `longhand schedule install-reconciler` schedules every 30 minutes on
 macOS. It backs up at most once an hour, only when something changed, with
 masking always on. Network and git failures go to
 `~/.longhand/logs/backup.log` and never affect the reconciler. `longhand
-doctor` shows a `Backup` row: `off`, `on · last push 12 min ago`,
-`auto · last push 2 h ago`, or `on · last push FAILED 3 h ago`.
+doctor` shows a `Backup` row: `off`, `on · never pushed`, `on · last push
+12 min ago`, `auto · last push 2 h ago`, or `on · last run FAILED 3 h ago`
+when the last run hit any error (a session that failed to export, a push
+that failed, or an exception); `backup status` has the message.
 
 **A failed push** is reported, not raised: the commits stay in the clone and
-the next run pushes them. `backup status` shows the unpushed count.
+the next run pushes them, or, if the remote moved in between, exports those
+sessions again (see below). `backup status` shows the unpushed count. **A
+session that fails to export** is reported, skipped, and tried again next
+run; the rest of the run goes on.
 
 ### More than one machine
 
-Every run fetches first and rebases local commits onto the remote. A session
-in the repository only ever grows: when two machines hold different copies
+Every run fetches first. When the remote moved and this clone also holds
+commits of its own, the clone is reset to the remote and the sessions from
+its own commits are exported again from the local store, which is the source
+of truth; nothing is rebased, so a derived file such as `manifest.json` can
+never leave the clone stuck in a conflict. The local state file is checked
+against the clone on every run, so a re-created clone, a new `--path`, or a
+reset never hides a session that is not in the repository. A session in the
+repository only ever grows: when two machines hold different copies
 of the same session, the union is written (the repository's lines first,
 then the lines only this machine had), and a copy that is a subset of what
 the repository holds changes nothing. A restored machine that keeps backing
-up therefore adds nothing until a session actually changes. A rebase
-conflict ends the run with the error in `backup status`; resolve it in the
-clone like any git conflict.
+up therefore adds nothing until a session actually changes. Two runs on one
+machine never overlap: the second waits on `backup.lock` and reports that the
+first is still running.
 
 ## Restore
 
@@ -158,7 +176,8 @@ view of the transcripts, exactly as `analyze --all` is the current
 extractors' view: lines that older parser versions stored as auxiliary
 events and the current one skips stay in the backup verbatim but do not
 become rows, duplicate rows collapse, and event ids may differ from the
-originals. Nothing outside the store cites event ids.
+originals. No stored record cites event ids; an id you noted before a
+restore (an MCP `at_event_id`, say) may not resolve afterwards.
 
 ## Not backed up
 
@@ -174,12 +193,16 @@ originals. Nothing outside the store cites event ids.
 |---|---|
 | `~/.longhand/backup/` | the clone (`--path` moves it) |
 | `~/.longhand/backup-state.json` | per-session marks from the last run, owner-readable only; never in the repository |
-| `~/.longhand/backup-staging/` | transient, removed at the end of every run |
+| `<clone>/.staging/` | transient working files, inside the clone and ignored by its `.gitignore`, removed at the end of every run |
+| `~/.longhand/backup.lock` | held for the duration of a run |
+| `~/.longhand/backup-restore/` | transient, joins split parts during a restore |
 | `~/.longhand/logs/backup.log` | auto-mode outcomes and failures |
 
 The `backup` section of `config.json` holds `enabled`, `remote`, `path`,
-and `auto`. `longhand config --set backup.auto=true` is the same switch as
-`backup auto on`; `enabled`, `remote`, and `path` are written by `init`.
+and `auto`. `longhand config --set backup.auto=true` sets the same key as
+`backup auto on` (which also checks that backups are enabled first);
+`enabled`, `remote`, and `path` can only be written by `init`, after its
+consent screen, and `config --set` refuses them.
 
 ## How git is called
 

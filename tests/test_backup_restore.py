@@ -46,6 +46,25 @@ pytestmark = [
 ]
 
 
+def _session_file_for(tmp_path: Path, session_id: str, text: str) -> Path:
+    path = tmp_path / f"{session_id}.jsonl"
+    entries = [
+        {
+            "type": "user",
+            "uuid": f"{session_id}-user-1",
+            "parentUuid": None,
+            "sessionId": session_id,
+            "timestamp": "2026-06-01T09:00:00.000Z",
+            "cwd": "/Users/tester/test-project",
+            "gitBranch": "main",
+            "isSidechain": False,
+            "message": {"role": "user", "content": text},
+        }
+    ]
+    path.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+    return path
+
+
 def _ingest(store: Any, path: Path) -> None:
     parser = JSONLParser(path)
     events = list(parser.parse_events())
@@ -378,3 +397,79 @@ def test_restore_cli_without_a_repo_exits_one(runner: CliRunner, tmp_path: Path)
         app, ["restore", "--from", "ext::sh -c id", "--data-dir", str(tmp_path / "empty")]
     )
     assert bad.exit_code == 1, bad.output
+
+
+# ─── Review fixes I4 / I5 ─────────────────────────────────────────────────────
+
+
+def test_restore_cli_fetches_an_existing_clone_with_the_same_origin(
+    runner: CliRunner, backed_up: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(backed_up.tmp))
+    fresh_dir = backed_up.tmp / "fresh"
+    first = runner.invoke(
+        app,
+        ["restore", "--from", str(backed_up.bare), "--data-dir", str(fresh_dir), "--skip-analysis"],
+    )
+    assert first.exit_code == 0, first.output
+
+    _ingest(backed_up.store, _session_file_for(backed_up.tmp, "s-late", "later"))
+    run_backup(backed_up.store.sqlite, backed_up.store.data_dir)
+
+    again = runner.invoke(
+        app,
+        ["restore", "--from", str(backed_up.bare), "--data-dir", str(fresh_dir), "--skip-analysis"],
+    )
+    assert again.exit_code == 0, again.output
+    assert "1 session(s) imported" in again.output
+    assert _fresh_store(backed_up.tmp, "fresh").sqlite.get_session("s-late") is not None
+
+
+def test_restore_cli_refuses_an_existing_clone_with_another_origin(
+    runner: CliRunner, backed_up: SimpleNamespace
+) -> None:
+    fresh_dir = backed_up.tmp / "fresh"
+    GitRepo.init(fresh_dir / "backup", str(backed_up.tmp / "elsewhere.git"))
+
+    result = runner.invoke(
+        app,
+        ["restore", "--from", str(backed_up.bare), "--data-dir", str(fresh_dir), "--skip-analysis"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "elsewhere.git" in result.output
+
+
+def test_restore_reports_a_damaged_transcript_and_skips_it(backed_up: SimpleNamespace) -> None:
+    damaged = backed_up.repo.path / Path(
+        session_rel_dir(backed_up.store.sqlite.get_session("edit-session"))
+    )
+    with (damaged / "transcript.jsonl").open("ab") as fh:
+        fh.write(b'{"type":"user","uuid":"injected"}\n')
+    fresh = _fresh_store(backed_up.tmp, "restored")
+
+    report = restore_backup(fresh, backed_up.repo.path)
+
+    assert (report.imported, report.skipped) == (1, 0)
+    assert len(report.errors) == 1
+    assert "sha256" in report.errors[0]["error"]
+    assert fresh.sqlite.get_session("edit-session") is None
+
+
+def test_restore_reports_lines_the_parser_cannot_take(
+    backed_up: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import longhand.parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "MAX_LINE_LENGTH", 300)
+    fresh = _fresh_store(backed_up.tmp, "restored")
+
+    report = restore_backup(fresh, backed_up.repo.path)
+
+    # One fixture keeps a short line and loses the long ones (reported); the other
+    # has no line under the limit at all and becomes "no events" (reported too).
+    assert report.imported == 1
+    assert any("limit" in e["error"] for e in report.errors)
+    assert any("no events" in e["error"] for e in report.errors)
+    survivors = [sid for sid in ("test-session-1", "edit-session") if fresh.sqlite.get_session(sid)]
+    assert len(survivors) == 1

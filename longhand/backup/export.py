@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ SESSIONS_DIR = "sessions"
 MANIFEST_FILENAME = "manifest.json"
 SESSION_META_FILENAME = "session.json"
 README_FILENAME = "README.md"
+GITIGNORE_FILENAME = ".gitignore"
 CODEX_PREFIX = "codex:"
 
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
@@ -171,15 +173,38 @@ def iter_session_lines(sqlite: SQLiteStore, session_id: str) -> Iterator[str]:
 # ─── Masking ──────────────────────────────────────────────────────────────────
 
 
+PRIVATE_KEY_PATTERN = "ssh_private_key"
+_PEM_RE = re.compile(
+    r"-----BEGIN (?P<kind>(?:[A-Z]+ )*)PRIVATE KEY-----"
+    r"(?:[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----|[\s\S]*)"
+)
+
+
+def _mask_private_keys(text: str) -> tuple[str, int]:
+    """Replace every private-key block, header to footer, with a mask of its length."""
+    if "PRIVATE KEY-----" not in text:
+        return text, 0
+
+    def _sub(match: re.Match[str]) -> str:
+        kind = match.group("kind").strip()
+        label = f"{kind} PRIVATE KEY" if kind else "PRIVATE KEY"
+        return f"-----{label} MASKED (len={len(match.group(0))})-----"
+
+    return _PEM_RE.subn(_sub, text)
+
+
 def _mask_obj(obj: Any, counts: dict[str, int]) -> Any:
     """Mask every secret-shaped string in a parsed line (keys included), tallying per pattern."""
     if isinstance(obj, str):
-        hits = scan_text(obj)
+        text, keys = _mask_private_keys(obj)
+        if keys:
+            counts[PRIVATE_KEY_PATTERN] = counts.get(PRIVATE_KEY_PATTERN, 0) + keys
+        hits = scan_text(text)
         if not hits:
-            return obj
+            return text
         for name, n in hits.items():
             counts[name] = counts.get(name, 0) + n
-        masked, _ = redact_text(obj)
+        masked, _ = redact_text(text)
         return masked
     if isinstance(obj, dict):
         return {
@@ -194,18 +219,25 @@ def _mask_obj(obj: Any, counts: dict[str, int]) -> Any:
 def mask_line(raw_json: str) -> tuple[str, dict[str, int]]:
     """The line with secret-shaped strings masked, and the per-pattern counts.
 
-    A line without a hit comes back unchanged (byte for byte). A line with a
-    hit is parsed and masked string by string so the JSON structure survives,
-    then re-serialised with the same ``json.dumps`` call ``insert_events``
-    uses. A line that is not valid JSON is masked as text.
+    Every line is parsed and masked string by string, so the patterns see the
+    real text (a token after a newline is ``\\n`` + token in the serialised
+    line, where a word boundary cannot match). A line without a hit comes
+    back unchanged, byte for byte; a masked line is re-serialised with the
+    same ``json.dumps`` call ``insert_events`` uses. A line that is not valid
+    JSON is masked as text. Private-key blocks are masked whole, header to
+    footer (or to the end of the string when the footer is missing), which is
+    more than ``longhand redact`` does locally: the local store keeps the key
+    body, the copy that leaves the machine does not.
     """
-    if not scan_text(raw_json):
-        return raw_json, {}
     try:
         obj = json.loads(raw_json)
     except ValueError:
-        masked_text, _ = redact_text(raw_json)
-        return masked_text, scan_text(raw_json)
+        text, keys = _mask_private_keys(raw_json)
+        masked_text, _ = redact_text(text)
+        text_counts = scan_text(text)
+        if keys:
+            text_counts[PRIVATE_KEY_PATTERN] = text_counts.get(PRIVATE_KEY_PATTERN, 0) + keys
+        return masked_text, text_counts
     counts: dict[str, int] = {}
     masked_obj = _mask_obj(obj, counts)
     if not counts:
@@ -309,10 +341,13 @@ class SessionExport:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write atomically: a killed run leaves the old file or the new one, never half."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="\n") as f:
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(payload, indent=2, sort_keys=True))
         f.write("\n")
+    os.replace(tmp, path)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -407,6 +442,30 @@ def write_manifest(repo_root: Path, session_count: int) -> None:
 
 def read_manifest(repo_root: Path) -> dict[str, Any] | None:
     return _read_json(repo_root / MANIFEST_FILENAME)
+
+
+_GITIGNORE_LINES = (
+    "# Longhand backup: working files a run may leave behind; never part of the backup",
+    ".staging/",
+    "*.merge/",
+    "*.old/",
+    ".DS_Store",
+)
+
+
+def write_gitignore_if_absent(repo_root: Path) -> None:
+    """Create the repo's ``.gitignore``, or add any of our lines it lacks."""
+    path = repo_root / GITIGNORE_FILENAME
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    missing = [line for line in _GITIGNORE_LINES if line not in existing]
+    if existing and not missing:
+        return
+    repo_root.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as f:
+        if existing and existing[-1] != "":
+            f.write("\n")
+        for line in missing:
+            f.write(line + "\n")
 
 
 def write_readme_if_absent(repo_root: Path) -> None:

@@ -1633,6 +1633,14 @@ def config(
             )
             return
 
+        if parts[0] == "backup" and parts[1] != "auto":
+            console.print(
+                "[red]backup.enabled, backup.remote and backup.path are written by "
+                "longhand backup init, after its consent screen. Here you can set "
+                "backup.auto=true|false (the same switch as longhand backup auto on|off).[/red]"
+            )
+            return
+
         # Load existing config
         current: dict = {}
         if config_path.exists():

@@ -305,7 +305,11 @@ def test_backup_run_no_push_and_push_failure_exit_codes(
     assert "not pushed" in local.output
     assert _bare_commits(enabled_env.bare) == 0
 
-    enabled_env.repo.run("remote", "set-url", "origin", "--", str(enabled_env.tmp / "gone.git"))
+    gone = enabled_env.tmp / "gone.git"
+    enabled_env.repo.run("remote", "set-url", "origin", "--", str(gone))
+    BackupConfig(enabled=True, remote=str(gone), path=str(enabled_env.repo.path)).save(
+        enabled_env.data_dir
+    )
     failed = runner.invoke(app, ["backup", "--data-dir", str(enabled_env.data_dir)])
     assert failed.exit_code == 1, failed.output
     assert "push failed" in failed.output
@@ -501,3 +505,69 @@ def test_reconcile_fix_prints_a_bracketed_backup_error_safely(
 
     assert result.exit_code == 0, result.output
     assert "[remote rejected]" in result.output
+
+
+# ─── Review fixes I2 / I4 / I5 ────────────────────────────────────────────────
+
+
+def test_config_set_refuses_backup_keys_that_init_owns(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LONGHAND_DATA_DIR", str(tmp_path / ".longhand"))
+    for key in ("backup.enabled=true", "backup.remote=/r.git", "backup.path=/p"):
+        result = runner.invoke(app, ["config", "--set", key])
+        assert result.exit_code == 0, result.output
+        assert "backup init" in " ".join(result.output.split())
+    assert not (tmp_path / ".longhand" / "config.json").exists()
+
+    result = runner.invoke(app, ["config", "--set", "backup.auto=true"])
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / ".longhand" / "config.json").read_text())["backup"] == {
+        "auto": True
+    }
+
+
+def test_backup_run_refuses_a_clone_with_another_origin(
+    runner: CliRunner, enabled_env: SimpleNamespace
+) -> None:
+    enabled_env.repo.run("remote", "set-url", "origin", "--", str(enabled_env.tmp / "else.git"))
+
+    result = runner.invoke(app, ["backup", "--data-dir", str(enabled_env.data_dir)])
+
+    assert result.exit_code == 1, result.output
+    assert "not backup.remote" in result.output
+    assert "longhand backup init" in result.output
+    assert _bare_commits(enabled_env.bare) == 0
+
+
+def test_backup_init_refuses_a_path_holding_another_repository(
+    runner: CliRunner, data_dir: Path, tmp_path: Path, bare_remote: Path
+) -> None:
+    project = GitRepo.init(data_dir / "backup", str(tmp_path / "elsewhere.git"))
+    (project.path / "secret-notes.md").write_text("not a backup\n")
+    project.add_all()
+    project.commit("my project")
+
+    result = runner.invoke(app, _init_args(data_dir, str(bare_remote), "--yes"))
+
+    assert result.exit_code == 1, result.output
+    assert "not a Longhand backup" in result.output
+    assert BackupConfig.load(data_dir).enabled is False
+    assert project.run("remote", "get-url", "origin").stdout.strip() == str(
+        tmp_path / "elsewhere.git"
+    )
+
+
+def test_backup_init_refuses_a_non_empty_directory(
+    runner: CliRunner, data_dir: Path, bare_remote: Path
+) -> None:
+    (data_dir / "backup").mkdir(parents=True)
+    (data_dir / "backup" / "photo.jpg").write_bytes(b"\xff\xd8")
+
+    result = runner.invoke(app, _init_args(data_dir, str(bare_remote), "--yes"))
+
+    assert result.exit_code == 1, result.output
+    assert "not empty" in result.output
+    assert not (data_dir / "backup" / ".git").exists()
+    assert BackupConfig.load(data_dir).enabled is False

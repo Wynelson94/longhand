@@ -9,6 +9,7 @@ masked in the clone while the local store keeps it verbatim.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,7 @@ from longhand.backup.export import iter_session_lines, mask_line, read_manifest
 from longhand.backup.gitrepo import GitRepo, git_executable
 from longhand.backup.service import (
     STAGING_DIRNAME,
+    BackupBusyError,
     BackupConfig,
     BackupDisabledError,
     RunReport,
@@ -168,7 +170,7 @@ def test_run_backup_first_run_commits_and_pushes(env: Any) -> None:
     assert state.last_error is None
     assert state.last_mask_counts == {"github_token": 1}
     assert state.last_run_summary["added"] == 1
-    assert not (env.data_dir / STAGING_DIRNAME).exists()
+    assert not (env.repo.path / STAGING_DIRNAME).exists()
 
 
 def test_run_backup_second_run_is_noop(env: Any) -> None:
@@ -239,9 +241,15 @@ def test_run_backup_batches_pushes(env: Any) -> None:
     assert manifest is not None and manifest["sessions"] == 2
 
 
+def _point_at(env: Any, remote: Path) -> None:
+    """Re-point both the clone and the config at ``remote`` (a dead one simulates a push failure)."""
+    env.repo.run("remote", "set-url", "origin", "--", str(remote))
+    BackupConfig(enabled=True, remote=str(remote), path=str(env.repo.path)).save(env.data_dir)
+
+
 def test_run_backup_records_push_failure(env: Any) -> None:
     _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
-    env.repo.run("remote", "set-url", "origin", "--", str(env.tmp / "gone.git"))
+    _point_at(env, env.tmp / "gone.git")
 
     report = run_backup(env.sqlite, env.data_dir)
 
@@ -257,9 +265,9 @@ def test_run_backup_records_push_failure(env: Any) -> None:
 
 def test_run_backup_pushes_what_an_earlier_run_left_behind(env: Any) -> None:
     _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
-    env.repo.run("remote", "set-url", "origin", "--", str(env.tmp / "gone.git"))
+    _point_at(env, env.tmp / "gone.git")
     run_backup(env.sqlite, env.data_dir)
-    env.repo.run("remote", "set-url", "origin", "--", str(env.bare))
+    _point_at(env, env.bare)
 
     report = run_backup(env.sqlite, env.data_dir)
 
@@ -429,10 +437,10 @@ def test_backup_status_line_variants(tmp_path: Path) -> None:
     assert backup_status_line(data_dir) == "on · last push just now"
 
     BackupState(last_run_at=now, last_push_at=None, last_error="push failed").save(data_dir)
-    assert backup_status_line(data_dir) == "on · last push FAILED just now"
+    assert backup_status_line(data_dir) == "on · last run FAILED just now"
 
     BackupState(last_run_at=now, last_push_at=older, last_error="push failed").save(data_dir)
-    assert backup_status_line(data_dir) == "on · last push FAILED just now"
+    assert backup_status_line(data_dir) == "on · last run FAILED just now"
 
     BackupConfig(enabled=True, remote="/r.git", auto=True).save(data_dir)
     BackupState(last_run_at=now, last_push_at=older).save(data_dir)
@@ -574,3 +582,173 @@ def test_run_backup_copies_config_without_the_backup_namespace(env: Any) -> None
     )
     report = run_backup(env.sqlite, env.data_dir, push=False)
     assert report.commits == 0
+
+
+def test_run_backup_masks_a_token_that_follows_a_newline(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", f"first line\n{TOKEN}\nlast line"))
+
+    report = run_backup(env.sqlite, env.data_dir, push=False)
+
+    assert report.mask_counts == {"github_token": 1}
+    text = _transcript(env.repo.path, "s-one").read_text(encoding="utf-8")
+    assert TOKEN not in text
+    assert json.loads(text.splitlines()[0])["message"]["content"] == (
+        f"first line\n{MASKED}\nlast line"
+    )
+
+
+# ─── Review fixes: repo identity, divergence, durability, lock ────────────────
+
+
+def test_run_backup_re_exports_sessions_missing_from_a_recreated_clone(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
+    run_backup(env.sqlite, env.data_dir, push=False)  # committed locally, never pushed
+    shutil.rmtree(env.repo.path)
+    GitRepo.init(env.repo.path, str(env.bare))
+
+    assert backup_status(env.data_dir, env.sqlite)["pending"] == 1
+    report = run_backup(env.sqlite, env.data_dir)
+
+    assert (report.planned, report.added, report.pushed) == (1, 1, True)
+    assert _bare_subjects(env.bare) == ["longhand backup: 1 added, 0 updated"]
+    clone = GitRepo.clone(str(env.bare), env.tmp / "clone")
+    assert _transcript(clone.path, "s-one").exists()
+
+
+def test_run_backup_recovers_when_both_machines_wrote_the_manifest(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
+    run_backup(env.sqlite, env.data_dir, push=False)  # machine A, offline
+
+    other = GitRepo.init(env.tmp / "other", str(env.bare))  # machine B, online
+    other_dir = other.path / "sessions" / "claude" / "2026" / "01" / "other-1"
+    other_dir.mkdir(parents=True)
+    (other_dir / "session.json").write_text(json.dumps({"session_id": "other-1"}) + "\n")
+    (other_dir / "transcript.jsonl").write_text('{"type":"user"}\n')
+    (other.path / "manifest.json").write_text(json.dumps({"format": 1, "sessions": 1}) + "\n")
+    other.add_all()
+    other.commit("from another machine")
+    other.push()
+
+    report = run_backup(env.sqlite, env.data_dir)
+
+    assert (report.pushed, report.error) == (True, None)
+    clone = GitRepo.clone(str(env.bare), env.tmp / "clone")
+    assert _transcript(clone.path, "s-one").exists()
+    assert (
+        clone.path / "sessions" / "claude" / "2026" / "01" / "other-1" / "transcript.jsonl"
+    ).exists()
+    manifest = read_manifest(clone.path)
+    assert manifest is not None and manifest["sessions"] == 2
+
+    again = run_backup(env.sqlite, env.data_dir)
+    assert (again.planned, again.commits) == (0, 0)
+
+
+def test_run_backup_grows_a_session_where_the_repo_keeps_it(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
+    run_backup(env.sqlite, env.data_dir, push=False)
+    moved = "sessions/claude/undated/s-one"
+    (env.repo.path / "sessions" / "claude" / "undated").mkdir()
+    env.repo.run("mv", "sessions/claude/2026/05/s-one", moved)
+    env.repo.run("commit", "-q", "-m", "an older layout")
+
+    late = Event(
+        event_id="s-one-late-1",
+        session_id="s-one",
+        event_type=EventType.USER_MESSAGE,
+        sequence=500,
+        timestamp=datetime(2026, 5, 1, 9, 5, tzinfo=timezone.utc),
+        content="one more",
+        raw={"type": "user", "uuid": "s-one-late-1", "sessionId": "s-one"},
+    )
+    env.sqlite.insert_events([late])
+
+    report = run_backup(env.sqlite, env.data_dir, push=False)
+
+    assert (report.added, report.grown) == (0, 1)
+    assert not (env.repo.path / "sessions" / "claude" / "2026" / "05" / "s-one").exists()
+    lines = (env.repo.path / moved / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    assert json.loads((env.repo.path / moved / "session.json").read_text())["rel_dir"] == moved
+
+
+def test_run_backup_records_a_failing_session_and_continues(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "one"))
+    _ingest(env.store, _session_file(env.tmp, "s-two", "two"))
+    real_export = service.export_session
+
+    def flaky(sqlite: Any, row: dict[str, Any], dest: Path, **kwargs: Any) -> Any:
+        if row["session_id"] == "s-one":
+            raise OSError("disk says no")
+        return real_export(sqlite, row, dest, **kwargs)
+
+    monkeypatch.setattr(service, "export_session", flaky)
+
+    report = run_backup(env.sqlite, env.data_dir)
+
+    assert (report.added, report.failed) == (1, 1)
+    assert report.error is not None and "s-one" in report.error and "disk says no" in report.error
+    assert report.pushed is True
+    state = BackupState.load(env.data_dir)
+    assert state.last_error is not None and "s-one" in state.last_error
+    assert "s-one" not in state.sessions
+    assert backup_status_line(env.data_dir) == "on · last run FAILED just now"
+
+    monkeypatch.setattr(service, "export_session", real_export)
+    again = run_backup(env.sqlite, env.data_dir)
+    assert (again.added, again.failed, again.error) == (1, 0, None)
+    assert backup_status_line(env.data_dir) == "on · last push just now"
+
+
+def test_run_backup_records_an_unexpected_exception_in_the_state(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "one"))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("manifest exploded")
+
+    monkeypatch.setattr(service, "write_manifest", boom)
+
+    with pytest.raises(RuntimeError):
+        run_backup(env.sqlite, env.data_dir)
+
+    state = BackupState.load(env.data_dir)
+    assert state.last_error is not None and "manifest exploded" in state.last_error
+    assert backup_status_line(env.data_dir) == "on · last run FAILED just now"
+
+
+def test_run_backup_cleans_sidecars_before_committing_leftovers(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "one"))
+    run_backup(env.sqlite, env.data_dir, push=False)
+    live = env.repo.path / "sessions" / "claude" / "2026" / "05" / "s-one"
+    stale_merge = live.with_name(live.name + ".merge")
+    stale_merge.mkdir()
+    (stale_merge / "transcript.jsonl").write_text("partial\n")
+
+    report = run_backup(env.sqlite, env.data_dir, push=False)
+
+    assert report.commits == 0
+    assert not stale_merge.exists()
+    assert ".merge" not in env.repo.run("ls-tree", "-r", "--name-only", "HEAD").stdout
+
+
+def test_run_backup_refuses_while_another_run_holds_the_lock(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "one"))
+    (env.data_dir / "backup.lock").write_text(f"{os.getpid()}\n")
+
+    with pytest.raises(BackupBusyError):
+        run_backup(env.sqlite, env.data_dir)
+    assert _bare_subjects(env.bare) == []
+
+
+def test_run_backup_breaks_a_stale_lock(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "one"))
+    (env.data_dir / "backup.lock").write_text("999999999\n")
+
+    report = run_backup(env.sqlite, env.data_dir)
+
+    assert report.added == 1
+    assert not (env.data_dir / "backup.lock").exists()

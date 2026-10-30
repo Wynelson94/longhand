@@ -10,6 +10,7 @@ never held them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from collections.abc import Callable, Iterator
@@ -82,6 +83,24 @@ def materialize_transcript(session_dir: Path, meta: dict[str, Any], work_dir: Pa
             with _part_path(session_dir, part).open("rb") as src:
                 shutil.copyfileobj(src, out)
     return target
+
+
+def check_transcript(session_dir: Path, meta: dict[str, Any]) -> tuple[bool, int]:
+    """Stream the parts once: does their sha256 match ``session.json``, and how many
+    lines are longer than the parser will take (those are skipped on ingest)."""
+    import longhand.parser as parser_mod
+
+    digest = hashlib.sha256()
+    oversized = 0
+    limit = parser_mod.MAX_LINE_LENGTH
+    for part in [str(p) for p in meta.get("parts") or []]:
+        with _part_path(session_dir, part).open("rb") as fh:
+            for raw in fh:
+                digest.update(raw)
+                if len(raw) > limit and len(raw.decode("utf-8", "replace").rstrip("\n")) > limit:
+                    oversized += 1
+    expected = meta.get("sha256")
+    return (not isinstance(expected, str) or digest.hexdigest() == expected), oversized
 
 
 def copy_config_if_absent(repo_root: Path, data_dir: Path) -> bool:
@@ -167,19 +186,36 @@ def restore_backup(
                 report.skipped += 1
                 continue
             try:
+                intact, oversized = check_transcript(session_dir, meta)
+                if not intact:
+                    raise ValueError("transcript does not match session.json sha256 (damaged copy)")
                 path = materialize_transcript(session_dir, meta, work_dir)
-                parser = JSONLParser(path)
-                events = list(parser.parse_events())
-                if not events:
-                    raise ValueError("no events the current parser keeps")
-                session = parser.build_session(events)
-                session.transcript_path = str(session_dir / str(meta["parts"][0]))
-                store.ingest_session(session, events, run_analysis=not skip_analysis)
+                try:
+                    parser = JSONLParser(path)
+                    events = list(parser.parse_events())
+                    if not events:
+                        raise ValueError("no events the current parser keeps")
+                    session = parser.build_session(events)
+                    session.transcript_path = str(session_dir / str(meta["parts"][0]))
+                    store.ingest_session(session, events, run_analysis=not skip_analysis)
+                finally:
+                    if path.parent == work_dir:
+                        path.unlink(missing_ok=True)
             except Exception as exc:
                 report.errors.append(
                     {"session": f"{session_id} ({label})", "error": f"{type(exc).__name__}: {exc}"}
                 )
                 continue
+            if oversized:
+                report.errors.append(
+                    {
+                        "session": f"{session_id} ({label})",
+                        "error": (
+                            f"{oversized} line(s) over the parser's line-length limit were not "
+                            "restored; the rest of the session was"
+                        ),
+                    }
+                )
             report.imported += 1
             report.events += len(events)
             if isinstance(sha, str) and sha:

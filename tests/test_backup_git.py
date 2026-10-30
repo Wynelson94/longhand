@@ -17,7 +17,6 @@ import pytest
 
 from longhand.backup import gitrepo
 from longhand.backup.gitrepo import (
-    GitConflictError,
     GitError,
     GitRepo,
     git_executable,
@@ -261,16 +260,33 @@ def test_fetch_and_ff_pulls_other_clone(tmp_path: Path, bare_remote: Path) -> No
     _commit_file(a, "f1.txt", "one\n", "first")
     a.push()
     b = GitRepo.clone(str(bare_remote), tmp_path / "b")
-    assert b.fetch_and_ff() is False
+    assert b.fetch_and_ff() == "unchanged"
 
     _commit_file(a, "f2.txt", "two\n", "second")
     a.push()
-    assert b.fetch_and_ff() is True
+    assert b.fetch_and_ff() == "fast-forward"
     assert (b.path / "f2.txt").read_text() == "two\n"
     assert b.head() == a.head()
 
 
-def test_fetch_and_ff_rebases_local_commits_on_top(tmp_path: Path, bare_remote: Path) -> None:
+def test_fetch_and_ff_leaves_local_commits_alone_when_the_remote_did_not_move(
+    tmp_path: Path, bare_remote: Path
+) -> None:
+    a = GitRepo.init(tmp_path / "a", str(bare_remote))
+    _commit_file(a, "f1.txt", "one\n", "first")
+    a.push()
+    _commit_file(a, "f2.txt", "two\n", "local only")
+
+    assert a.fetch_and_ff() == "unchanged"
+    assert a.unpushed_commits() == 1
+    assert (a.path / "f2.txt").exists()
+
+
+def test_fetch_and_ff_resets_to_the_remote_when_histories_diverged(
+    tmp_path: Path, bare_remote: Path
+) -> None:
+    """The local store is the source of truth: a diverged clone takes the remote's
+    state and the next export rebuilds what the dropped local commits held."""
     a = GitRepo.init(tmp_path / "a", str(bare_remote))
     _commit_file(a, "f1.txt", "one\n", "first")
     a.push()
@@ -280,12 +296,12 @@ def test_fetch_and_ff_rebases_local_commits_on_top(tmp_path: Path, bare_remote: 
     a.push()
     _commit_file(b, "f3.txt", "three\n", "local only")
 
-    assert b.fetch_and_ff() is True
-    assert (b.path / "f2.txt").exists() and (b.path / "f3.txt").exists()
-    assert b.run("log", "-1", "--format=%s").stdout.strip() == "local only"
-    b.push()
-    assert a.fetch_and_ff() is True
-    assert (a.path / "f3.txt").exists()
+    assert b.fetch_and_ff() == "reset"
+    assert (b.path / "f2.txt").exists()
+    assert not (b.path / "f3.txt").exists()
+    assert b.head() == a.head()
+    assert b.unpushed_commits() == 0
+    assert b.has_changes() is False
 
 
 def test_fetch_and_ff_on_unborn_branch_takes_the_remote(tmp_path: Path, bare_remote: Path) -> None:
@@ -294,12 +310,14 @@ def test_fetch_and_ff_on_unborn_branch_takes_the_remote(tmp_path: Path, bare_rem
     a.push()
     b = GitRepo.init(tmp_path / "b", str(bare_remote))
     assert b.head() is None
-    assert b.fetch_and_ff() is True
+    assert b.fetch_and_ff() == "fast-forward"
     assert (b.path / "f1.txt").read_text() == "one\n"
     assert b.head() == a.head()
 
 
-def test_fetch_and_ff_conflict_aborts_and_raises(tmp_path: Path, bare_remote: Path) -> None:
+def test_fetch_and_ff_conflicting_edits_take_the_remote_side(
+    tmp_path: Path, bare_remote: Path
+) -> None:
     a = GitRepo.init(tmp_path / "a", str(bare_remote))
     _commit_file(a, "f.txt", "a\n", "first")
     a.push()
@@ -308,13 +326,20 @@ def test_fetch_and_ff_conflict_aborts_and_raises(tmp_path: Path, bare_remote: Pa
     a.push()
     _commit_file(b, "f.txt", "b2\n", "ours")
 
-    with pytest.raises(GitConflictError) as info:
-        b.fetch_and_ff()
-    assert isinstance(info.value, GitError)
+    assert b.fetch_and_ff() == "reset"
     assert not (b.path / ".git" / "rebase-merge").exists()
-    assert not (b.path / ".git" / "rebase-apply").exists()
-    assert (b.path / "f.txt").read_text() == "b2\n"
+    assert (b.path / "f.txt").read_text() == "a2\n"
     assert b.has_changes() is False
+
+
+def test_run_git_ignores_git_dir_from_the_environment(
+    tmp_path: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere" / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "elsewhere"))
+    repo = GitRepo.init(tmp_path / "r", str(bare_remote))
+    assert (repo.path / ".git").is_dir()
+    assert repo.current_branch() == "main"
 
 
 def test_unpushed_commits_counts_local_commits(tmp_path: Path, bare_remote: Path) -> None:

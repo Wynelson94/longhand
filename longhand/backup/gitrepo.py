@@ -21,6 +21,8 @@ IDENTITY_NAME = "Longhand backup"
 IDENTITY_EMAIL = "backup@longhand.invalid"
 
 _EXT_GUARD = ("-c", "protocol.ext.allow=never")
+# Never let the caller's shell point git at another repository or index.
+_STRIPPED_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 _GH_TIMEOUT_SECONDS = 60
 
 _URL_RE = re.compile(r"^(?:https|ssh|file)://\S+$")
@@ -44,10 +46,6 @@ class GitError(RuntimeError):
         self.stderr = redact_remote(stderr)
         detail = self.stderr.strip()
         super().__init__(f"{message}: {detail}" if detail else message)
-
-
-class GitConflictError(GitError):
-    """Local commits could not be rebased onto the remote; the rebase was aborted."""
 
 
 def git_executable() -> str | None:
@@ -126,9 +124,10 @@ def _subcommand(argv: list[str]) -> str:
 
 
 def _run_git(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    env = {key: value for key, value in os.environ.items() if key not in _STRIPPED_ENV}
     try:
         proc = subprocess.run(
-            argv, capture_output=True, text=True, encoding="utf-8", errors="replace"
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
         )
     except OSError as exc:
         raise GitError(f"could not run git: {exc}") from exc
@@ -207,11 +206,17 @@ class GitRepo:
         sha = self.run("rev-parse", "--verify", "-q", "HEAD", check=False).stdout.strip()
         return sha or None
 
-    def fetch_and_ff(self) -> bool:
-        """Fetch origin and bring the branch up to date. True when HEAD moved.
+    def fetch_and_ff(self) -> str:
+        """Fetch origin and bring the branch in line with it.
 
-        Local commits are rebased on top of the remote; a conflict aborts the
-        rebase, leaves the clone as it was, and raises ``GitError``.
+        Returns ``"unchanged"`` (the remote has nothing new, or no branch yet),
+        ``"fast-forward"`` (the remote was ahead and the clone caught up), or
+        ``"reset"`` (both sides had moved: the clone now matches the remote and
+        its own commits are gone). Dropping local commits loses nothing: every
+        session in them lives in the local store, and the next export writes it
+        again, merged with whatever the remote holds. Never rebasing means a
+        derived file such as ``manifest.json`` can never leave the clone stuck
+        in a conflict.
         """
         branch = self.current_branch()
         if branch == "HEAD":
@@ -219,18 +224,18 @@ class GitRepo:
         self.run("fetch", "-q", "origin")
         upstream = f"refs/remotes/origin/{branch}"
         if self.run("rev-parse", "--verify", "-q", upstream, check=False).returncode != 0:
-            return False
+            return "unchanged"
         before = self.head()
         if before is None:
             self.run("merge", "-q", "--ff-only", upstream)
-        else:
-            proc = self.run("rebase", "-q", upstream, check=False)
-            if proc.returncode != 0:
-                self.run("rebase", "--abort", check=False)
-                raise GitConflictError(
-                    "could not rebase local backup commits onto the remote", stderr=proc.stderr
-                )
-        return self.head() != before
+            return "fast-forward"
+        if self.run("merge-base", "--is-ancestor", "HEAD", upstream, check=False).returncode == 0:
+            self.run("merge", "-q", "--ff-only", upstream)
+            return "fast-forward" if self.head() != before else "unchanged"
+        if self.run("merge-base", "--is-ancestor", upstream, "HEAD", check=False).returncode == 0:
+            return "unchanged"
+        self.run("reset", "-q", "--hard", upstream)
+        return "reset"
 
     def unpushed_commits(self) -> int:
         """Commits on the current branch that origin does not have yet (0 when unborn)."""
