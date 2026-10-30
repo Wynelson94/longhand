@@ -42,6 +42,8 @@ longhand demo         # sandboxed; cleans up afterwards (pass --keep to explore)
 
 Your database needs nothing. Migrations are automatic and a 0.11+ store opens on any later 1.x — that's Promise 2, and there's a real 0.11-schema fixture in the test suite proving it.
 
+**Upgrading to 1.3.0?** Nothing removed, and nothing changes until you ask for it. One new, opt-in capability: `longhand backup` writes every session's verbatim transcript to a private git repository you own (secret-shaped strings masked in the copy only), and `longhand restore` rebuilds the archive on a new machine from it. It stays off until `backup init` has shown you exactly what would be uploaded and you have typed `yes`. See [Backup](#backup) below and [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md).
+
 **Upgrading to 1.2.x?** No removals, just fixes worth knowing about:
 
 - **1.2.3:** MCP `get_session_timeline`'s `tail` now returns the true last N events on sessions over 5,000 events — it used to return the middle. `setup`'s closing hint stopped suggesting `recap` (removed at 1.0) and now suggests `status --days 7`. Recall's footers and `get_session_timeline`'s own tool description stopped naming `search_in_context` (retired from the tool listing at 1.0, though it still answers) and now point at `search` — the footers spell out the call, `search(session_id=…, query=…, context_events=5)`.
@@ -111,7 +113,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 |----------------------|----------------------------------------------|-----------------------------------|
 | **Where it lives**   | Rented from a model provider                 | A SQLite file + ChromaDB on your laptop |
 | **Cost per query**   | Tokens × dollars                             | Zero                              |
-| **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
+| **Privacy**          | Goes through someone else's servers          | Never leaves your machine, unless you opt in to `backup`, and then only to a git remote you own |
 | **Speed**            | Seconds to minutes for large contexts        | ~29ms search · ~128ms full recall (warm; see [Stats](#stats)) |
 | **Loss**             | Attention degrades in the middle of long contexts | Nothing summarized — messages, edits, and thinking blocks stored verbatim† |
 | **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |

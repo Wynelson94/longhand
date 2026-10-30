@@ -30,7 +30,7 @@ Longhand's Claude Code hooks **never raise, never touch the network, and never b
 
 This is the promise that matters most in daily use, because a hook runs on every turn. A memory tool that occasionally breaks your editor is worse than no memory tool. All three hooks exit 0 on failure, but they don't fail identically: `SessionEnd` (`ingest-session`) writes a one-line breadcrumb to `logs/hook-errors-YYYY-MM-DD.log` and leaves the transcript for `reconcile` to pick up; `Stop` (`ingest-live`) swallows a failure with no breadcrumb at all — it runs on every turn, so it stays silent rather than adding I/O to that path, and `SessionEnd`/`reconcile` are the backstop; `UserPromptSubmit` (`__prompt-hook-run`) prints `{}` and injects nothing.
 
-"Never touch the network" has one shared, disclosed exception: the first time a hook needs the local embedding model and it isn't cached yet, ChromaDB downloads it (~80MB, one time, from a fixed URL — not pypi.org). No hook makes the interactive CLI's update-check request; that one is structurally excluded (see SECURITY.md).
+"Never touch the network" has one shared, disclosed exception: the first time a hook needs the local embedding model and it isn't cached yet, ChromaDB downloads it (~80MB, one time, from a fixed URL — not pypi.org). No hook makes the interactive CLI's update-check request; that one is structurally excluded (see SECURITY.md). The scheduled reconciler (`longhand reconcile --fix` under launchd) is not a hook: once you have turned on the opt-in `backup auto` (1.3.0+), it pushes your archive to the git remote you chose at `backup init` — disclosed at `backup init`, documented in `docs/backup.md`, and never part of a hook.
 
 **Enforced by:** `tests/test_hook_guarantees.py`, CI-gated on every PR.
 
