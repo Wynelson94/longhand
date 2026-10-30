@@ -243,10 +243,18 @@ def _manifest_stale(repo_root: Path) -> bool:
 
 
 def _copy_config(data_dir: Path, repo_root: Path) -> None:
+    """Put ``config.json`` in the repo minus the backup namespace, which is machine-specific."""
     source = data_dir / CONFIG_FILENAME
     if not source.is_file():
         return
-    payload = source.read_bytes()
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    data.pop(CONFIG_NAMESPACE, None)
+    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
     target = repo_root / CONFIG_FILENAME
     if not target.exists() or target.read_bytes() != payload:
         target.write_bytes(payload)

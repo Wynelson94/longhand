@@ -26,7 +26,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from longhand.cli.backup_commands import backup_app
+from longhand.cli.backup_commands import backup_app, restore
 from longhand.cli.helpers import (
     _format_timestamp,
     _get_store,
@@ -2667,6 +2667,7 @@ schedule_app = typer.Typer(
 
 app.add_typer(db_app, name="db", rich_help_panel="Data")
 app.add_typer(backup_app, name="backup", rich_help_panel="Data")
+app.command("restore", rich_help_panel="Data")(restore)
 app.add_typer(hook_app, name="hook", rich_help_panel="Plumbing")
 app.add_typer(mcp_app, name="mcp", rich_help_panel="Plumbing")
 app.add_typer(schedule_app, name="schedule", rich_help_panel="Plumbing")

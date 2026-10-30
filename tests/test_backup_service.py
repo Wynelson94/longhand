@@ -554,3 +554,23 @@ def test_log_line_appends_and_never_raises(tmp_path: Path) -> None:
     blocker.write_text("")
     log_line(blocker, "nowhere to write")  # data_dir is a file: swallowed
     shutil.rmtree(tmp_path / "logs")
+
+
+def test_run_backup_copies_config_without_the_backup_namespace(env: Any) -> None:
+    _ingest(env.store, _session_file(env.tmp, "s-one", "hello"))
+    backup_ns = {"enabled": True, "remote": str(env.bare), "path": str(env.repo.path)}
+    (env.data_dir / "config.json").write_text(
+        json.dumps({"hook": {"enabled": True}, "backup": {**backup_ns, "auto": False}})
+    )
+
+    run_backup(env.sqlite, env.data_dir, push=False)
+
+    copied = json.loads((env.repo.path / "config.json").read_text())
+    assert copied == {"hook": {"enabled": True}}
+
+    # Same settings, a different backup namespace and key order: nothing to commit.
+    (env.data_dir / "config.json").write_text(
+        json.dumps({"backup": {**backup_ns, "auto": True}, "hook": {"enabled": True}})
+    )
+    report = run_backup(env.sqlite, env.data_dir, push=False)
+    assert report.commits == 0

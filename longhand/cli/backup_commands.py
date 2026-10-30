@@ -395,3 +395,122 @@ def backup_disable(data_dir: str | None = typer.Option(None, "--data-dir")) -> N
         f"[green]✓[/green] Backups disabled. The clone stays at {config.repo_path(resolved)}; "
         "delete it yourself if you want it gone. The remote keeps what was pushed."
     )
+
+
+# ─── restore ──────────────────────────────────────────────────────────────────
+
+
+def _origin_of(repo_root: Path) -> str | None:
+    from longhand.backup.gitrepo import GitError, GitRepo
+
+    try:
+        url = GitRepo(repo_root).run("remote", "get-url", "origin", check=False).stdout.strip()
+    except GitError:
+        return None
+    return url or None
+
+
+def restore(
+    from_: str | None = typer.Option(
+        None,
+        "--from",
+        help="Remote URL to clone, or a local clone path (default: the clone backup init made)",
+    ),
+    data_dir: str | None = typer.Option(None, "--data-dir"),
+    skip_analysis: bool = typer.Option(
+        False, "--skip-analysis", help="Import the transcripts only; run analyze --all later"
+    ),
+) -> None:
+    """Rebuild the archive from a backup repository (new machine, or after a crash).
+
+    Every session the repository holds and this store does not is parsed again
+    by the current parser and ingested. Nothing is uploaded.
+    """
+    from longhand.backup.gitrepo import (
+        GitError,
+        GitRepo,
+        git_executable,
+        redact_remote,
+        validate_remote,
+    )
+    from longhand.backup.restore import restore_backup
+    from longhand.backup.service import BackupConfig
+
+    store = _get_store(data_dir)
+    config = BackupConfig.load(store.data_dir)
+    default_path = config.repo_path(store.data_dir)
+    remote_hint: str | None = config.remote
+
+    if from_ is None:
+        repo_root = default_path
+        if not (repo_root / ".git").exists():
+            console.print(
+                f"[red]✗ No backup repository at {escape(str(repo_root))}. "
+                "Pass --from <remote url or clone path>.[/red]"
+            )
+            raise typer.Exit(1)
+    else:
+        candidate = Path(from_).expanduser()
+        if (candidate / ".git").exists() or (candidate / "manifest.json").exists():
+            repo_root = candidate
+            remote_hint = _origin_of(candidate) or remote_hint
+        else:
+            try:
+                remote = validate_remote(from_)
+            except ValueError as exc:
+                console.print(
+                    f"[red]✗ {escape(redact_remote(from_.strip()))!r} is neither a backup "
+                    f"directory nor a supported remote: {exc}[/red]"
+                )
+                raise typer.Exit(1) from None
+            if git_executable() is None:
+                console.print("[red]✗ git is not installed (not found on PATH).[/red]")
+                raise typer.Exit(1)
+            repo_root = default_path
+            remote_hint = remote
+            if (repo_root / ".git").exists():
+                console.print(f"[dim]Using the existing clone at {escape(str(repo_root))}[/dim]")
+            else:
+                try:
+                    with console.status("Cloning the backup…"):
+                        GitRepo.clone(remote, repo_root)
+                except GitError as exc:
+                    console.print(f"[red]✗ {escape(str(exc))}[/red]")
+                    raise typer.Exit(1) from None
+                console.print(
+                    f"[dim]Cloned the backup into {escape(str(repo_root))}[/dim]", soft_wrap=True
+                )
+
+    try:
+        with console.status("Restoring…") as status:
+            report = restore_backup(
+                store,
+                repo_root,
+                skip_analysis=skip_analysis,
+                progress=lambda line: status.update(f"Restoring… {escape(line)}"),
+            )
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]✗ {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print(
+        f"[green]✓[/green] {report.imported} session(s) imported ({report.events} events), "
+        f"{report.skipped} already present"
+    )
+    if report.config_copied:
+        console.print("  config.json restored (backup settings are not carried over)")
+    for entry in report.errors[:20]:
+        console.print(f"[red]✗ {escape(entry['session'])}: {escape(entry['error'])}[/red]")
+    if len(report.errors) > 20:
+        console.print(f"[red]… and {len(report.errors) - 20} more[/red]")
+    if skip_analysis and report.imported:
+        console.print("  Analysis skipped: run longhand analyze --all when convenient")
+    shown = redact_remote(remote_hint) if remote_hint else "<url>"
+    console.print(
+        f"  Keep backing up from this machine: longhand backup init --remote {shown}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    if report.errors:
+        raise typer.Exit(1)
