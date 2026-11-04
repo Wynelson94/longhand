@@ -643,6 +643,27 @@ def test_hook_errors_mixed_classes_split_the_remedy(tmp_path: Path):
     assert "reconcile" in status  # scoped to the 1 that it can actually fix
 
 
+def test_hook_errors_lock_timeout_is_reconcile_healable(tmp_path: Path):
+    """A background retry that never got the lock left its transcript on
+    disk and behind its last full ingest: reconcile --fix re-ingests it once
+    the file has gone quiet."""
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        "2026-11-04T20:00:00+00:00 ingest-live lock-timeout: /tmp/a.jsonl",
+        "2026-08-11T17:10:51+00:00 ingest-session missing-transcript: /tmp/gone.jsonl",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "2 in the last 7 days" in status
+    assert "1 lock-timeout" in status
+    assert "heals the 1 lock-timeout" in status
+
+
 def test_hook_errors_unknown_class_never_claims_healability(tmp_path: Path):
     """Unparseable or new class tokens count, but must not inherit the advice."""
     from longhand.setup_commands import _hook_errors_status

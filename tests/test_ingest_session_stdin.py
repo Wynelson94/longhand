@@ -11,7 +11,12 @@ These tests pin that contract so we never silently break hook ingest again.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -242,3 +247,129 @@ def test_hook_error_logging_failure_is_swallowed(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
+
+
+# ─── Background retry when SessionEnd finds the lock busy ────────────────────
+#
+# A locked-out SessionEnd used to defer to "a later reconcile". Hook mode now
+# hands the full ingest to a detached waiter (`--wait-lock`), the same retry
+# the Stop hook uses.
+
+
+def _lock_held_by(data_dir: Path, pid: int) -> None:
+    from longhand.storage import LonghandStore
+
+    LonghandStore(data_dir=data_dir)
+    (data_dir / ".ingest.lock").write_text(str(pid))
+
+
+def test_hook_mode_lockout_spawns_a_background_retry(
+    sample_session_file: Path, tmp_path: Path
+) -> None:
+    """Only the hook spawns: an explicit --transcript run reports the busy lock."""
+    data_dir = tmp_path / "lh"
+    _lock_held_by(data_dir, os.getppid())  # a live holder
+    runner = CliRunner()
+
+    with patch("subprocess.Popen") as popen:
+        popen.return_value.pid = 424242
+        hook = runner.invoke(
+            app,
+            ["ingest-session", "--data-dir", str(data_dir)],
+            input=_stdin_payload(sample_session_file),
+        )
+        explicit = runner.invoke(
+            app,
+            [
+                "ingest-session",
+                "--transcript",
+                str(sample_session_file),
+                "--data-dir",
+                str(data_dir),
+            ],
+        )
+
+    assert hook.exit_code == 0, hook.output
+    assert explicit.exit_code == 0, explicit.output
+    assert popen.call_count == 1  # the hook run only
+    assert popen.call_args.args[0] == [
+        sys.executable,
+        "-m",
+        "longhand",
+        "ingest-session",
+        "--transcript",
+        str(sample_session_file),
+        "--wait-lock",
+        "600",
+        "--data-dir",
+        str(data_dir),
+    ]
+    assert Path(popen.call_args.kwargs["stdout"].name).name.startswith("session-retry-")
+    assert "retrying in the background" in " ".join(hook.output.split())  # Rich wraps at 80
+
+
+def test_session_retry_waiter_ingests_once_the_lock_frees(
+    sample_session_file: Path, tmp_path: Path
+) -> None:
+    from longhand.storage import LonghandStore
+
+    data_dir = tmp_path / "lh"
+    holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def _reap() -> None:
+        # An unreaped zombie still answers "alive" to the lock's liveness probe.
+        holder.kill()
+        holder.wait()
+
+    try:
+        _lock_held_by(data_dir, holder.pid)
+        with patch("subprocess.Popen") as popen:
+            popen.return_value.pid = os.getpid()  # the waiter runs in this process
+            CliRunner().invoke(
+                app,
+                ["ingest-session", "--data-dir", str(data_dir)],
+                input=_stdin_payload(sample_session_file),
+            )
+        assert popen.call_count == 1
+
+        # Run the waiter the hook spawned, with a test-sized wait. Its lock
+        # holder finishes a second in.
+        argv = popen.call_args.args[0][3:]  # drop `python -m longhand`
+        argv[argv.index("--wait-lock") + 1] = "30"
+        threading.Timer(1.0, _reap).start()
+        result = CliRunner().invoke(app, argv)
+    finally:
+        _reap()
+
+    assert result.exit_code == 0, result.output
+    assert "ingest-session retry: " in result.output
+    assert "Ingested" in result.output
+    store = LonghandStore(data_dir=data_dir)
+    assert store.sqlite.analysis_stages().get(str(sample_session_file)) == "analyzed"
+    assert list((data_dir / "session-retry").glob("*.pid")) == []
+    assert not (data_dir / ".ingest.lock").exists()
+
+
+def test_session_retry_waiter_timeout_leaves_a_breadcrumb(
+    sample_session_file: Path, tmp_path: Path
+) -> None:
+    data_dir = tmp_path / "lh"
+    _lock_held_by(data_dir, os.getppid())  # never lets go
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest-session",
+            "--transcript",
+            str(sample_session_file),
+            "--wait-lock",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _hook_error_lines(data_dir)
+    assert len(lines) == 1
+    assert f"ingest-session lock-timeout: {sample_session_file}" in lines[0]

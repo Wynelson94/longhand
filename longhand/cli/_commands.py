@@ -2840,6 +2840,12 @@ def ingest_session_cmd(
         None, "--transcript", "-t", help="Path to a single session JSONL"
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
+    wait_lock: float = typer.Option(
+        0.0,
+        "--wait-lock",
+        hidden=True,
+        help="Wait up to SECONDS for a busy ingest lock (the SessionEnd hook's background retry)",
+    ),
 ):
     """Ingest a single session file.
 
@@ -2848,8 +2854,10 @@ def ingest_session_cmd(
     SessionEnd hook (modern Claude Code passes hook data via stdin, not env vars).
     Stdin-invoked runs are hook mode: they never exit nonzero — failures become
     hook-error log breadcrumbs (see `longhand doctor`) for reconcile to heal.
+    A hook that finds the ingest lock busy spawns this command with
+    `--wait-lock`, which also runs in hook mode.
     """
-    hook_mode = transcript is None
+    hook_mode = transcript is None or wait_lock > 0
     if not transcript:
         import json as _json
         import sys as _sys
@@ -2868,7 +2876,7 @@ def ingest_session_cmd(
             # crash the Claude Code hook chain.
             return
 
-    _ingest_single(transcript, data_dir, hook_mode=hook_mode)
+    _ingest_single(transcript, data_dir, hook_mode=hook_mode, wait_lock_s=wait_lock)
 
 
 @app.command("ingest-live", hidden=True)
@@ -2877,6 +2885,12 @@ def ingest_live_cmd(
         None, "--transcript", "-t", help="Path to a single session JSONL"
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
+    wait_lock: float = typer.Option(
+        0.0,
+        "--wait-lock",
+        hidden=True,
+        help="Wait up to SECONDS for a busy ingest lock (the Stop hook's background retry)",
+    ),
 ):
     """Tail-read new bytes of a transcript and upsert their events.
 
@@ -2887,10 +2901,14 @@ def ingest_live_cmd(
 
     Dual-mode: accepts ``--transcript <path>`` for direct CLI use, OR reads
     ``{"transcript_path": "..."}`` JSON from stdin when invoked by Claude
-    Code's Stop hook.
+    Code's Stop hook. Only the hook retries a busy lock: it spawns this
+    command with ``--wait-lock``, which waits for the lock instead of
+    spawning, and prints one line to that retry's log.
     """
     from longhand.setup_commands import ingest_live_tail as _ingest_live_tail
+    from longhand.setup_commands import retry_log_line
 
+    from_hook = not transcript
     if not transcript:
         import json as _json
         import sys as _sys
@@ -2907,7 +2925,13 @@ def ingest_live_cmd(
         if not transcript:
             return
 
-    _ingest_live_tail(transcript, data_dir)
+    summary = _ingest_live_tail(
+        transcript, data_dir, wait_lock_s=wait_lock, retry_on_lock=from_hook
+    )
+    if wait_lock > 0:
+        outcome = summary["skipped"] or f"+{summary['events']} events"
+        waited_s = summary["waited_s"] or 0.0
+        print(retry_log_line("ingest-live", Path(transcript).name, outcome, waited_s))
 
 
 @app.command(rich_help_panel="Setup & health")
