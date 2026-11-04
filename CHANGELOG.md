@@ -9,6 +9,33 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+A session could lose its last turn when the ingest lock was busy, and
+`reconcile` could not see the loss. Both are fixed.
+
+### Fixed
+
+- **A turn was lost when its Stop hook found the ingest lock busy.** The hook
+  skipped the turn and left it for the next Stop, which never runs if the
+  session ends on that turn. SessionEnd deferred the same way. Both hooks now
+  hand a locked-out ingest to a detached retry (`--wait-lock 600`), one per
+  transcript, which reads the transcript to its end as soon as the lock
+  frees. The hooks still never wait. Each retry logs to
+  `logs/live-retry-*.log` or `logs/session-retry-*.log`; one that gives up
+  leaves a `lock-timeout` breadcrumb, which `doctor` counts as healable by
+  `reconcile --fix`.
+- **`reconcile` counted a transcript as fully indexed once it had a row.** A
+  transcript that grew after its last full ingest stayed invisible to it, so
+  a lost turn was never healed. It now re-ingests a transcript whose size
+  differs from its last full ingest once the file has been quiet for 30
+  minutes (`changed`), and counts one still being written (`settling`)
+  without touching it. A transcript whose last ingest skipped analysis on
+  purpose keeps that defer. The CLI and the `reconcile` MCP tool report both
+  counts.
+- **`doctor`'s "Recent ingest (7d)" row had the same blind spot.** It now
+  turns yellow when a quiet transcript has grown since its last full ingest.
+
 ## [1.3.0] — 2026-10-30
 
 Opt-in backup of the archive to a git remote you own, and restore from it.
