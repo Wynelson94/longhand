@@ -9,7 +9,7 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.3.1] — 2026-11-04
 
 A session could lose its last turn to a busy ingest lock or to a full ingest
 of the same transcript, and `reconcile` could not see the loss.
