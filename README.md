@@ -8,7 +8,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-803%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-831%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -95,7 +95,7 @@ longhand analyze --all           # fill in episodes + segments + project/session
 
 `search`, timelines, file history, and commit lookup all work immediately after `--skip-analysis` — every event is embedded regardless of this flag. `recall`'s episode/segment narrative and `recall_project_status` need the `analyze --all` pass to have data to draw on. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.3.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 803 unit tests passing.*
+> *Status: v1.3.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 831 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -246,7 +246,7 @@ Longhand reads those files. Then it gives you:
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
 - **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
-- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass, or for a `reconcile --fix` pass to pick it up (the live tail never sets `project_id`, so reconcile treats it as needing a full re-ingest)
+- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass, or for a `reconcile --fix` pass to pick it up (the live tail never sets `project_id`, so reconcile treats it as needing a full re-ingest). When another ingest holds the lock, the hook hands the turn to a background retry instead of skipping it
 - **Plan history** — every Write/Edit to `~/.claude/plans/*.md` is captured as a first-class entity, queryable via `longhand plans list` and the `list_plans` MCP tool
 - **Secret redaction (opt-in)** — `longhand config --set redact.enabled=true` masks secret-shaped strings (API keys, tokens, JWTs, DB passwords) at ingest before they reach the index; `longhand redact --apply` retroactively masks data ingested earlier (see [SECURITY.md](https://github.com/Wynelson94/longhand/blob/main/SECURITY.md) for the current gap in git commit message coverage, [#110](https://github.com/Wynelson94/longhand/issues/110))
 - **Background reconciler** — optional launchd job (`longhand schedule install-reconciler`) keeps the index honest without manual `reconcile --fix` runs
@@ -470,12 +470,12 @@ Once installed, you can ask Claude things like *"what did we decide about the au
 
 Both commands read `transcript_path` from the hook's stdin JSON, so no flags are needed in the hook entry itself.
 
-- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. A failure here is silent by design — no stdout, no breadcrumb — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
-- **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0.
+- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. If another ingest holds the lock, the hook neither waits nor skips the turn: it starts a detached retry that reads the transcript as soon as the lock frees, so a turn isn't lost when the session ends right after it. There is one retry per transcript and hook; each logs a line to `logs/live-retry-YYYY-MM-DD.log`, and one still waiting after 10 minutes gives up with a `lock-timeout` breadcrumb for `doctor`. A failure here is silent by design — no stdout, and no breadcrumb unless a busy lock's retry can't even be started (`retry-spawn-failed`) — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
+- **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0. A busy lock gets the same background retry, logged to `logs/session-retry-YYYY-MM-DD.log`.
 
 Both are non-blocking and run in one to two seconds. You don't have to think about either of them again.
 
-**Optional background reconciler:** `longhand schedule install-reconciler` adds a launchd plist that runs `reconcile --fix` on a schedule. Catches sessions the hooks missed *if the transcript is still on disk* — `reconcile` enumerates from `~/.claude/projects/`, so a transcript Claude Code has already rotated away is invisible to it, same as any other tool here.
+**Optional background reconciler:** `longhand schedule install-reconciler` adds a launchd plist that runs `reconcile --fix` on a schedule. Catches sessions the hooks missed *if the transcript is still on disk* — `reconcile` enumerates from `~/.claude/projects/`, so a transcript Claude Code has already rotated away is invisible to it, same as any other tool here. That includes a transcript that grew after its last full ingest: once it has been quiet for 30 minutes, reconcile re-ingests it, and one still being written is left to its own hooks.
 
 ---
 
@@ -602,7 +602,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-803 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+831 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

@@ -17,6 +17,8 @@ Rationale:
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import os
 import subprocess
 import sys
@@ -24,7 +26,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from longhand.analysis.project_inference import infer_project
 from longhand.parser import JSONLParser, discover_sessions
@@ -151,6 +153,49 @@ def infer_missing_projects(store: LonghandStore) -> list[dict[str, Any]]:
     return inferred
 
 
+def _spawn_detached(
+    data_dir: Path, argv: list[str], log_prefix: str
+) -> subprocess.Popen[bytes] | None:
+    """Start a detached `longhand <argv>` logging to logs/<prefix>-<date>.log.
+
+    The child starts in the data directory, with LONGHAND_DATA_DIR set to it.
+    `python -m` imports from the working directory first, and hooks run in
+    the session's project directory: inheriting that would run a `longhand/`
+    package sitting there (a session inside a Longhand checkout) instead of
+    the installed one. A source checkout run without installing therefore
+    needs PYTHONPATH for its children too.
+
+    Returns the process, or None when the log directory or the spawn failed.
+    Never raises.
+    """
+    try:
+        data_dir = data_dir.absolute()
+        logs_dir = data_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        log_file = logs_dir / f"{log_prefix}-{today}.log"
+
+        # Open inside a `with` so the parent closes its FD as soon as Popen
+        # duplicates it into the child. Without this, every fallback-trigger
+        # leaks a file descriptor on the calling process.
+        with log_file.open("a") as log_fh:
+            return subprocess.Popen(
+                # "-m longhand" (the package __main__), NOT "-m longhand.cli":
+                # longhand.cli is a package with no __main__.py, so spawning
+                # it dies instantly and the background work never runs.
+                [sys.executable, "-m", "longhand", *argv],
+                cwd=str(data_dir),
+                env={**os.environ, "LONGHAND_DATA_DIR": str(data_dir)},
+                stdin=subprocess.DEVNULL,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except Exception:
+        return None
+
+
 def spawn_background(store: LonghandStore, subcommand: list[str], log_prefix: str) -> bool:
     """Fire a detached `longhand <subcommand>` in the background.
 
@@ -169,33 +214,7 @@ def spawn_background(store: LonghandStore, subcommand: list[str], log_prefix: st
             return False
         # Stale — let the child claim/overwrite it.
 
-    logs = _logs_dir(store)
-    try:
-        logs.mkdir(parents=True, exist_ok=True, mode=0o700)
-    except OSError:
-        return False
-
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    log_file = logs / f"{log_prefix}-{today}.log"
-
-    try:
-        # Open inside a `with` so the parent closes its FD as soon as Popen
-        # duplicates it into the child. Without this, every fallback-trigger
-        # leaks a file descriptor on the calling process.
-        with log_file.open("a") as log_fh:
-            subprocess.Popen(
-                # "-m longhand" (the package __main__), NOT "-m longhand.cli":
-                # longhand.cli is a package with no __main__.py, so spawning
-                # it dies instantly and the background work never runs.
-                [sys.executable, "-m", "longhand", *subcommand],
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                close_fds=True,
-            )
-        return True
-    except Exception:
-        return False
+    return _spawn_detached(store.data_dir, subcommand, log_prefix) is not None
 
 
 def trigger_background_ingest(store: LonghandStore) -> bool:
@@ -212,6 +231,127 @@ def trigger_background_episode_backfill(store: LonghandStore) -> bool:
     happens in a detached process that claims the ingest lock.
     """
     return spawn_background(store, ["backfill-episodes"], "background-backfill")
+
+
+# ─── Background retry for a hook that found the ingest lock busy ───────────
+
+# How long a retry waits for the lock before it gives up, leaving a
+# lock-timeout breadcrumb and the transcript for reconcile.
+RETRY_WAIT_SECONDS = 600
+
+RetryCommand = Literal["ingest-live", "ingest-session"]
+RetryOutcome = Literal["spawned", "waiting", "failed"]
+
+# Hook command → its marker directory, which is also its daily log's prefix.
+_RETRY_KINDS: dict[str, str] = {"ingest-live": "live-retry", "ingest-session": "session-retry"}
+
+# A waiter clears its marker as soon as it holds the lock, so a live marker is
+# never much older than the wait. An older one outlived a killed waiter whose
+# PID the OS may since have handed to an unrelated process.
+_RETRY_MARKER_MAX_AGE_SECONDS = RETRY_WAIT_SECONDS + 120
+
+
+def _retry_marker(data_dir: Path, command: RetryCommand, transcript: Path) -> Path:
+    """The per-transcript marker that holds the PID of its retry waiter."""
+    digest = hashlib.sha256(os.fsencode(str(transcript))).hexdigest()[:16]
+    return data_dir / _RETRY_KINDS[command] / f"{digest}.pid"
+
+
+def _marker_is_live(marker: Path) -> bool:
+    """A waiter still owns `marker`: its PID is alive and it is young enough."""
+    pid = _read_lock_pid(marker)
+    if not pid or not _lock_holder_alive(pid):
+        return False
+    try:
+        age = time.time() - marker.stat().st_mtime
+    except OSError:
+        return False
+    return age <= _RETRY_MARKER_MAX_AGE_SECONDS
+
+
+def _claim_retry_marker(marker: Path) -> bool:
+    """Create `marker` holding our PID. False when a live waiter owns it.
+
+    O_EXCL makes the create atomic between hooks racing on one transcript.
+    A marker whose waiter is gone (dead PID, empty, or older than any wait)
+    is replaced.
+    """
+    for _ in range(2):
+        try:
+            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if _marker_is_live(marker):
+                return False
+            with contextlib.suppress(FileNotFoundError):
+                marker.unlink()
+            continue
+        try:
+            os.write(fd, str(os.getpid()).encode())
+        finally:
+            os.close(fd)
+        return True
+    return False
+
+
+def spawn_ingest_retry(data_dir: Path, command: RetryCommand, transcript: Path) -> RetryOutcome:
+    """Hand a hook's locked-out ingest to a detached waiter process.
+
+    The Stop and SessionEnd hooks never block on the ingest lock. When
+    another ingest holds it they call this, rather than defer to a later
+    hook that may never come (the session may be over). The waiter runs
+    `longhand <command> --transcript <path> --wait-lock RETRY_WAIT_SECONDS`
+    and writes one line per retry to logs/<kind>-<date>.log, so lock-outs
+    can be counted.
+
+    One waiter per transcript and command, named by a marker holding its
+    PID. A live waiter reads the transcript to its end once it has the
+    lock, so it covers this lock-out too. Returns "spawned", "waiting" (a
+    live waiter already exists) or "failed". Never raises.
+    """
+    try:
+        # Absolute once, here: the waiter starts in the data dir, and it finds
+        # this marker again by hashing the same transcript path string.
+        data_dir = Path(data_dir).absolute()
+        transcript = Path(transcript).absolute()
+        marker = _retry_marker(data_dir, command, transcript)
+        marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not _claim_retry_marker(marker):
+            return "waiting"
+        argv = [
+            command,
+            "--transcript",
+            str(transcript),
+            "--wait-lock",
+            str(RETRY_WAIT_SECONDS),
+            "--data-dir",
+            str(data_dir),
+        ]
+        proc = _spawn_detached(data_dir, argv, _RETRY_KINDS[command])
+        if proc is None:
+            with contextlib.suppress(OSError):
+                marker.unlink()
+            return "failed"
+        # Our PID stood in while we spawned; the marker now names the waiter.
+        with contextlib.suppress(OSError):
+            marker.write_text(str(proc.pid))
+        return "spawned"
+    except Exception:
+        return "failed"
+
+
+def release_ingest_retry(data_dir: Path, command: RetryCommand, transcript: Path) -> None:
+    """Remove the retry marker for `transcript` if this process is its waiter.
+
+    A waiter calls this as soon as it holds the lock, before it reads, so a
+    turn locked out from then on spawns a fresh waiter instead of counting
+    on one that has already read. Never raises.
+    """
+    try:
+        marker = _retry_marker(data_dir, command, transcript)
+        if _read_lock_pid(marker) == os.getpid():
+            marker.unlink()
+    except Exception:
+        pass
 
 
 def claim_ingest_lock_with_wait(

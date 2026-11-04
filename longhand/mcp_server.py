@@ -625,12 +625,15 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Bridge disk↔DB drift from inside an MCP session. Re-ingests any "
                 "on-disk Claude Code transcripts that are missing from the sessions "
-                "table or have NULL project_id, using current project-inference "
-                "logic. Call this when another tool surfaces `stale: true` with a "
+                "table, have NULL project_id, or grew after their last full ingest "
+                "and have been quiet for 30+ minutes (a turn the session's own hooks "
+                "never captured), using current project-inference logic. Call this "
+                "when another tool surfaces `stale: true` with a "
                 "`stale_reason` pointing at reconcile, or when `recall_project_status` "
                 "reports `session_count_on_disk > session_count_indexed`. "
-                "Returns counts of fully-indexed, null-project, missing, ingested, "
-                "and errors. Idempotent — re-running with the same on-disk state is a "
+                "Returns counts of fully-indexed, null-project, missing, changed, "
+                "still-being-written (settling), ingested, and errors. "
+                "Idempotent — re-running with the same on-disk state is a "
                 "no-op. Acquires the ingest lock — serialized with concurrent ingestion. "
                 "May take 30s+ on cold state because it runs embeddings and episode "
                 "extraction during re-ingest. Defaults to a DRY RUN: pass `fix=true` "
@@ -642,7 +645,7 @@ async def list_tools() -> list[Tool]:
                     "fix": {
                         "type": "boolean",
                         "default": False,
-                        "description": "Apply the repairs: re-ingest missing/null-project transcripts. Defaults to false, which returns a dry-run summary.",
+                        "description": "Apply the repairs: re-ingest missing, null-project, partially indexed, and changed transcripts. Defaults to false, which returns a dry-run summary.",
                     },
                 },
             },
@@ -650,11 +653,13 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "description": (
                     "Counts of fully-indexed, partially-indexed, null-project, "
-                    "missing, ingested, and errors."
+                    "missing, changed, settling, ingested, and errors."
                 ),
                 "properties": {
                     "fully_indexed": {"type": "integer"},
                     "partially_indexed": {"type": "integer"},
+                    "changed_count": {"type": "integer"},
+                    "settling_count": {"type": "integer"},
                     "skipped_oversize": {"type": "integer"},
                     "null_project": {"type": "integer"},
                     "missing": {"type": "integer"},
@@ -1583,7 +1588,8 @@ async def _tool_reconcile(store: LonghandStore, arguments: dict[str, Any]) -> li
     """Bridge disk↔DB drift from inside an MCP session.
 
     Defaults to a dry run: reports on-disk transcripts that are missing from
-    the sessions table or have NULL project_id, without touching anything.
+    the sessions table, have NULL project_id, or grew after their last full
+    ingest, without touching anything.
     Pass `fix=true` to re-ingest them, closing the loop so Claude can self-heal
     the index after a staleness banner fires, without shelling out to the CLI.
 

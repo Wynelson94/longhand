@@ -203,8 +203,8 @@ follow the Linux guidance above.
   except commit messages parsed from `exec` commands, which only a later
   `redact --apply` masks ([#110](https://github.com/Wynelson94/longhand/issues/110)).
   Capture runs under the same ingest lock as the hooks; a Claude hook that
-  fires while a capture holds the lock skips that turn, and the reconciler
-  heals it.
+  fires while a capture holds the lock hands that turn to a background
+  retry, which reads it as soon as the lock frees.
 
 This is shared, retrievable history — not a transfer of a model's live
 context. Only locally saved rollouts are available.

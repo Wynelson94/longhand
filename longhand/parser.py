@@ -268,6 +268,8 @@ class JSONLParser:
         # Set on the first `session_meta` line: from then on the whole file is
         # a Codex rollout and every entry routes through the adapter.
         self._codex_adapter: CodexAdapter | None = None
+        # The file's size when parse_events() began reading. See there.
+        self.parsed_size: int | None = None
 
     def parse_events(self) -> Iterator[Event]:
         """Yield Event objects from the session file, in file order.
@@ -275,10 +277,19 @@ class JSONLParser:
         Deduplicates event_ids within a file. Claude Code subagents sometimes
         reuse the same uuid across streaming entries — when we detect a
         collision, we append a suffix so every event_id is unique.
+
+        Records the file's size before reading as ``parsed_size``: the bytes
+        this parse is sure to have covered. A full ingest logs that, not the
+        size after embedding, so a turn a live session appends mid-ingest is
+        never claimed unread (the live tail and reconcile still see it).
         """
         sequence = 0
         seen_ids: dict[str, int] = {}
         self._codex_adapter = None
+        try:
+            self.parsed_size = self.file_path.stat().st_size
+        except OSError:
+            self.parsed_size = None
         with self.file_path.open("r", encoding="utf-8", errors="replace") as f:
             for _line_num, line in enumerate(f, start=1):
                 # Skip lines that exceed the hard line-length limit

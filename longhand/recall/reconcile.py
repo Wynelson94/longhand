@@ -2,7 +2,13 @@
 
 Shared core for `longhand reconcile` (CLI) and the `reconcile` MCP tool.
 Classifies every Claude Code JSONL into buckets and, when `fix=True`,
-re-ingests the missing, null-project, and partially-indexed entries.
+re-ingests the missing, null-project, partially-indexed, and changed entries.
+
+"Changed" means the file grew after its last full ingest and has been quiet
+for DEFAULT_FINALIZE_AFTER_SECONDS: a turn its session's own Stop and
+SessionEnd hooks never captured (for example, a Stop hook that found the
+ingest lock busy just before the session ended). A grown file written more
+recently than that is "settling" and is left to those hooks.
 
 Codex rollouts ride along when a Codex home exists: new or changed ones are
 captured exact-record-only under the same ingest lock, and rollouts that have
@@ -13,9 +19,13 @@ with no extra setup.
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
+from longhand.codex import DEFAULT_FINALIZE_AFTER_SECONDS
 from longhand.parser import MAX_FILE_SIZE_BYTES, JSONLParser, discover_sessions
 from longhand.recall.project_fallback import (
     claim_ingest_lock,
@@ -31,6 +41,8 @@ class ReconcileReport:
     null_project: list[str] = field(default_factory=list)  # transcript paths
     missing: list[str] = field(default_factory=list)
     partially_indexed: list[str] = field(default_factory=list)  # crashed mid-pipeline
+    changed: list[str] = field(default_factory=list)  # grew since last full ingest, now quiet
+    settling_count: int = 0  # grew since last full ingest, still being written
     skipped_oversize: list[str] = field(default_factory=list)  # > parser size cap
     ingested: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)  # [{path, error}]
@@ -54,11 +66,14 @@ class ReconcileReport:
             "null_project_count": len(self.null_project),
             "missing_count": len(self.missing),
             "partially_indexed_count": len(self.partially_indexed),
+            "changed_count": len(self.changed),
+            "settling_count": self.settling_count,
             "skipped_oversize_count": len(self.skipped_oversize),
             "skipped_oversize": self.skipped_oversize,
             "null_project": self.null_project,
             "missing": self.missing,
             "partially_indexed": self.partially_indexed,
+            "changed": self.changed,
             "ingested": self.ingested,
             "errors": self.errors,
             "fix_applied": self.fix_applied,
@@ -75,6 +90,33 @@ class ReconcileReport:
         }
 
 
+IngestState = Literal["current", "changed", "settling"]
+
+
+def full_ingest_state(
+    store: LonghandStore, path: str | Path, st: os.stat_result, now: float
+) -> IngestState:
+    """Whether a transcript's last full ingest still covers the file on disk.
+
+    - "current": the file is the size it had at its last full ingest.
+    - "changed": the size differs and the file has been quiet for
+      DEFAULT_FINALIZE_AFTER_SECONDS, so no hook of its own is coming to
+      capture the rest.
+    - "settling": the size differs but the file was written recently; its
+      session's Stop and SessionEnd hooks still own it.
+
+    Compares against `file_size`, which only a full ingest records. The Stop
+    hook's live tail advances `last_offset` instead and never embeds or
+    analyzes, so a file it has read to the end can still be "changed".
+    Shared by reconcile and doctor's "Recent ingest" row.
+    """
+    if store.sqlite.already_ingested(str(path), st.st_size):
+        return "current"
+    if now - st.st_mtime >= DEFAULT_FINALIZE_AFTER_SECONDS:
+        return "changed"
+    return "settling"
+
+
 def run_reconcile(
     store: LonghandStore, fix: bool = False, *, codex_home: str | Path | None = None
 ) -> ReconcileReport:
@@ -82,15 +124,15 @@ def run_reconcile(
 
     Without `fix`: returns counts only.
     With `fix=True`: acquires the ingest lock, re-ingests missing,
-    null-project, and partially-indexed Claude entries using current project
-    inference, captures new or changed Codex rollouts (exact records only),
-    and finalizes Codex rollouts that have been quiet for
-    DEFAULT_FINALIZE_AFTER_SECONDS (full pipeline, so recall sees them). If
-    another ingest is running, returns with `lock_unavailable=True` and
-    nothing ingested.
+    null-project, partially-indexed, and changed Claude entries using current
+    project inference, captures new or changed Codex rollouts (exact records
+    only), and finalizes Codex rollouts that have been quiet for
+    DEFAULT_FINALIZE_AFTER_SECONDS (full pipeline, so recall sees them).
+    Claude transcripts that grew but were written within that window are
+    only counted (`settling_count`). If another ingest is running, returns
+    with `lock_unavailable=True` and nothing ingested.
     """
     from longhand.codex import (
-        DEFAULT_FINALIZE_AFTER_SECONDS,
         DEFAULT_SESSION_LIMIT,
         CodexArchiveStore,
         finalize_codex,
@@ -99,12 +141,16 @@ def run_reconcile(
     )
 
     files = discover_sessions()
+    now = time.time()
 
     missing: list[Path] = []
     null_project: list[Path] = []
     partial: list[Path] = []
+    changed: list[Path] = []
     oversize: list[Path] = []
     fully_indexed = 0
+    settling = 0
+    stages: dict[str, str | None] = {}
     if files:
         with store.sqlite.connect() as conn:
             rows = conn.execute("SELECT transcript_path, project_id FROM sessions").fetchall()
@@ -112,15 +158,16 @@ def run_reconcile(
         stages = store.sqlite.analysis_stages()
 
         for f in files:
+            try:
+                st: os.stat_result | None = f.stat()
+            except OSError:
+                st = None
             # Files past the parser's size cap can't be ingested by ANY path —
             # report them instead of erroring on every --fix pass (or worse,
             # sitting silently in the missing bucket forever).
-            try:
-                if f.stat().st_size > MAX_FILE_SIZE_BYTES:
-                    oversize.append(f)
-                    continue
-            except OSError:
-                pass
+            if st is not None and st.st_size > MAX_FILE_SIZE_BYTES:
+                oversize.append(f)
+                continue
             state = indexed.get(str(f), "__not_found__")
             if state == "__not_found__":
                 missing.append(f)
@@ -134,8 +181,17 @@ def run_reconcile(
                 # and 'events' is a deliberate --skip-analysis defer owned by
                 # `longhand analyze --all`.
                 partial.append(f)
-            else:
+            elif st is None:
+                # Vanished between discovery and stat: keep the row-based answer.
                 fully_indexed += 1
+            else:
+                ingest_state = full_ingest_state(store, f, st, now)
+                if ingest_state == "changed":
+                    changed.append(f)
+                elif ingest_state == "settling":
+                    settling += 1
+                else:
+                    fully_indexed += 1
 
     codex_scan = scan_codex_sessions(store.sqlite, codex_home)
     finalize_scan = scan_codex_sessions(
@@ -151,6 +207,8 @@ def run_reconcile(
         null_project=[str(p) for p in null_project],
         missing=[str(p) for p in missing],
         partially_indexed=[str(p) for p in partial],
+        changed=[str(p) for p in changed],
+        settling_count=settling,
         skipped_oversize=[str(p) for p in oversize],
         codex_on_disk=codex_scan.on_disk,
         codex_pending=len(codex_scan.candidates),
@@ -163,7 +221,11 @@ def run_reconcile(
     if not fix:
         return report
 
-    to_process = missing + null_project + partial
+    # (path, run_analysis). A changed transcript whose last full ingest skipped
+    # analysis on purpose (stage 'events', owned by `longhand analyze --all`)
+    # gets its events healed without running that deferred analysis.
+    to_process: list[tuple[Path, bool]] = [(f, True) for f in missing + null_project + partial]
+    to_process += [(f, stages.get(str(f)) != "events") for f in changed]
     if not to_process and not codex_scan.candidates and not finalize_scan.candidates:
         report.fix_applied = True
         return report
@@ -173,14 +235,16 @@ def run_reconcile(
         return report
 
     try:
-        for f in to_process:
+        for f, run_analysis in to_process:
             try:
                 parser = JSONLParser(f)
                 events = list(parser.parse_events())
                 if not events:
                     continue
                 session = parser.build_session(events)
-                store.ingest_session(session, events, run_analysis=True)
+                store.ingest_session(
+                    session, events, run_analysis=run_analysis, transcript_size=parser.parsed_size
+                )
                 report.ingested += 1
             except Exception as e:  # noqa: BLE001
                 report.errors.append({"path": str(f), "error": str(e)})

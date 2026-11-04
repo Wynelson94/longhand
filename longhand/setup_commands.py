@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -619,11 +620,22 @@ def _log_hook_error(data_dir: Path, message: str) -> None:
         pass
 
 
+def retry_log_line(command: str, name: str, outcome: str, waited_s: float) -> str:
+    """One line for a background retry's log (logs/<kind>-<date>.log).
+
+    Each retry stands for one Stop or SessionEnd hook that found the ingest
+    lock busy, so these logs count lock-outs and show what retries recovered.
+    """
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return f"{stamp} {command} retry: {name} {outcome} after waiting {waited_s:.1f}s"
+
+
 def ingest_single_session(
     transcript: str,
     data_dir: str | None = None,
     run_analysis: bool = True,
     hook_mode: bool = False,
+    wait_lock_s: float = 0.0,
 ) -> None:
     """Ingest a single Claude Code JSONL file.
 
@@ -643,12 +655,19 @@ def ingest_single_session(
 
     Takes the ingest lock: parallel sessions ending together would otherwise
     open concurrent ChromaDB writers on the same directory, which ChromaDB
-    does not tolerate. A locked-out session defers (success exit) — the bulk
-    ingest holding the lock, or a later reconcile, picks it up.
+    does not tolerate. The hook never waits for it: a locked-out hook hands
+    the ingest to a detached retry (``spawn_ingest_retry``), which runs this
+    with ``wait_lock_s > 0`` and ingests as soon as the lock frees. A retry
+    that times out leaves a ``lock-timeout`` breadcrumb, and reconcile heals
+    the transcript once it has been quiet for 30 minutes. A locked-out
+    explicit run just reports the busy lock.
     """
     from longhand.recall.project_fallback import (
         claim_ingest_lock,
+        claim_ingest_lock_with_wait,
         release_ingest_lock,
+        release_ingest_retry,
+        spawn_ingest_retry,
     )
 
     def _hook_fail(bucket: str, detail: str) -> None:
@@ -674,10 +693,28 @@ def ingest_single_session(
         console.print(f"[red]✗[/red] Could not open the Longhand store: {e}")
         raise typer.Exit(1) from e
 
-    if not claim_ingest_lock(store):
+    if wait_lock_s > 0:
+        started = time.monotonic()
+        claimed = claim_ingest_lock_with_wait(store, timeout_s=wait_lock_s)
+        waited_s = time.monotonic() - started
+        release_ingest_retry(store.data_dir, "ingest-session", path)
+        if not claimed:
+            _hook_fail("lock-timeout", str(path))
+            return
+        print(retry_log_line("ingest-session", path.name, "lock free", waited_s), flush=True)
+    elif not claim_ingest_lock(store):
+        retry = spawn_ingest_retry(store.data_dir, "ingest-session", path) if hook_mode else None
+        if retry == "spawned":
+            then = "retrying in the background once it finishes"
+        elif retry == "waiting":
+            then = "a background retry is already waiting for it"
+        elif retry == "failed":
+            _hook_fail("retry-spawn-failed", str(path))
+            then = "`longhand reconcile --fix` will pick it up"
+        else:
+            then = "run it again once the other ingest finishes"
         console.print(
-            f"[yellow]Another Longhand ingest is running — deferring {path.name}; "
-            "reconcile will pick it up.[/yellow]"
+            f"[yellow]Another Longhand ingest is running — deferring {path.name}; {then}.[/yellow]"
         )
         return
 
@@ -698,7 +735,9 @@ def ingest_single_session(
             console.print(f"[yellow]No events in {path.name}[/yellow]")
             return
         session = parser.build_session(events)
-        result = store.ingest_session(session, events, run_analysis=run_analysis)
+        result = store.ingest_session(
+            session, events, run_analysis=run_analysis, transcript_size=parser.parsed_size
+        )
         console.print(
             f"[green]✓[/green] Ingested {session.session_id[:8]} — "
             f"{result['events_stored']} events, "
@@ -761,6 +800,9 @@ def _live_best_project_cwd(store: LonghandStore, session_id: str) -> str | None:
 def ingest_live_tail(
     transcript: str,
     data_dir: str | None = None,
+    *,
+    wait_lock_s: float = 0.0,
+    retry_on_lock: bool = False,
 ) -> dict:
     """Tail-read new bytes of a Claude Code transcript and upsert their events.
 
@@ -769,12 +811,22 @@ def ingest_live_tail(
     inference). The full pass still runs at SessionEnd; this just keeps the
     events table fresh during the session so a crash doesn't lose work.
 
+    The lock claim never blocks the hook. When another ingest holds it,
+    ``retry_on_lock=True`` (the Stop hook) hands the turn to a detached
+    retry (``spawn_ingest_retry``), so the tail is read once the lock frees
+    even if no later Stop comes. That retry runs this with
+    ``wait_lock_s > 0``: it waits for the lock, never spawns, and on a
+    timeout leaves a ``lock-timeout`` breadcrumb. Direct calls do neither.
+
     Returns a small dict with counts. Never raises — designed to be called
     from a hook chain that must not crash Claude Code.
     """
     from longhand.recall.project_fallback import (
         claim_ingest_lock,
+        claim_ingest_lock_with_wait,
         release_ingest_lock,
+        release_ingest_retry,
+        spawn_ingest_retry,
     )
 
     summary: dict = {
@@ -782,6 +834,8 @@ def ingest_live_tail(
         "session_id": None,
         "skipped": None,
         "advanced_to": None,
+        "retry": None,  # the hook's lock-out: "spawned", "waiting" or "failed"
+        "waited_s": None,  # a retry: seconds spent waiting for the lock
     }
 
     path = Path(transcript).expanduser()
@@ -810,11 +864,33 @@ def ingest_live_tail(
             summary["skipped"] = "caught-up"
             return summary
 
-        # Non-blocking lock — if a heavier ingest is running, defer to next Stop.
-        if not claim_ingest_lock(store):
+        if wait_lock_s > 0:
+            started = time.monotonic()
+            locked = claim_ingest_lock_with_wait(store, timeout_s=wait_lock_s)
+            summary["waited_s"] = round(time.monotonic() - started, 1)
+            # Before reading: a turn locked out from here on spawns its own
+            # retry instead of counting on this one.
+            release_ingest_retry(store.data_dir, "ingest-live", path)
+            if not locked:
+                summary["skipped"] = "lock-timeout"
+                _log_hook_error(store.data_dir, f"ingest-live lock-timeout: {path}")
+                return summary
+            if store.sqlite.live_caught_up(str(path), path.stat().st_size):
+                summary["skipped"] = "caught-up"  # the lock's holder read it
+                return summary
+        elif claim_ingest_lock(store):
+            locked = True
+        else:
+            # Never block the hook. The next Stop may never come (the session
+            # can end on this turn), so a detached retry waits instead.
             summary["skipped"] = "locked"
+            if retry_on_lock:
+                summary["retry"] = spawn_ingest_retry(store.data_dir, "ingest-live", path)
+                if summary["retry"] == "failed":
+                    # Rare (a lock-out and a failed spawn), so worth the I/O:
+                    # nothing is coming for this turn but reconcile.
+                    _log_hook_error(store.data_dir, f"ingest-live retry-spawn-failed: {path}")
             return summary
-        locked = True
 
         start_offset = store.sqlite.get_live_offset(str(path))
 
@@ -981,6 +1057,8 @@ def ingest_live_tail(
     finally:
         if locked:
             release_ingest_lock(store)
+        if wait_lock_s > 0:
+            release_ingest_retry(_hook_data_dir(data_dir), "ingest-live", path)
 
 
 # ─── Doctor ────────────────────────────────────────────────────────────────
@@ -993,8 +1071,18 @@ def _freshness_status(store: LonghandStore) -> str | None:
     (e.g. ~/.claude/projects doesn't exist yet). For each JSONL whose mtime is
     within the last 7 days, check whether the sessions table has a row for it.
     Ratio drives the status: ≥0.9 green, ≥0.5 yellow, <0.5 red.
+
+    A row alone doesn't prove the transcript is captured: a session whose last
+    Stop hook found the ingest lock busy keeps its row but loses its tail.
+    Transcripts that grew after their last full ingest and have gone quiet
+    (reconcile's "changed" bucket) are counted too, and turn a green row
+    yellow.
     """
+    import os
     import time as _time
+
+    from longhand.parser import MAX_FILE_SIZE_BYTES
+    from longhand.recall.reconcile import full_ingest_state
 
     try:
         jsonls = discover_sessions()
@@ -1003,14 +1091,16 @@ def _freshness_status(store: LonghandStore) -> str | None:
     if not jsonls:
         return None
 
-    cutoff = _time.time() - 7 * 86400
-    recent: list[str] = []
+    now = _time.time()
+    cutoff = now - 7 * 86400
+    recent: dict[str, os.stat_result] = {}
     for j in jsonls:
         try:
-            if j.stat().st_mtime >= cutoff:
-                recent.append(str(j))
+            st = j.stat()
         except (OSError, PermissionError):
             continue
+        if st.st_mtime >= cutoff:
+            recent[str(j)] = st
 
     if not recent:
         return "[green]✓[/green] no recent Claude Code activity"
@@ -1018,18 +1108,31 @@ def _freshness_status(store: LonghandStore) -> str | None:
     try:
         with store.sqlite.connect() as conn:
             placeholders = ",".join("?" * len(recent))
-            row = conn.execute(
-                f"SELECT COUNT(*) FROM sessions WHERE transcript_path IN ({placeholders})",
-                recent,
-            ).fetchone()
-            ingested = row[0] if row else 0
+            rows = conn.execute(
+                "SELECT DISTINCT transcript_path FROM sessions "
+                f"WHERE transcript_path IN ({placeholders})",
+                list(recent),
+            ).fetchall()
+        with_rows = [r[0] for r in rows]
+        # A transcript over the parser's cap can't be re-ingested by any path
+        # (reconcile books it under skipped_oversize): don't send the user to
+        # a reconcile that cannot help.
+        changed = sum(
+            1
+            for p in with_rows
+            if recent[p].st_size <= MAX_FILE_SIZE_BYTES
+            and full_ingest_state(store, p, recent[p], now) == "changed"
+        )
     except Exception:
         return None
 
+    ingested = len(with_rows)
     ratio = ingested / len(recent)
     summary = f"{ingested}/{len(recent)} transcripts ingested"
+    if changed:
+        summary += f", {changed} changed since their last full ingest"
 
-    if ratio >= 0.9:
+    if ratio >= 0.9 and not changed:
         return f"[green]✓[/green] {summary}"
     if ratio >= 0.5:
         return (
@@ -1130,13 +1233,16 @@ def _drift_remedy() -> str:
 
 # Hook-error classes that `reconcile` can actually heal. reconcile enumerates
 # from DISK (discover_sessions), so it can only re-ingest a transcript that is
-# still there: `ingest-failed` qualifies, and nothing else does. A
+# still there: `ingest-failed` qualifies, and so do `lock-timeout` and
+# `retry-spawn-failed` (a background retry that never got the lock, or never
+# started, leaves its transcript behind its last full ingest, which reconcile
+# re-ingests once the file is quiet). Nothing else does. A
 # `missing-transcript` never landed and is invisible to the heal path forever;
-# `oversize-transcript` would hit the same cap on re-ingest; `store-open-failed`
-# blocks reconcile itself. Recommending reconcile for those is a no-op, which
-# is a Promise 5 (honest metrics) violation — over the v0.13 bake, 21 of 23
-# real hook errors were the unhealable class.
-_RECONCILE_HEALABLE = frozenset({"ingest-failed"})
+# `oversize-transcript` would hit the same cap on re-ingest;
+# `store-open-failed` blocks reconcile itself. Recommending reconcile for
+# those is a no-op, which is a Promise 5 (honest metrics) violation — over
+# the v0.13 bake, 21 of 23 real hook errors were the unhealable class.
+_RECONCILE_HEALABLE = frozenset({"ingest-failed", "lock-timeout", "retry-spawn-failed"})
 
 
 def _hook_error_class(line: str) -> str:
@@ -1307,7 +1413,8 @@ def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
     if count == 0:
         return f"[green]✓[/green] none in the last {days} days"
 
-    healable = sum(n for cls, n in counts.items() if cls in _RECONCILE_HEALABLE)
+    healable_classes = sorted(cls for cls in counts if cls in _RECONCILE_HEALABLE)
+    healable = sum(counts[cls] for cls in healable_classes)
     # Largest class first so the dominant failure mode leads the remedy.
     breakdown = ", ".join(
         f"{n} {cls}" for cls, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -1316,7 +1423,8 @@ def _hook_errors_status(store: LonghandStore, days: int = 7) -> str:
         remedy = "[bold]longhand reconcile --fix[/bold] heals missed ingests"
     elif healable:
         remedy = (
-            f"[bold]longhand reconcile --fix[/bold] heals the {healable} ingest-failed; "
+            f"[bold]longhand reconcile --fix[/bold] heals the {healable} "
+            f"{' and '.join(healable_classes)}; "
             "the rest were never written — nothing to heal"
         )
     else:

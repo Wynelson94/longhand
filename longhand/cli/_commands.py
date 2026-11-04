@@ -557,7 +557,12 @@ def ingest(
                         continue
 
                     session = parser.build_session(events)
-                    result = store.ingest_session(session, events, run_analysis=not skip_analysis)
+                    result = store.ingest_session(
+                        session,
+                        events,
+                        run_analysis=not skip_analysis,
+                        transcript_size=parser.parsed_size,
+                    )
                     events_total += result["events_stored"]
                     ingested += 1
                 except Exception as e:
@@ -616,25 +621,31 @@ def _maybe_auto_backup(store: LonghandStore) -> None:
     rich_help_panel="Data",
     epilog="See also: longhand reattribute — re-derives project ownership for "
     "sessions already in the database; reconcile re-ingests transcripts that "
-    "never made it in.",
+    "never made it in, or that grew after their last full ingest.",
 )
 def reconcile(
     data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     fix: bool = typer.Option(
         False,
         "--fix",
-        help="Re-ingest sessions that are missing, partially indexed, or have NULL project_id",
+        help="Re-ingest sessions that are missing, partially indexed, changed since "
+        "their last full ingest, or have NULL project_id",
     ),
 ):
     """Reconcile session transcripts on disk against the sessions table.
 
-    Finds four buckets:
-    - Fully indexed (session row exists, project_id set, analysis completed)
+    Sorts each transcript into one bucket:
+    - Fully indexed (session row exists, project_id set, analysis completed,
+      and the file hasn't grown since that full ingest)
     - Partially indexed (the ingest pipeline crashed mid-way — events landed
       but analysis/vectors may be incomplete)
     - Ingested but project_id IS NULL (project inference failed — often because
       Claude Code launched from $HOME so the transcript's first-event cwd
       wasn't a project directory)
+    - Changed since the last full ingest, and quiet for 30+ minutes (a turn
+      the session's own hooks never captured — e.g. its last Stop hook found
+      the ingest lock busy)
+    - Still being written (grown, but active; its session's hooks own it)
     - Missing from sessions entirely (SessionEnd hook didn't fire, or ingest
       was skipped)
 
@@ -662,7 +673,14 @@ def reconcile(
         console.print(
             f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL"
         )
+        console.print(
+            f"  [yellow]{len(report.changed)}[/yellow] changed since their last full ingest"
+        )
         console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
+        if report.settling_count:
+            console.print(
+                f"  [dim]{report.settling_count} still being written (re-ingested once quiet)[/dim]"
+            )
         if report.skipped_oversize:
             console.print(
                 f"  [dim]{len(report.skipped_oversize)} skipped — over the parser size cap "
@@ -701,7 +719,9 @@ def reconcile(
                 "(longhand codex-sync --max-file-kb to raise it)[/dim]"
             )
 
-    fixable_claude = bool(report.missing or report.null_project or report.partially_indexed)
+    fixable_claude = bool(
+        report.missing or report.null_project or report.partially_indexed or report.changed
+    )
     fixable_codex = bool(report.codex_pending or report.codex_unfinalized)
     if not fix:
         if fixable_claude or fixable_codex:
@@ -717,7 +737,12 @@ def reconcile(
         _maybe_auto_backup(store)
         return
 
-    n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
+    n_fixable = (
+        len(report.missing)
+        + len(report.null_project)
+        + len(report.partially_indexed)
+        + len(report.changed)
+    )
     if n_fixable:
         console.print(f"\n[cyan]Re-ingesting {n_fixable} file(s)...[/cyan]")
     for err in report.errors:
@@ -2820,6 +2845,12 @@ def ingest_session_cmd(
         None, "--transcript", "-t", help="Path to a single session JSONL"
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
+    wait_lock: float = typer.Option(
+        0.0,
+        "--wait-lock",
+        hidden=True,
+        help="Wait up to SECONDS for a busy ingest lock (the SessionEnd hook's background retry)",
+    ),
 ):
     """Ingest a single session file.
 
@@ -2828,8 +2859,10 @@ def ingest_session_cmd(
     SessionEnd hook (modern Claude Code passes hook data via stdin, not env vars).
     Stdin-invoked runs are hook mode: they never exit nonzero — failures become
     hook-error log breadcrumbs (see `longhand doctor`) for reconcile to heal.
+    A hook that finds the ingest lock busy spawns this command with
+    `--wait-lock`, which also runs in hook mode.
     """
-    hook_mode = transcript is None
+    hook_mode = transcript is None or wait_lock > 0
     if not transcript:
         import json as _json
         import sys as _sys
@@ -2848,7 +2881,7 @@ def ingest_session_cmd(
             # crash the Claude Code hook chain.
             return
 
-    _ingest_single(transcript, data_dir, hook_mode=hook_mode)
+    _ingest_single(transcript, data_dir, hook_mode=hook_mode, wait_lock_s=wait_lock)
 
 
 @app.command("ingest-live", hidden=True)
@@ -2857,6 +2890,12 @@ def ingest_live_cmd(
         None, "--transcript", "-t", help="Path to a single session JSONL"
     ),
     data_dir: str | None = typer.Option(None, "--data-dir"),
+    wait_lock: float = typer.Option(
+        0.0,
+        "--wait-lock",
+        hidden=True,
+        help="Wait up to SECONDS for a busy ingest lock (the Stop hook's background retry)",
+    ),
 ):
     """Tail-read new bytes of a transcript and upsert their events.
 
@@ -2867,10 +2906,14 @@ def ingest_live_cmd(
 
     Dual-mode: accepts ``--transcript <path>`` for direct CLI use, OR reads
     ``{"transcript_path": "..."}`` JSON from stdin when invoked by Claude
-    Code's Stop hook.
+    Code's Stop hook. Only the hook retries a busy lock: it spawns this
+    command with ``--wait-lock``, which waits for the lock instead of
+    spawning, and prints one line to that retry's log.
     """
     from longhand.setup_commands import ingest_live_tail as _ingest_live_tail
+    from longhand.setup_commands import retry_log_line
 
+    from_hook = not transcript
     if not transcript:
         import json as _json
         import sys as _sys
@@ -2887,7 +2930,13 @@ def ingest_live_cmd(
         if not transcript:
             return
 
-    _ingest_live_tail(transcript, data_dir)
+    summary = _ingest_live_tail(
+        transcript, data_dir, wait_lock_s=wait_lock, retry_on_lock=from_hook
+    )
+    if wait_lock > 0:
+        outcome = summary["skipped"] or f"+{summary['events']} events"
+        waited_s = summary["waited_s"] or 0.0
+        print(retry_log_line("ingest-live", Path(transcript).name, outcome, waited_s))
 
 
 @app.command(rich_help_panel="Setup & health")
