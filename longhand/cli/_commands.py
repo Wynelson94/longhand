@@ -616,25 +616,31 @@ def _maybe_auto_backup(store: LonghandStore) -> None:
     rich_help_panel="Data",
     epilog="See also: longhand reattribute — re-derives project ownership for "
     "sessions already in the database; reconcile re-ingests transcripts that "
-    "never made it in.",
+    "never made it in, or that grew after their last full ingest.",
 )
 def reconcile(
     data_dir: str | None = typer.Option(None, "--data-dir", help="Longhand data directory"),
     fix: bool = typer.Option(
         False,
         "--fix",
-        help="Re-ingest sessions that are missing, partially indexed, or have NULL project_id",
+        help="Re-ingest sessions that are missing, partially indexed, changed since "
+        "their last full ingest, or have NULL project_id",
     ),
 ):
     """Reconcile session transcripts on disk against the sessions table.
 
-    Finds four buckets:
-    - Fully indexed (session row exists, project_id set, analysis completed)
+    Sorts each transcript into one bucket:
+    - Fully indexed (session row exists, project_id set, analysis completed,
+      and the file hasn't grown since that full ingest)
     - Partially indexed (the ingest pipeline crashed mid-way — events landed
       but analysis/vectors may be incomplete)
     - Ingested but project_id IS NULL (project inference failed — often because
       Claude Code launched from $HOME so the transcript's first-event cwd
       wasn't a project directory)
+    - Changed since the last full ingest, and quiet for 30+ minutes (a turn
+      the session's own hooks never captured — e.g. its last Stop hook found
+      the ingest lock busy)
+    - Still being written (grown, but active; its session's hooks own it)
     - Missing from sessions entirely (SessionEnd hook didn't fire, or ingest
       was skipped)
 
@@ -662,7 +668,14 @@ def reconcile(
         console.print(
             f"  [yellow]{len(report.null_project)}[/yellow] ingested but project_id IS NULL"
         )
+        console.print(
+            f"  [yellow]{len(report.changed)}[/yellow] changed since their last full ingest"
+        )
         console.print(f"  [red]{len(report.missing)}[/red] missing from sessions")
+        if report.settling_count:
+            console.print(
+                f"  [dim]{report.settling_count} still being written (re-ingested once quiet)[/dim]"
+            )
         if report.skipped_oversize:
             console.print(
                 f"  [dim]{len(report.skipped_oversize)} skipped — over the parser size cap "
@@ -701,7 +714,9 @@ def reconcile(
                 "(longhand codex-sync --max-file-kb to raise it)[/dim]"
             )
 
-    fixable_claude = bool(report.missing or report.null_project or report.partially_indexed)
+    fixable_claude = bool(
+        report.missing or report.null_project or report.partially_indexed or report.changed
+    )
     fixable_codex = bool(report.codex_pending or report.codex_unfinalized)
     if not fix:
         if fixable_claude or fixable_codex:
@@ -717,7 +732,12 @@ def reconcile(
         _maybe_auto_backup(store)
         return
 
-    n_fixable = len(report.missing) + len(report.null_project) + len(report.partially_indexed)
+    n_fixable = (
+        len(report.missing)
+        + len(report.null_project)
+        + len(report.partially_indexed)
+        + len(report.changed)
+    )
     if n_fixable:
         console.print(f"\n[cyan]Re-ingesting {n_fixable} file(s)...[/cyan]")
     for err in report.errors:

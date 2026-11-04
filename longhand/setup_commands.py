@@ -993,8 +993,17 @@ def _freshness_status(store: LonghandStore) -> str | None:
     (e.g. ~/.claude/projects doesn't exist yet). For each JSONL whose mtime is
     within the last 7 days, check whether the sessions table has a row for it.
     Ratio drives the status: ≥0.9 green, ≥0.5 yellow, <0.5 red.
+
+    A row alone doesn't prove the transcript is captured: a session whose last
+    Stop hook found the ingest lock busy keeps its row but loses its tail.
+    Transcripts that grew after their last full ingest and have gone quiet
+    (reconcile's "changed" bucket) are counted too, and turn a green row
+    yellow.
     """
+    import os
     import time as _time
+
+    from longhand.recall.reconcile import full_ingest_state
 
     try:
         jsonls = discover_sessions()
@@ -1003,14 +1012,16 @@ def _freshness_status(store: LonghandStore) -> str | None:
     if not jsonls:
         return None
 
-    cutoff = _time.time() - 7 * 86400
-    recent: list[str] = []
+    now = _time.time()
+    cutoff = now - 7 * 86400
+    recent: dict[str, os.stat_result] = {}
     for j in jsonls:
         try:
-            if j.stat().st_mtime >= cutoff:
-                recent.append(str(j))
+            st = j.stat()
         except (OSError, PermissionError):
             continue
+        if st.st_mtime >= cutoff:
+            recent[str(j)] = st
 
     if not recent:
         return "[green]✓[/green] no recent Claude Code activity"
@@ -1018,18 +1029,25 @@ def _freshness_status(store: LonghandStore) -> str | None:
     try:
         with store.sqlite.connect() as conn:
             placeholders = ",".join("?" * len(recent))
-            row = conn.execute(
-                f"SELECT COUNT(*) FROM sessions WHERE transcript_path IN ({placeholders})",
-                recent,
-            ).fetchone()
-            ingested = row[0] if row else 0
+            rows = conn.execute(
+                "SELECT DISTINCT transcript_path FROM sessions "
+                f"WHERE transcript_path IN ({placeholders})",
+                list(recent),
+            ).fetchall()
+        with_rows = [r[0] for r in rows]
+        changed = sum(
+            1 for p in with_rows if full_ingest_state(store, p, recent[p], now) == "changed"
+        )
     except Exception:
         return None
 
+    ingested = len(with_rows)
     ratio = ingested / len(recent)
     summary = f"{ingested}/{len(recent)} transcripts ingested"
+    if changed:
+        summary += f", {changed} changed since their last full ingest"
 
-    if ratio >= 0.9:
+    if ratio >= 0.9 and not changed:
         return f"[green]✓[/green] {summary}"
     if ratio >= 0.5:
         return (
