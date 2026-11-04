@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from longhand.cli import app
@@ -457,16 +458,54 @@ def test_stop_hook_lockout_spawns_a_background_retry(tmp_path: Path) -> None:
     ]
     # Detached, so it outlives the hook and the session; logged where
     # lock-out frequency can be counted.
-    assert popen.call_args.kwargs["start_new_session"] is True
-    assert Path(popen.call_args.kwargs["stdout"].name).name.startswith("live-retry-")
+    kwargs = popen.call_args.kwargs
+    assert kwargs["start_new_session"] is True
+    assert Path(kwargs["stdout"].name).name.startswith("live-retry-")
+    # Started in the data dir, not the session's project dir: with `-m`, Python
+    # imports a `longhand/` package from the working directory first, so a
+    # session inside a Longhand checkout would otherwise run that code.
+    assert kwargs.get("cwd") == str(data_dir)
+    assert kwargs.get("env", {}).get("LONGHAND_DATA_DIR") == str(data_dir)
+    assert kwargs.get("stdin") == subprocess.DEVNULL
     # The marker names the waiter, so the next locked turn knows one is coming.
     assert [m.read_text() for m in _retry_markers(data_dir)] == ["424242"]
 
 
-def test_direct_live_tail_never_spawns_a_retry(tmp_path: Path) -> None:
+def test_live_retry_paths_are_absolute_when_the_data_dir_is_relative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The waiter starts in the data dir, so a relative path would point
+    somewhere else from there."""
+    transcript, data_dir = _locked_store(tmp_path, os.getppid())
+    monkeypatch.chdir(tmp_path)
+
+    with patch("subprocess.Popen") as popen:
+        _stop_hook(transcript, Path(data_dir.name))  # --data-dir longhand
+
+    assert popen.call_count == 1
+    argv = popen.call_args.args[0]
+    passed = Path(argv[argv.index("--data-dir") + 1])
+    assert passed.is_absolute()
+    assert passed.resolve() == data_dir.resolve()
+    assert Path(popen.call_args.kwargs.get("cwd") or ".").resolve() == data_dir.resolve()
+
+
+def test_direct_live_tail_never_spawns_a_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Only the hook spawns. A direct call or an explicit --transcript run
     reports the busy lock and stops."""
+    from longhand.recall import project_fallback
+
     transcript, data_dir = _locked_store(tmp_path, os.getppid())
+    claims: list[bool] = []
+    real_claim = project_fallback.claim_ingest_lock
+
+    def recording_claim(store):
+        claims.append(real_claim(store))
+        return claims[-1]
+
+    monkeypatch.setattr(project_fallback, "claim_ingest_lock", recording_claim)
 
     with patch("subprocess.Popen") as popen:
         summary = ingest_live_tail(str(transcript), data_dir=str(data_dir))
@@ -476,6 +515,7 @@ def test_direct_live_tail_never_spawns_a_retry(tmp_path: Path) -> None:
 
     assert summary["skipped"] == "locked"
     assert result.exit_code == 0, result.output
+    assert claims == [False, False]  # both runs reached the busy lock
     popen.assert_not_called()
     assert _retry_markers(data_dir) == []
 
@@ -499,6 +539,51 @@ def test_live_retry_dedupes_on_a_live_waiter_and_replaces_a_dead_one(tmp_path: P
         assert popen.call_count == 2
 
     assert marker.read_text() == str(os.getppid())
+
+
+def test_live_retry_replaces_a_marker_older_than_any_wait(tmp_path: Path) -> None:
+    """A killed waiter leaves its marker behind, and if its PID is then reused
+    the marker still answers alive. No waiter waits past the retry window, so
+    a marker older than that is stale whatever its PID says."""
+    import time
+
+    transcript, data_dir = _locked_store(tmp_path, os.getppid())
+
+    with patch("subprocess.Popen") as popen:
+        popen.return_value.pid = os.getppid()  # alive, like a reused PID
+        _stop_hook(transcript, data_dir)
+        (marker,) = _retry_markers(data_dir)
+        old = time.time() - 13 * 60
+        os.utime(marker, (old, old))
+        _stop_hook(transcript, data_dir)
+
+    assert popen.call_count == 2
+
+
+def test_live_retry_waiter_clears_its_marker_before_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A turn locked out after the waiter has read must start a retry of its
+    own, so the waiter gives up its marker before it reads, not when it exits."""
+    transcript, data_dir = _locked_store(tmp_path, os.getppid())
+    with patch("subprocess.Popen") as popen:
+        popen.return_value.pid = os.getpid()  # the waiter runs in this process
+        _stop_hook(transcript, data_dir)
+    (marker,) = _retry_markers(data_dir)
+    (data_dir / ".ingest.lock").unlink()  # the holder has finished
+
+    marker_at_read: list[bool] = []
+    real_tail = JSONLParser.parse_tail_from_offset
+
+    def tail_noting_the_marker(self, *args, **kwargs):
+        marker_at_read.append(marker.exists())
+        return real_tail(self, *args, **kwargs)
+
+    monkeypatch.setattr(JSONLParser, "parse_tail_from_offset", tail_noting_the_marker)
+    summary = ingest_live_tail(str(transcript), data_dir=str(data_dir), wait_lock_s=5)
+
+    assert summary["events"] >= 1, summary
+    assert marker_at_read == [False]
 
 
 def test_live_retry_waiter_reads_the_tail_once_the_lock_frees(tmp_path: Path) -> None:

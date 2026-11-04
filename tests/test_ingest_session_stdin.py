@@ -305,7 +305,9 @@ def test_hook_mode_lockout_spawns_a_background_retry(
         str(data_dir),
     ]
     assert Path(popen.call_args.kwargs["stdout"].name).name.startswith("session-retry-")
-    assert "retrying in the background" in " ".join(hook.output.split())  # Rich wraps at 80
+    # Rich wraps console output at 80 columns; compare with the breaks undone.
+    assert "retrying in the background" in " ".join(hook.output.split())
+    assert "run it again once the other ingest finishes" in " ".join(explicit.output.split())
 
 
 def test_session_retry_waiter_ingests_once_the_lock_frees(

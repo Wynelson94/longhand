@@ -8,7 +8,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-822%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-831%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -95,7 +95,7 @@ longhand analyze --all           # fill in episodes + segments + project/session
 
 `search`, timelines, file history, and commit lookup all work immediately after `--skip-analysis` — every event is embedded regardless of this flag. `recall`'s episode/segment narrative and `recall_project_status` need the `analyze --all` pass to have data to draw on. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.3.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 822 unit tests passing.*
+> *Status: v1.3.0 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 831 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -470,7 +470,7 @@ Once installed, you can ask Claude things like *"what did we decide about the au
 
 Both commands read `transcript_path` from the hook's stdin JSON, so no flags are needed in the hook entry itself.
 
-- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. If another ingest holds the lock, the hook neither waits nor skips the turn: it starts a detached retry that reads the transcript as soon as the lock frees, so a turn isn't lost when the session ends right after it. There is one retry per transcript; each logs a line to `logs/live-retry-YYYY-MM-DD.log`, and one still waiting after 10 minutes gives up with a `lock-timeout` breadcrumb for `doctor`. A failure here is silent by design — no stdout, no breadcrumb — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
+- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. If another ingest holds the lock, the hook neither waits nor skips the turn: it starts a detached retry that reads the transcript as soon as the lock frees, so a turn isn't lost when the session ends right after it. There is one retry per transcript and hook; each logs a line to `logs/live-retry-YYYY-MM-DD.log`, and one still waiting after 10 minutes gives up with a `lock-timeout` breadcrumb for `doctor`. A failure here is silent by design — no stdout, and no breadcrumb unless a busy lock's retry can't even be started (`retry-spawn-failed`) — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
 - **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0. A busy lock gets the same background retry, logged to `logs/session-retry-YYYY-MM-DD.log`.
 
 Both are non-blocking and run in one to two seconds. You don't have to think about either of them again.
@@ -602,7 +602,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-822 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+831 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

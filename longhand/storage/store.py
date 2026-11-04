@@ -87,6 +87,7 @@ class LonghandStore:
         session: Session,
         events: list[Event],
         run_analysis: bool = True,
+        transcript_size: int | None = None,
     ) -> dict:
         """Persist a parsed session and its events to both backends.
 
@@ -103,6 +104,12 @@ class LonghandStore:
 
         Each step commits separately; the stage marker is what makes a
         mid-pipeline failure visible instead of silently under-analyzed.
+
+        `transcript_size` is the number of bytes the parse covered (pass
+        `JSONLParser.parsed_size`). It is logged as ingested and floors the
+        live tail's cursor. Omitted, the file's size after the ingest is used,
+        which claims any bytes appended while the ingest ran: fine for a file
+        nobody is writing, wrong for a live transcript.
         """
         self.sqlite.mark_ingest_started(session.transcript_path, session.session_id)
 
@@ -117,11 +124,12 @@ class LonghandStore:
         git_ops = self._extract_git_operations(session.session_id, events)
         git_ops_stored = self.sqlite.insert_git_operations(git_ops)
 
-        transcript_size = (
-            Path(session.transcript_path).stat().st_size
-            if Path(session.transcript_path).exists()
-            else 0
-        )
+        if transcript_size is None:
+            transcript_size = (
+                Path(session.transcript_path).stat().st_size
+                if Path(session.transcript_path).exists()
+                else 0
+            )
         self.sqlite.log_ingestion(
             session.transcript_path, session.session_id, transcript_size, len(events)
         )

@@ -11,8 +11,8 @@ commits and tag annotations of those releases.
 
 ## [Unreleased]
 
-A session could lose its last turn when the ingest lock was busy, and
-`reconcile` could not see the loss. Both are fixed.
+A session could lose its last turn to a busy ingest lock or to a full ingest
+of the same transcript, and `reconcile` could not see the loss.
 
 ### Fixed
 
@@ -20,11 +20,23 @@ A session could lose its last turn when the ingest lock was busy, and
   skipped the turn and left it for the next Stop, which never runs if the
   session ends on that turn. SessionEnd deferred the same way. Both hooks now
   hand a locked-out ingest to a detached retry (`--wait-lock 600`), one per
-  transcript, which reads the transcript to its end as soon as the lock
-  frees. The hooks still never wait. Each retry logs to
-  `logs/live-retry-*.log` or `logs/session-retry-*.log`; one that gives up
-  leaves a `lock-timeout` breadcrumb, which `doctor` counts as healable by
+  transcript and hook, which reads the transcript to its end as soon as the
+  lock frees. The hooks still never wait. Each retry logs to
+  `logs/live-retry-*.log` or `logs/session-retry-*.log`. A retry that gives
+  up leaves a `lock-timeout` breadcrumb; if one can't be started, the hook
+  leaves `retry-spawn-failed`. `doctor` counts both as healable by
   `reconcile --fix`.
+- **A full ingest logged bytes it never read.** It measured the transcript
+  after embedding and logged that size as ingested, so a turn a live session
+  wrote during the ingest was claimed unread: the live tail's cursor skipped
+  it and `reconcile` saw nothing to heal. The size is now taken before
+  parsing.
+- **Background workers could run the wrong Longhand.** `longhand ingest`,
+  spawned by recall, ran `python -m longhand` in the hook's working
+  directory (the session's project), and Python imports a `longhand/`
+  package from there first: a session inside a Longhand checkout ran that
+  checkout's code. Background workers, including the new retries, now start
+  in the data directory.
 - **`reconcile` counted a transcript as fully indexed once it had a row.** A
   transcript that grew after its last full ingest stayed invisible to it, so
   a lost turn was never healed. It now re-ingests a transcript whose size

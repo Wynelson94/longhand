@@ -139,14 +139,18 @@ Users concerned about token costs or stale context injection can raise the thres
 
 ### Fail-open hooks, per hook
 
-All hook handlers wrap their full execution in try/except and exit 0 on any failure — Longhand can crash internally without ever crashing or hanging Claude Code. What happens beyond the exit code differs by hook: `UserPromptSubmit` prints `{}` to stdout; `SessionEnd` prints one line to stderr and appends a breadcrumb to `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`); `Stop` (the per-turn live tail) does neither — it returns quietly with no output and no breadcrumb, since it must never add I/O to the path that runs on every assistant turn.
+All hook handlers wrap their full execution in try/except and exit 0 on any failure — Longhand can crash internally without ever crashing or hanging Claude Code. What happens beyond the exit code differs by hook: `UserPromptSubmit` prints `{}` to stdout; `SessionEnd` prints one line to stderr and appends a breadcrumb to `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`); `Stop` (the per-turn live tail) does neither — it returns quietly with no output and no breadcrumb, since it must never add I/O to the path that runs on every assistant turn. When the ingest lock is busy, `Stop` and `SessionEnd` both hand their work to a detached retry instead of waiting (see the subprocess list below). A retry that gives up after 10 minutes leaves a `lock-timeout` breadcrumb. If the retry can't be started at all, the hook itself leaves `retry-spawn-failed`; that is the one case where `Stop` writes a breadcrumb.
 
 ### Subprocess use — no shell, no injection
 
-Longhand uses `subprocess` in exactly three places. All pass a list-form argv (never a shell string); the first two include no value derived from user input, tool output, or stored data, and the third includes exactly two — the remote URL you typed at `backup init`, after validation, and the clone path (`--path`, by default under `~/.longhand/`), each behind `--` wherever git takes it as a positional argument:
+Longhand uses `subprocess` in exactly three places. All pass a list-form argv (never a shell string). The first includes no value derived from user input, tool output, or stored data. The second includes two paths, and only on the busy-lock retry: the transcript path from the hook's stdin JSON (written by Claude Code) and the data directory. The third includes exactly two values: the remote URL you typed at `backup init`, after validation, and the clone path (`--path`, by default under `~/.longhand/`), each behind `--` wherever git takes it as a positional argument.
 
 - `longhand/setup_commands.py` — `["launchctl", "unload"|"load", RECONCILER_PLIST_PATH]`, run only when you explicitly install or uninstall the optional reconciler. The plist path is a fixed module constant.
-- `longhand/recall/project_fallback.py` — `subprocess.Popen([sys.executable, "-m", "longhand", "ingest"], close_fds=True, start_new_session=True)`, a detached background re-ingest the recall pipeline may spawn when it notices a stale index (the same `spawn_background` helper also spawns `[..., "backfill-episodes"]` on the analogous episode-backfill path). `-m longhand.cli` was the actual entry point through 0.11.1; it was a bug (fixed in 0.11.2), not the current behavior.
+- `longhand/recall/project_fallback.py` — one detached-spawn helper: `subprocess.Popen([sys.executable, "-m", "longhand", …], cwd=<data dir>, env={…, "LONGHAND_DATA_DIR": <data dir>}, stdin=DEVNULL, close_fds=True, start_new_session=True)`. It runs:
+  - `ingest` or `backfill-episodes`, when the recall pipeline notices a stale index;
+  - `ingest-live` or `ingest-session --transcript <path> --wait-lock 600 --data-dir <data dir>`, when a `Stop` or `SessionEnd` hook finds the ingest lock busy. Both paths are option values in a list-form argv, never parsed by a shell.
+
+  The child starts in the data directory because `python -m` imports from the working directory first, and a hook runs in the session's project directory. Inheriting that directory would let a `longhand/` package sitting there (a session inside a Longhand checkout) run instead of the installed one. `-m longhand.cli` was the actual entry point through 0.11.1; that was a bug (fixed in 0.11.2), not the current behavior.
 - `longhand/backup/gitrepo.py` (1.3.0+, opt-in) — every git call is `[git, "-c", "protocol.ext.allow=never", "-C", <clone path>, <subcommand>, …]` with `--` before any remote or path, so a remote can never be read as an option and can never name a transport helper that runs commands; `gh` is called as `[gh, "repo", "view", <owner/repo>, "--json", "visibility", "--jq", ".visibility"]` or `[gh, "repo", "create", <owner/repo>, "--private"]` with stdin closed and a timeout. The remote and the clone path are the only user-supplied argv elements (`gh` receives an `owner/repo` matched by `[\w.-]+` and no `--`): `validate_remote` accepts `https://`, `ssh://`, `file://`, `user@host:path`, or an absolute path, and refuses anything starting with `-` or containing `::`. Credentials embedded in a URL are masked in every message Longhand prints. The clone path is under `~/.longhand/` unless you pass `--path`. Nothing runs unless you enabled backups at `backup init`.
 
 There is no `shell=True`, no `os.system`/`os.popen`, and no `eval`/`exec` anywhere in the source — verify with:
@@ -156,7 +160,7 @@ $ grep -rn 'shell=True\|os\.system\|os\.popen\|eval(\|exec(' longhand/
 # (no results)
 ```
 
-Because every argv element is a string literal or an internal constant, there is no command-injection surface even though `subprocess` itself is used.
+Because every argv is a list, never a shell string, and the only non-constant elements are the paths and the validated remote named above, there is no command-injection surface even though `subprocess` itself is used.
 
 ### Parameterized SQL
 
@@ -171,7 +175,14 @@ Every user-supplied value reaches SQLite as a bound parameter — no user input 
 - `~/.longhand/update-check.json` (the version-check cache; refreshed roughly once a day per most commands, forced on every `doctor`/`setup` run — see the network bullet above)
 - `~/.longhand/.ingest.lock` (held for the duration of an ingest/analyze/vacuum/reattribute run)
 - `~/.longhand/cache/jsonl_project_map.json` (drift-detection cache)
-- `~/.longhand/logs/` — `hook-errors-YYYY-MM-DD.log` (SessionEnd hook failures), `background-ingest-YYYY-MM-DD.log` / `background-backfill-YYYY-MM-DD.log` (the two detached workers, named by their `log_prefix`), `reconcile.log` (the scheduled reconciler), `codex-sync.log` (the launchd Codex poller), `backup.log` (auto-mode backup outcomes, 1.3.0+)
+- `~/.longhand/logs/`:
+  - `hook-errors-YYYY-MM-DD.log`: SessionEnd hook failures, and busy-lock retries that gave up or couldn't start;
+  - `background-ingest-YYYY-MM-DD.log` and `background-backfill-YYYY-MM-DD.log`: the recall pipeline's detached workers, named by their `log_prefix`;
+  - `live-retry-YYYY-MM-DD.log` and `session-retry-YYYY-MM-DD.log`: one line per busy-lock retry;
+  - `reconcile.log`: the scheduled reconciler;
+  - `codex-sync.log`: the launchd Codex poller;
+  - `backup.log`: auto-mode backup outcomes, 1.3.0+.
+- `~/.longhand/live-retry/` and `~/.longhand/session-retry/`: one small PID marker per transcript while a busy-lock retry waits for the lock. The retry removes its marker once it holds the lock.
 - `~/.longhand/backup/` (the backup clone, only after `longhand backup init`; `--path` moves it), `~/.longhand/backup-state.json` (per-session marks from the last backup or restore run, mode 0600, never in the repository, and checked against the clone on every run), `~/.longhand/backup.lock` (held for the duration of a backup run), `<clone>/.staging/` (transient export files, inside the clone and ignored by its `.gitignore`) and `~/.longhand/backup-restore/` (transient, joins split parts during a restore); both transient directories are removed at the end of every run
 - `~/Library/LaunchAgents/com.longhand.reconcile.plist` (only when you run `schedule install-reconciler`, macOS only) and the equivalent `com.longhand.codex-sync.plist` if you install the template from `docs/codex.md`
 - `~/Library/Application Support/Claude/claude_desktop_config.json` and its `.longhand-backup` (only when you run `longhand mcp install`/`mcp uninstall`, or `setup` without `--skip-mcp`)

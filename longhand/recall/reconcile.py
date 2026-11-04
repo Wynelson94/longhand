@@ -242,7 +242,9 @@ def run_reconcile(
                 if not events:
                     continue
                 session = parser.build_session(events)
-                store.ingest_session(session, events, run_analysis=run_analysis)
+                store.ingest_session(
+                    session, events, run_analysis=run_analysis, transcript_size=parser.parsed_size
+                )
                 report.ingested += 1
             except Exception as e:  # noqa: BLE001
                 report.errors.append({"path": str(f), "error": str(e)})

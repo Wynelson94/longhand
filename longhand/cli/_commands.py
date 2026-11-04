@@ -557,7 +557,12 @@ def ingest(
                         continue
 
                     session = parser.build_session(events)
-                    result = store.ingest_session(session, events, run_analysis=not skip_analysis)
+                    result = store.ingest_session(
+                        session,
+                        events,
+                        run_analysis=not skip_analysis,
+                        transcript_size=parser.parsed_size,
+                    )
                     events_total += result["events_stored"]
                     ingested += 1
                 except Exception as e:

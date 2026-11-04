@@ -566,3 +566,30 @@ def test_win32_liveness_queries_with_limited_information_access(monkeypatch):
     assert access == 0x1000
     assert not inherit
     assert pid == 4321
+
+
+def test_background_spawns_ignore_a_longhand_package_in_the_callers_cwd(temp_store, tmp_path):
+    """`python -m longhand` imports from the working directory first, and hooks
+    run in the session's project directory. A session inside a Longhand
+    checkout would otherwise run that checkout's code in the background child
+    (and could migrate the live store with it)."""
+    decoy = tmp_path / "project"
+    (decoy / "longhand").mkdir(parents=True)
+    (decoy / "longhand" / "__init__.py").write_text("")
+    (decoy / "longhand" / "__main__.py").write_text('print("DECOY longhand ran")\n')
+
+    previous = os.getcwd()
+    os.chdir(decoy)
+    try:
+        spawned = project_fallback.spawn_background(temp_store, ["--version"], "decoy-check")
+    finally:
+        os.chdir(previous)
+    assert spawned
+
+    (log,) = (temp_store.data_dir / "logs").glob("decoy-check-*.log")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not log.read_text().strip():
+        time.sleep(0.1)
+    output = log.read_text()
+    assert output.strip(), "the background child printed nothing"
+    assert "DECOY" not in output

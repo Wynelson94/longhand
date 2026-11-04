@@ -708,8 +708,11 @@ def ingest_single_session(
             then = "retrying in the background once it finishes"
         elif retry == "waiting":
             then = "a background retry is already waiting for it"
+        elif retry == "failed":
+            _hook_fail("retry-spawn-failed", str(path))
+            then = "`longhand reconcile --fix` will pick it up"
         else:
-            then = "`longhand reconcile --fix` picks it up once it has been quiet for 30 minutes"
+            then = "run it again once the other ingest finishes"
         console.print(
             f"[yellow]Another Longhand ingest is running — deferring {path.name}; {then}.[/yellow]"
         )
@@ -732,7 +735,9 @@ def ingest_single_session(
             console.print(f"[yellow]No events in {path.name}[/yellow]")
             return
         session = parser.build_session(events)
-        result = store.ingest_session(session, events, run_analysis=run_analysis)
+        result = store.ingest_session(
+            session, events, run_analysis=run_analysis, transcript_size=parser.parsed_size
+        )
         console.print(
             f"[green]✓[/green] Ingested {session.session_id[:8]} — "
             f"{result['events_stored']} events, "
@@ -881,6 +886,10 @@ def ingest_live_tail(
             summary["skipped"] = "locked"
             if retry_on_lock:
                 summary["retry"] = spawn_ingest_retry(store.data_dir, "ingest-live", path)
+                if summary["retry"] == "failed":
+                    # Rare (a lock-out and a failed spawn), so worth the I/O:
+                    # nothing is coming for this turn but reconcile.
+                    _log_hook_error(store.data_dir, f"ingest-live retry-spawn-failed: {path}")
             return summary
 
         start_offset = store.sqlite.get_live_offset(str(path))
@@ -1072,6 +1081,7 @@ def _freshness_status(store: LonghandStore) -> str | None:
     import os
     import time as _time
 
+    from longhand.parser import MAX_FILE_SIZE_BYTES
     from longhand.recall.reconcile import full_ingest_state
 
     try:
@@ -1104,8 +1114,14 @@ def _freshness_status(store: LonghandStore) -> str | None:
                 list(recent),
             ).fetchall()
         with_rows = [r[0] for r in rows]
+        # A transcript over the parser's cap can't be re-ingested by any path
+        # (reconcile books it under skipped_oversize): don't send the user to
+        # a reconcile that cannot help.
         changed = sum(
-            1 for p in with_rows if full_ingest_state(store, p, recent[p], now) == "changed"
+            1
+            for p in with_rows
+            if recent[p].st_size <= MAX_FILE_SIZE_BYTES
+            and full_ingest_state(store, p, recent[p], now) == "changed"
         )
     except Exception:
         return None
@@ -1217,16 +1233,16 @@ def _drift_remedy() -> str:
 
 # Hook-error classes that `reconcile` can actually heal. reconcile enumerates
 # from DISK (discover_sessions), so it can only re-ingest a transcript that is
-# still there: `ingest-failed` qualifies, and so does `lock-timeout` (a
-# background retry that never got the lock leaves its transcript behind its
-# last full ingest, which reconcile re-ingests once the file is quiet).
-# Nothing else does. A `missing-transcript` never landed and is invisible to
-# the heal path forever; `oversize-transcript` would hit the same cap on
-# re-ingest; `store-open-failed` blocks reconcile itself. Recommending
-# reconcile for those is a no-op, which is a Promise 5 (honest metrics)
-# violation — over the v0.13 bake, 21 of 23 real hook errors were the
-# unhealable class.
-_RECONCILE_HEALABLE = frozenset({"ingest-failed", "lock-timeout"})
+# still there: `ingest-failed` qualifies, and so do `lock-timeout` and
+# `retry-spawn-failed` (a background retry that never got the lock, or never
+# started, leaves its transcript behind its last full ingest, which reconcile
+# re-ingests once the file is quiet). Nothing else does. A
+# `missing-transcript` never landed and is invisible to the heal path forever;
+# `oversize-transcript` would hit the same cap on re-ingest;
+# `store-open-failed` blocks reconcile itself. Recommending reconcile for
+# those is a no-op, which is a Promise 5 (honest metrics) violation — over
+# the v0.13 bake, 21 of 23 real hook errors were the unhealable class.
+_RECONCILE_HEALABLE = frozenset({"ingest-failed", "lock-timeout", "retry-spawn-failed"})
 
 
 def _hook_error_class(line: str) -> str:

@@ -643,25 +643,26 @@ def test_hook_errors_mixed_classes_split_the_remedy(tmp_path: Path):
     assert "reconcile" in status  # scoped to the 1 that it can actually fix
 
 
-def test_hook_errors_lock_timeout_is_reconcile_healable(tmp_path: Path):
-    """A background retry that never got the lock left its transcript on
-    disk and behind its last full ingest: reconcile --fix re-ingests it once
-    the file has gone quiet."""
+@pytest.mark.parametrize("cls", ["lock-timeout", "retry-spawn-failed"])
+def test_hook_errors_lock_retry_classes_are_reconcile_healable(tmp_path: Path, cls: str):
+    """A background retry that never got the lock (or never started) left its
+    transcript on disk and behind its last full ingest: reconcile --fix
+    re-ingests it once the file has gone quiet."""
     from longhand.setup_commands import _hook_errors_status
     from longhand.storage import LonghandStore
 
     store = LonghandStore(data_dir=tmp_path / "longhand")
     _write_hook_log(
         store,
-        "2026-11-04T20:00:00+00:00 ingest-live lock-timeout: /tmp/a.jsonl",
+        f"2026-11-04T20:00:00+00:00 ingest-live {cls}: /tmp/a.jsonl",
         "2026-08-11T17:10:51+00:00 ingest-session missing-transcript: /tmp/gone.jsonl",
     )
 
     status = _hook_errors_status(store)
 
     assert "2 in the last 7 days" in status
-    assert "1 lock-timeout" in status
-    assert "heals the 1 lock-timeout" in status
+    assert f"1 {cls}" in status
+    assert f"heals the 1 {cls}" in status
 
 
 def test_hook_errors_unknown_class_never_claims_healability(tmp_path: Path):
@@ -942,6 +943,24 @@ def test_freshness_status_green_while_a_grown_transcript_is_still_active(
     status = _freshness_status(store)
     assert status is not None
     assert "green" in status
+    assert "changed since" not in status
+
+
+def test_freshness_status_does_not_send_an_oversize_transcript_to_reconcile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A transcript that grew past the parser's size cap can't be re-ingested
+    by any path; reconcile books it under skipped_oversize. The row must not
+    tell the user to run a reconcile that cannot help."""
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+
+    store, jsonl = _ingested_then_grown(tmp_path, quiet_seconds=3600)
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [jsonl])
+    monkeypatch.setattr("longhand.parser.MAX_FILE_SIZE_BYTES", jsonl.stat().st_size - 1)
+
+    status = _freshness_status(store)
+    assert status is not None
     assert "changed since" not in status
 
 
