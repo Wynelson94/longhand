@@ -58,7 +58,8 @@ A GitHub remote must be private. When `gh` is installed and signed in, `init`
 asks it; a public or organization-internal repository is refused outright.
 `--create` runs `gh repo create <owner>/<repo> --private` first. When the
 visibility cannot be checked (no `gh`, or a remote that is not github.com),
-`init` says so and asks you to type `private` as well.
+`init` says so and asks you to type `private` as well; `--yes` skips that
+prompt too.
 
 ## What is uploaded
 
@@ -106,13 +107,15 @@ number of sessions touched; values are never printed.
 
 `longhand backup --no-mask` uploads verbatim. It needs a terminal and asks
 you to type `verbatim`. Mixing masked and verbatim runs leaves near-duplicate
-lines for the same event in the repository; on restore the later one wins.
+lines for the same event in the repository, and restore keeps both: the
+parser gives the second copy a `#1`-suffixed event id, so the restored
+session holds that event twice, one copy masked and one verbatim.
 
 ## Day to day
 
 ```sh
 longhand backup            # export what changed, commit, push
-longhand backup --no-push  # commit into the clone only
+longhand backup --no-push  # commit into the clone; no push (still fetches first)
 longhand backup status     # remote, clone, pending sessions, last push, last error, masks
 longhand backup auto on    # let the scheduled reconciler push, at most once an hour
 longhand backup disable    # off; the clone and the remote keep what was pushed
@@ -122,15 +125,19 @@ Only sessions whose event count, last event, or ingest time moved since the
 last run are exported. A live-tailed session grows between runs and is
 re-exported; git stores the difference.
 
-**Auto mode** runs at the end of every `longhand reconcile --fix` pass, which
-is what `longhand schedule install-reconciler` schedules every 30 minutes on
-macOS. It backs up at most once an hour, only when something changed, with
-masking always on. Network and git failures go to
+**Auto mode** runs at the end of every `longhand reconcile --fix` pass that
+gets the ingest lock (a pass that finds another ingest running exits first),
+which is what `longhand schedule install-reconciler` schedules every 30
+minutes on macOS. It backs up at most once an hour, only when something
+changed, with masking always on. Network and git failures go to
 `~/.longhand/logs/backup.log` and never affect the reconciler. `longhand
 doctor` shows a `Backup` row: `off`, `on · never pushed`, `on · last push
 12 min ago`, `auto · last push 2 h ago`, or `on · last run FAILED 3 h ago`
-when the last run hit any error (a session that failed to export, a push
-that failed, or an exception); `backup status` has the message.
+when a run hit an error after its checks (a session that failed to export, a
+fetch or push that failed, or an exception mid-run); `backup status` has the
+message. A run refused at the start (no clone, an origin that isn't
+`backup.remote`, another run holding the lock) is not recorded there; auto
+mode logs it to `logs/backup.log`.
 
 **A failed push** is reported, not raised: the commits stay in the clone and
 the next run pushes them, or, if the remote moved in between, exports those
@@ -152,8 +159,9 @@ of the same session, the union is written (the repository's lines first,
 then the lines only this machine had), and a copy that is a subset of what
 the repository holds changes nothing. A restored machine that keeps backing
 up therefore adds nothing until a session actually changes. Two runs on one
-machine never overlap: the second waits on `backup.lock` and reports that the
-first is still running.
+machine never overlap: while one holds `backup.lock`, a second stops at once
+with "another backup run is in progress (pid N); try again later" (for now
+at the end of a Python traceback, exit 1).
 
 ## Restore
 
@@ -169,7 +177,12 @@ it under the ingest lock. Vectors and the derived tables (episodes,
 segments, outcomes, projects) are rebuilt by the ingest pipeline;
 `--skip-analysis` defers the analysis so you can run `longhand analyze --all`
 later. `config.json` is restored only when this data dir has none. A second
-`restore` imports nothing: sessions are skipped by content hash.
+`restore` imports nothing: a session is skipped when this machine's
+`backup-state.json` already records its sha256. The store itself is not
+checked, so a store that already holds the sessions but has no state file
+re-imports every one from the copy (masked text replaces rows with the same
+id), and an emptied store whose `backup-state.json` survived imports
+nothing: move that file aside first.
 
 What comes back is the record, not the rows. Restore is the current parser's
 view of the transcripts, exactly as `analyze --all` is the current
@@ -200,13 +213,18 @@ restore (an MCP `at_event_id`, say) may not resolve afterwards.
 
 The `backup` section of `config.json` holds `enabled`, `remote`, `path`,
 and `auto`. `longhand config --set backup.auto=true` sets the same key as
-`backup auto on` (which also checks that backups are enabled first);
-`enabled`, `remote`, and `path` can only be written by `init`, after its
-consent screen, and `config --set` refuses them.
+`backup auto on` (which also checks that backups are enabled first) — on
+the default data directory only: `config --set` always writes
+`~/.longhand/config.json`, so with `LONGHAND_DATA_DIR` or `--data-dir` use
+`backup auto on` ([#96](https://github.com/Wynelson94/longhand/issues/96)).
+`remote` and `path` are written only by `init`, after its consent screen,
+and `enabled` by `init` and `backup disable`; `config --set` refuses all
+three.
 
 ## How git is called
 
 Every git call is a list-form argv with `-c protocol.ext.allow=never`, and
-`--` precedes every remote or path you supplied; nothing goes through a
-shell. Credentials embedded in a URL (`https://user:token@host/…`) are masked
-in every message Longhand prints. See SECURITY.md.
+`--` precedes every remote or path git takes as a positional argument (a
+clone path is otherwise the value of `-C`); nothing goes through a shell.
+Credentials embedded in a URL (`https://user:token@host/…`) are masked in
+every message Longhand prints. See SECURITY.md.

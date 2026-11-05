@@ -124,7 +124,8 @@ interrupted). On a 60-second schedule a thread is recallable about 30 minutes
 after its last message; the poller loads the embedding model only on the run
 that has a quiet thread to finalize, one thread per run.
 
-The same scheduled run drives the opt-in `backup auto` push (1.3.0+), and
+The scheduled reconciler — not `codex-sync` or its 60-second poller — also
+drives the opt-in `backup auto` push (1.3.0+), and
 captured Codex rollouts are backed up and restored alongside Claude
 transcripts — see [docs/backup.md](backup.md).
 
