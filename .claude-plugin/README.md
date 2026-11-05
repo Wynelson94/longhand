@@ -43,7 +43,7 @@ Longhand's thesis: **the model doesn't need to carry the memory — the disk doe
 
 ## Validated against real sessions
 
-Tested against 792 real sessions (786 Claude Code, 6 Codex) / 269,067 events / 3,723 git operations / 1,809 problem-fix episodes across 45 inferred projects (measured 2026-09-27). 831 unit tests passing. Security-audited with zero critical findings.
+Tested against 792 real sessions (786 Claude Code, 6 Codex) / 269,067 events / 3,723 git operations / 1,809 problem-fix episodes across 45 inferred projects (measured 2026-09-27). 834 unit tests passing. Security-audited with zero critical findings.
 
 ## Links
 

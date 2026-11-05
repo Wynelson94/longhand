@@ -6,7 +6,9 @@ Pre-drafted copy for the three upstream registries/lists. Work through in order.
 
 ## D2 — Official MCP Registry (`registry.modelcontextprotocol.io`)
 
-The registry is submitted to via a CLI + GitHub auth, not a PR. Prerequisites: a new PyPI release (v0.5.5) so the `<!-- mcp-name: ... -->` marker in the README is present in the description PyPI serves back.
+**Releases after 1.3.1 publish here automatically.** The `registry` job in [`publish.yml`](../.github/workflows/publish.yml) runs after the PyPI job, signs in with GitHub OIDC (no stored secret), and publishes `server.json` with a pinned `mcp-publisher` whose Sigstore signature it checks first. If that job fails, the PyPI release stands: re-run the job, or publish by hand as below, pinning a release tag instead of `releases/latest`. The registry sat at 0.5.5 from April until 1.3.1 was published by hand on 2026-11-05.
+
+The original submission (v0.5.5) follows. The registry is submitted to via a CLI + GitHub auth, not a PR. Prerequisites: a new PyPI release (v0.5.5) so the `<!-- mcp-name: ... -->` marker in the README is present in the description PyPI serves back.
 
 **Prereq: ship v0.5.5 to PyPI**
 

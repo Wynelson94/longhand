@@ -9,6 +9,19 @@ commits and tag annotations of those releases.
 
 ---
 
+## [Unreleased]
+
+### Internal
+
+- Releases now update the official MCP Registry too. A new job in
+  `publish.yml` runs after the PyPI upload, signs in with GitHub OIDC (no
+  stored secret), and publishes `server.json` with a pinned `mcp-publisher`
+  whose Sigstore signature it checks first; a re-run skips a version the
+  registry already has. Nothing published there automatically before, so the
+  registry sat at 0.5.5 from April until 1.3.1 was published by hand.
+
+---
+
 ## [1.3.1] — 2026-11-04
 
 A session could lose its last turn to a busy ingest lock or to a full ingest
