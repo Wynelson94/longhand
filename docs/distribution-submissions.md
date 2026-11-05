@@ -52,7 +52,7 @@ PR adding one line under **🧠 Knowledge & Memory**. Format follows the list's 
 - [Wynelson94/longhand](https://github.com/Wynelson94/longhand) 🐍 🏠 🍎 🐧 - Persistent local memory for Claude Code. Indexes every session JSONL verbatim into SQLite + ChromaDB for semantic recall (~128ms median) over your entire history. Zero API calls, never summarizes.
 ```
 
-Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🐧 Linux. No 🪟 Windows badge — the Windows CI leg fails 12 core tests every run ([#112](https://github.com/Wynelson94/longhand/issues/112)); Windows isn't a supported platform.
+Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🐧 Linux. No 🪟 Windows badge — the Windows CI leg fails 18 core tests every run as of 1.3.1 ([#112](https://github.com/Wynelson94/longhand/issues/112)); Windows isn't a supported platform.
 
 **PR steps:**
 
