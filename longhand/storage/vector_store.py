@@ -57,6 +57,7 @@ class VectorStore:
         # Share one CPU model across collections; avoid CoreML compilation
         # and loading a separate embedding model for every collection.
         embedding = ONNXMiniLM_L6_V2(preferred_providers=["CPUExecutionProvider"])
+        self.embedding = embedding
 
         self.events_collection = self.client.get_or_create_collection(
             name="events",
@@ -625,8 +626,16 @@ class VectorStore:
                 self.client.delete_collection(name=name)
             except Exception:
                 pass
-        self.events_collection = self.client.get_or_create_collection(name="events")
-        self.sessions_collection = self.client.get_or_create_collection(name="sessions")
-        self.projects_collection = self.client.get_or_create_collection(name="projects")
-        self.segments_collection = self.client.get_or_create_collection(name="segments")
-        self.episodes_collection = self.client.get_or_create_collection(name="episodes")
+        self.events_collection = self._recreate_collection("events")
+        self.sessions_collection = self._recreate_collection("sessions")
+        self.projects_collection = self._recreate_collection("projects")
+        self.segments_collection = self._recreate_collection("segments")
+        self.episodes_collection = self._recreate_collection("episodes")
+
+    def _recreate_collection(self, name: str) -> Any:
+        """Create a collection with the shared CPU embedding model.
+
+        Without ``embedding_function`` Chroma falls back to its default model,
+        which is the provider selection ``__init__`` pins away from.
+        """
+        return self.client.get_or_create_collection(name=name, embedding_function=self.embedding)
