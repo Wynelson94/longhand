@@ -52,6 +52,24 @@ KNOWN_SKIP_ENTRY_TYPES = frozenset(
         # rows and no recall. Triaged 2026-08-12, found by the doctor drift
         # row on the live corpus (276 in 30 days) the day 1.0.0 shipped.
         "file-history-delta",
+        # api-request / api-request-blob / api-request-shape: Claude Code
+        # 2.1.x request telemetry — the outgoing API call, a blob of the
+        # message it carried, and the request "shape" ({system, tools}: the
+        # full system prompt plus tool schemas). All three duplicate what is
+        # already stored — the conversation is parsed into user_message /
+        # assistant_text events, and a shape repeats verbatim on every
+        # request until the prompt or tool set changes. On a 464-session
+        # archive: 9,624 rows / 28.6 MB of unknown events, shape entries at
+        # ~81 KB each. Triaged 2026-11-14 (doctor drift row, CC 2.1.310).
+        "api-request",
+        "api-request-blob",
+        "api-request-shape",
+        # atis-latch: {atis: ""} — a latch flag whose payload is an empty
+        # string; there is nothing to store. Triaged 2026-11-14.
+        "atis-latch",
+        # tools-used: {tools: [names]} — the tool list already lives on the
+        # tool_call events themselves. Triaged 2026-11-14.
+        "tools-used",
     }
 )
 
@@ -70,7 +88,33 @@ KNOWN_SKIP_ENTRY_TYPES = frozenset(
 #   path: the local .html, title}). Genuinely recallable ("where did that
 #   report go?") — a promotion candidate alongside pr-link — preserved until
 #   then. Triaged 2026-09-07 (doctor drift row on the live corpus, 30 in 30 days).
-TRIAGED_UNKNOWN_ENTRY_TYPES = frozenset({"summary", "pr-link", "worktree-state", "frame-link"})
+# - custom-title: the user's own rename of a session ({customTitle}); the most
+#   direct "that session I called X" handle there is, so worth promoting into a
+#   sessions column rather than discarding. Triaged 2026-11-14 (doctor drift
+#   row, Claude Code 2.1.310).
+# - agent-setting: {agentSetting} — a per-session agent/subagent label. Small,
+#   plausibly recallable ("the run with the tester agent"), cheap to keep until
+#   the vocabulary is understood. Triaged 2026-11-14.
+# - relocated: {relocatedCwd} — records that the session changed working
+#   directory. Per-event cwd already carries the post-move path, so this is
+#   reconstructible, but the move itself is a fact no event states outright.
+#   Triaged 2026-11-14.
+# - cost-state: per-session token/cost rollup ({totalCostUSD, modelUsage,
+#   totalAPIDuration, ...}). Answerable from other tables only approximately
+#   once model prices change, so preserved until a decision is made about
+#   storing cost history. Triaged 2026-11-14.
+TRIAGED_UNKNOWN_ENTRY_TYPES = frozenset(
+    {
+        "summary",
+        "pr-link",
+        "worktree-state",
+        "frame-link",
+        "custom-title",
+        "agent-setting",
+        "relocated",
+        "cost-state",
+    }
+)
 
 
 _MAX_UNIQUE_CWDS_SCANNED = 20
