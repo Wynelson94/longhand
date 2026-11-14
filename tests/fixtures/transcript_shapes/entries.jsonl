@@ -16,3 +16,12 @@
 {"type":"worktree-state","sessionId":"s-shapes","worktreeSession":{"originalCwd":"/tmp/shapes-project","worktreePath":"/tmp/shapes-project/.claude/worktrees/wt-1","worktreeName":"wt-1","worktreeBranch":"worktree-wt-1","originalBranch":"main","originalHeadCommit":"0000000000000000000000000000000000000000","sessionId":"s-shapes"}}
 {"type":"file-history-delta","messageId":"shape-fhd-1","snapshotMessageId":"shape-fhs-1","trackingPath":"/tmp/shapes-project/main.py","backup":{"backupFileName":null,"version":3,"backupTime":"2026-08-11T10:00:00.000Z","realParentDir":"/tmp/shapes-project"},"timestamp":"2026-08-11T10:00:00.000Z"}
 {"type":"frame-link","frameUrl":"https://claude.ai/frames/shape-frame-1","path":"/tmp/shapes-project/report.html","sessionId":"s-shapes","timestamp":"2026-09-01T10:00:00.000Z","title":"Shapes report"}
+{"type":"api-request","sessionId":"s-shapes","id":"shape-req-1","timestamp":"2026-11-14T10:00:00.000Z","version":"2.1.310","querySource":"repl_main_thread","shapeHash":"0000000000000000000000000000000000000000000000000000000000000001","params":{"model":"claude-sonnet-5","max_tokens":8192},"base":"shape-req-base-1","keep":2008,"tail":[{"role":"user","content":"run the tests"}],"cacheControl":[{"type":"ephemeral"}],"requestDigest":"0000000000000000000000000000000000000000000000000000000000000002"}
+{"type":"api-request-blob","sessionId":"s-shapes","hash":"0000000000000000000000000000000000000000000000000000000000000003","message":{"role":"user","content":"run the tests and fix whatever breaks"}}
+{"type":"api-request-shape","sessionId":"s-shapes","shapeHash":"0000000000000000000000000000000000000000000000000000000000000004","timestamp":"2026-11-14T10:00:01.000Z","version":"2.1.310","shape":{"system":[{"type":"text","text":"You are Claude Code."}],"tools":[{"name":"Bash","description":"run a command"}]}}
+{"type":"custom-title","customTitle":"auth fix","sessionId":"s-shapes"}
+{"type":"agent-setting","agentSetting":"tester","sessionId":"s-shapes"}
+{"type":"atis-latch","atis":"","sessionId":"s-shapes"}
+{"type":"relocated","relocatedCwd":"/tmp/shapes-project-relocated","sessionId":"s-shapes"}
+{"type":"tools-used","tools":["Bash","Read","Edit"],"sessionId":"s-shapes"}
+{"type":"cost-state","sessionId":"s-shapes","totalCostUSD":0.42,"totalAPIDuration":1000,"totalAPIDurationWithoutRetries":900,"totalToolDuration":120,"totalLinesAdded":10,"totalLinesRemoved":2,"totalDuration":5000,"startTime":1790000000000,"modelUsage":{"claude-sonnet-5":{"inputTokens":1000}},"hasUnknownModelCost":false}
