@@ -19,6 +19,13 @@ commits and tag annotations of those releases.
   whose Sigstore signature it checks first; a re-run skips a version the
   registry already has. Nothing published there automatically before, so the
   registry sat at 0.5.5 from April until 1.3.1 was published by hand.
+- Python 3.15 does not install yet, and the README now says why:
+  `onnxruntime` (required by `chromadb`) has no 3.15 wheel and has never
+  published a source distribution, so pip has nothing to install or build.
+  A new weekly `py315-watch.yml` job retries the install and the suite on
+  3.15 and opens one issue when the install first succeeds. It never gates a
+  PR. A failed install there is the expected state for now; the job goes red
+  only if the install fails for a reason other than `onnxruntime`.
 
 ---
 
