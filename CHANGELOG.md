@@ -24,7 +24,8 @@ commits and tag annotations of those releases.
   published a source distribution, so pip has nothing to install or build.
   A new weekly `py315-watch.yml` job retries the install and the suite on
   3.15 and opens one issue when the install first succeeds. It never gates a
-  PR; a failed install there is the expected state for now.
+  PR. A failed install there is the expected state for now; the job goes red
+  only if the install fails for a reason other than `onnxruntime`.
 
 ---
 

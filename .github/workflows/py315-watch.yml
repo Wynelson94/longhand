@@ -12,8 +12,10 @@ name: Python 3.15 watch
 #
 # Evidence-gathering only, same idea as the Windows leg in ci.yml: it never
 # gates a PR, and a failed install step here is the EXPECTED state for now,
-# not something to fix in this repo. The job itself stays green either way;
-# read the job summary for the real result.
+# not something to fix in this repo. Read the job summary for the real result.
+# The job stays green while the only thing pip cannot find is onnxruntime, and
+# once the install works. It goes red only if the install fails for any other
+# reason, because that is a new problem and a green check would hide it.
 #
 # Retire this file when 3.15 joins the gated matrix in ci.yml.
 
@@ -67,6 +69,7 @@ jobs:
           INSTALL: ${{ steps.install.outcome }}
           PYTEST: ${{ steps.pytest.outcome }}
         run: |
+          unexpected=0
           {
             echo "### Python 3.15 watch"
             echo
@@ -74,25 +77,54 @@ jobs:
             echo "- pytest: \`$PYTEST\`"
             echo
             if [ "$INSTALL" != "success" ]; then
-              echo "Not yet: Longhand does not install on Python 3.15. Last pip errors:"
+              # Which packages does pip say it has no distribution for on this
+              # Python? pip names them in one of two shapes: the resolver's
+              # "no matching distributions available for your environment:"
+              # block (what a real 3.15 run printed on 2026-11-20; its ERROR
+              # lines never name the package), or a direct
+              # "ERROR: No matching distribution found for X" line.
+              missing=""
+              if [ -f install.log ]; then
+                missing=$(
+                  {
+                    awk '/no matching distributions available for your environment:/ {f=1; next} f && NF==0 {f=0} f {print $1}' install.log
+                    sed -nE 's/^ERROR: No matching distribution found for ([A-Za-z0-9._-]+).*/\1/p' install.log
+                  } | sort -u | paste -sd' ' -
+                )
+              fi
+              echo "Not yet: Longhand does not install on Python 3.15."
+              echo
+              if [ "$missing" = "onnxruntime" ]; then
+                echo "Expected. The only package pip could not find for 3.15 is \`onnxruntime\`, which has no cp315 wheel yet."
+              elif [ -n "$missing" ]; then
+                unexpected=1
+                echo "**Not the known state.** pip could not find these for 3.15: \`$missing\`. On 2026-11-20 the only one was \`onnxruntime\`."
+              else
+                unexpected=1
+                echo "**Not the known state.** pip did not name a package it could not find, so this is not the onnxruntime gap. Read the install step's log."
+              fi
+              echo
+              echo "Last pip errors:"
               echo
               echo '```'
-              if [ -f install.log ] && grep -qE '^ERROR' install.log; then
-                grep -E '^ERROR' install.log | tail -n 5
-              elif [ -f install.log ]; then
-                tail -n 15 install.log
-              else
+              if [ ! -f install.log ]; then
                 echo "(no install.log: the step failed before pip ran)"
+              elif grep -qE '^ERROR' install.log; then
+                grep -E '^ERROR' install.log | tail -n 5
+              else
+                tail -n 15 install.log
               fi
               echo '```'
-              echo
-              echo "Expected while onnxruntime has no cp315 wheel. An error that does not name onnxruntime is a second problem worth a look."
             elif [ "$PYTEST" = "success" ]; then
               echo "Python 3.15 installs and the suite passes. Promote it to the gated matrix in ci.yml."
             else
               echo "Python 3.15 installs, but the suite does not pass. Fix that before promoting it to the gated matrix."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$unexpected" = "1" ]; then
+            echo "::error title=Python 3.15 watch: unexpected install failure::The install failed on Python 3.15 for a reason other than the known onnxruntime gap. See the job summary and the install step's log."
+            exit 1
+          fi
       - name: Open the promote-to-CI issue (once)
         # Never from a pull_request run: a PR only proves the workflow file
         # works, and a fork's token could not open the issue anyway.
