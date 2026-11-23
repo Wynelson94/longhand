@@ -3,10 +3,45 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+# Captured before any test can patch it (see _no_real_detached_spawn).
+_REAL_POPEN = subprocess.Popen
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "real_spawn: the test starts a real detached `longhand` child, which must exit on its own",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_detached_spawn(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
+    """Refuse every real detached `longhand` child; tests/test_spawn_guard.py says why.
+
+    ``project_fallback._spawn_detached`` is the one place Longhand starts a
+    detached process. Wrapped here, it passes the call on only when the test
+    has patched ``subprocess.Popen`` itself; otherwise it refuses the way a
+    failed spawn does, by returning None. A test that needs a real child is
+    marked ``real_spawn``, and that child must exit on its own.
+    """
+    if request.node.get_closest_marker("real_spawn"):
+        return
+    from longhand.recall import project_fallback
+
+    spawn = project_fallback._spawn_detached
+
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        if subprocess.Popen is _REAL_POPEN:
+            return None
+        return spawn(*args, **kwargs)
+
+    monkeypatch.setattr(project_fallback, "_spawn_detached", guarded)
 
 
 @pytest.fixture(autouse=True)

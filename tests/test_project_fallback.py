@@ -12,6 +12,8 @@ import types
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from longhand.parser import JSONLParser
 from longhand.recall import project_fallback
 from longhand.recall.project_match import match_projects
@@ -568,6 +570,7 @@ def test_win32_liveness_queries_with_limited_information_access(monkeypatch):
     assert pid == 4321
 
 
+@pytest.mark.real_spawn  # the child runs `longhand --version` and exits at once
 def test_background_spawns_ignore_a_longhand_package_in_the_callers_cwd(temp_store, tmp_path):
     """`python -m longhand` imports from the working directory first, and hooks
     run in the session's project directory. A session inside a Longhand

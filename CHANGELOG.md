@@ -26,6 +26,15 @@ commits and tag annotations of those releases.
   3.15 and opens one issue when the install first succeeds. It never gates a
   PR. A failed install there is the expected state for now; the job goes red
   only if the install fails for a reason other than `onnxruntime`.
+- The test suite no longer leaves background `longhand ingest` processes
+  running. An unmatched project query starts a detached `ingest`, and ten
+  tests reach that path. On a developer's machine each child re-read all of
+  `~/.claude/projects` into a temporary store for up to an hour, so every
+  local run left ten behind and stacked runs could exhaust memory. CI never
+  showed it, because its runners have no transcripts. `tests/conftest.py`
+  now refuses a real detached spawn unless the test patches
+  `subprocess.Popen` itself or is marked `real_spawn`, and
+  `tests/test_spawn_guard.py` fails if that guard stops working.
 
 ---
 
