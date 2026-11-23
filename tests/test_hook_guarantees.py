@@ -262,6 +262,38 @@ def test_stop_hook_never_raises(
     assert result.exit_code == 0, f"{failure}: {result.output}"
 
 
+@pytest.mark.parametrize("command", ["ingest-live", "ingest-session"])
+def test_lockout_retry_spawn_failure_never_raises(
+    command: str,
+    sample_session_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy lock hands the ingest to a background retry. When that spawn
+    fails, the hook still exits 0 (Stop prints nothing), leaves no retry
+    marker behind to block the next turn's retry, and leaves a breadcrumb
+    so doctor can see that nothing is coming."""
+    import os
+
+    data_dir = tmp_path / "lh"
+    LonghandStore(data_dir=data_dir)
+    (data_dir / ".ingest.lock").write_text(str(os.getppid()))  # a live holder
+    monkeypatch.setattr("subprocess.Popen", _raise_runtime)
+
+    result = CliRunner().invoke(
+        app,
+        [command, "--data-dir", str(data_dir)],
+        input=_session_payload(sample_session_file),
+    )
+
+    assert result.exit_code == 0, result.output
+    if command == "ingest-live":
+        assert result.output == ""
+    assert list(data_dir.glob("*-retry/*.pid")) == []
+    breadcrumbs = "".join(f.read_text() for f in (data_dir / "logs").glob("hook-errors-*.log"))
+    assert f"{command} retry-spawn-failed: {sample_session_file}" in breadcrumbs
+
+
 PROMPT_FAILURES = {
     "recall-raise": lambda mp: mp.setattr("longhand.recall.recall", _raise_runtime),
     "recall-disk-io": lambda mp: mp.setattr("longhand.recall.recall", _raise_disk_io),

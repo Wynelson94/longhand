@@ -1,0 +1,163 @@
+name: Python 3.15 watch
+
+# Longhand cannot install on Python 3.15 yet. onnxruntime (required by
+# chromadb, and what Longhand's embeddings run on) publishes no cp315 wheel,
+# and it has never published a source distribution, so pip has nothing to
+# install and nothing to build. Checked 2026-11-20: newest onnxruntime was
+# 1.32.0, wheels for cp311-cp314 only.
+#
+# Nothing in Longhand caps the Python version, so the install can start
+# working without a Longhand release once upstream ships that wheel. This job
+# retries every week and opens ONE issue when the install first succeeds.
+#
+# Evidence-gathering only, same idea as the Windows leg in ci.yml: it never
+# gates a PR, and a failed install step here is the EXPECTED state for now,
+# not something to fix in this repo. Read the job summary for the real result.
+# The job stays green while the only thing pip cannot find is onnxruntime, and
+# once the install works. It goes red only if the install fails for any other
+# reason, because that is a new problem and a green check would hide it.
+#
+# Retire this file when 3.15 joins the gated matrix in ci.yml.
+
+on:
+  schedule:
+    - cron: "23 14 * * 1" # Mondays, 14:23 UTC
+  workflow_dispatch:
+  pull_request:
+    # Only when this file itself changes, so an edit to the watch is exercised
+    # before it merges. Ordinary PRs never run it.
+    paths:
+      - ".github/workflows/py315-watch.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Install + tests on Python 3.15 (non-gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+      # No `cache: pip` on purpose. chroma-hnswlib builds from source on every
+      # Python above 3.12, and a cached native build is the trap documented in
+      # ci.yml ("Evict natively-compiled hnswlib wheels from the pip cache").
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        # Explicit bash turns on pipefail, so pip's exit status survives `tee`.
+        shell: bash
+        env:
+          HNSWLIB_NO_NATIVE: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" 2>&1 | tee install.log
+      - name: Run pytest
+        id: pytest
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: pytest -q
+      - name: Summarize
+        shell: bash
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          PYTEST: ${{ steps.pytest.outcome }}
+        run: |
+          unexpected=0
+          {
+            echo "### Python 3.15 watch"
+            echo
+            echo "- install: \`$INSTALL\`"
+            echo "- pytest: \`$PYTEST\`"
+            echo
+            if [ "$INSTALL" != "success" ]; then
+              # Which packages does pip say it has no distribution for on this
+              # Python? pip names them in one of two shapes: the resolver's
+              # "no matching distributions available for your environment:"
+              # block (what a real 3.15 run printed on 2026-11-20; its ERROR
+              # lines never name the package), or a direct
+              # "ERROR: No matching distribution found for X" line.
+              missing=""
+              if [ -f install.log ]; then
+                missing=$(
+                  {
+                    awk '/no matching distributions available for your environment:/ {f=1; next} f && NF==0 {f=0} f {print $1}' install.log
+                    sed -nE 's/^ERROR: No matching distribution found for ([A-Za-z0-9._-]+).*/\1/p' install.log
+                  } | sort -u | paste -sd' ' -
+                )
+              fi
+              echo "Not yet: Longhand does not install on Python 3.15."
+              echo
+              if [ "$missing" = "onnxruntime" ]; then
+                echo "Expected. The only package pip could not find for 3.15 is \`onnxruntime\`, which has no cp315 wheel yet."
+              elif [ -n "$missing" ]; then
+                unexpected=1
+                echo "**Not the known state.** pip could not find these for 3.15: \`$missing\`. On 2026-11-20 the only one was \`onnxruntime\`."
+              else
+                unexpected=1
+                echo "**Not the known state.** pip did not name a package it could not find, so this is not the onnxruntime gap. Read the install step's log."
+              fi
+              echo
+              echo "Last pip errors:"
+              echo
+              echo '```'
+              if [ ! -f install.log ]; then
+                echo "(no install.log: the step failed before pip ran)"
+              elif grep -qE '^ERROR' install.log; then
+                grep -E '^ERROR' install.log | tail -n 5
+              else
+                tail -n 15 install.log
+              fi
+              echo '```'
+            elif [ "$PYTEST" = "success" ]; then
+              echo "Python 3.15 installs and the suite passes. Promote it to the gated matrix in ci.yml."
+            else
+              echo "Python 3.15 installs, but the suite does not pass. Fix that before promoting it to the gated matrix."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$unexpected" = "1" ]; then
+            echo "::error title=Python 3.15 watch: unexpected install failure::The install failed on Python 3.15 for a reason other than the known onnxruntime gap. See the job summary and the install step's log."
+            exit 1
+          fi
+      - name: Open the promote-to-CI issue (once)
+        # Never from a pull_request run: a PR only proves the workflow file
+        # works, and a fork's token could not open the issue anyway.
+        if: steps.install.outcome == 'success' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTEST: ${{ steps.pytest.outcome }}
+        run: |
+          title="Python 3.15 now installs: promote it to the CI matrix"
+          # Exact-title match over open AND closed issues, so a closed one is
+          # never reopened as a duplicate.
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 1000 \
+            --json title --jq "map(select(.title == \"$title\")) | length")
+          if [ "$existing" != "0" ]; then
+            echo "Issue already exists; nothing to do."
+            exit 0
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "The weekly watch job installed Longhand on Python 3.15 for the first time."
+            echo
+            echo "- Run: $run_url"
+            echo "- pytest on 3.15: \`$PYTEST\`"
+            echo
+            echo "If pytest passed:"
+            echo
+            echo "- [ ] Add \`\"3.15\"\` to the matrix in \`.github/workflows/ci.yml\`"
+            echo "- [ ] Add the \`Programming Language :: Python :: 3.15\` classifier in \`pyproject.toml\`"
+            echo "- [ ] Update the README's Platform support section (range, and drop the 3.15 note)"
+            echo "- [ ] Delete \`.github/workflows/py315-watch.yml\`"
+            echo "- [ ] Add \"Tests (Python 3.15)\" to the required checks on \`main\`"
+            echo
+            echo "If pytest failed, fix those failures first; the run above has the output."
+          } > issue-body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md

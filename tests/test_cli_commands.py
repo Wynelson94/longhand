@@ -643,6 +643,28 @@ def test_hook_errors_mixed_classes_split_the_remedy(tmp_path: Path):
     assert "reconcile" in status  # scoped to the 1 that it can actually fix
 
 
+@pytest.mark.parametrize("cls", ["lock-timeout", "retry-spawn-failed"])
+def test_hook_errors_lock_retry_classes_are_reconcile_healable(tmp_path: Path, cls: str):
+    """A background retry that never got the lock (or never started) left its
+    transcript on disk and behind its last full ingest: reconcile --fix
+    re-ingests it once the file has gone quiet."""
+    from longhand.setup_commands import _hook_errors_status
+    from longhand.storage import LonghandStore
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    _write_hook_log(
+        store,
+        f"2026-11-04T20:00:00+00:00 ingest-live {cls}: /tmp/a.jsonl",
+        "2026-08-11T17:10:51+00:00 ingest-session missing-transcript: /tmp/gone.jsonl",
+    )
+
+    status = _hook_errors_status(store)
+
+    assert "2 in the last 7 days" in status
+    assert f"1 {cls}" in status
+    assert f"heals the 1 {cls}" in status
+
+
 def test_hook_errors_unknown_class_never_claims_healability(tmp_path: Path):
     """Unparseable or new class tokens count, but must not inherit the advice."""
     from longhand.setup_commands import _hook_errors_status
@@ -850,6 +872,96 @@ def test_freshness_status_no_recent_activity(tmp_path: Path, monkeypatch: pytest
     assert status is not None
     assert "green" in status
     assert "no recent Claude Code activity" in status
+
+
+def _ingested_then_grown(tmp_path: Path, quiet_seconds: int):
+    """Ingest a one-line transcript, then append a line no hook captured.
+
+    Backdates the file by `quiet_seconds` (0 leaves it just written).
+    """
+    import os
+    import time
+
+    from longhand.parser import JSONLParser
+    from longhand.storage import LonghandStore
+
+    entry = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s-grown",
+        "timestamp": "2026-11-03T23:00:00Z",
+        "cwd": str(tmp_path),
+        "message": {"role": "user", "content": "hi"},
+    }
+    jsonl = tmp_path / "grown.jsonl"
+    jsonl.write_text(json.dumps(entry) + "\n")
+
+    store = LonghandStore(data_dir=tmp_path / "longhand")
+    parser = JSONLParser(jsonl)
+    events = list(parser.parse_events())
+    store.ingest_session(parser.build_session(events), events, run_analysis=False)
+
+    lost = {**entry, "uuid": "u2", "message": {"role": "user", "content": "lost"}}
+    with jsonl.open("a") as f:
+        f.write(json.dumps(lost) + "\n")
+    if quiet_seconds:
+        t = time.time() - quiet_seconds
+        os.utime(jsonl, (t, t))
+    return store, jsonl
+
+
+def test_freshness_status_yellow_when_a_quiet_transcript_grew_since_ingest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A recent transcript that grew after its last full ingest and has gone
+    quiet lost its tail. The row turns yellow and points at reconcile, even
+    though every recent transcript has a sessions row."""
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+
+    store, jsonl = _ingested_then_grown(tmp_path, quiet_seconds=3600)
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [jsonl])
+
+    status = _freshness_status(store)
+    assert status is not None
+    assert "yellow" in status
+    assert "1 changed since" in status
+    assert "reconcile --fix" in status
+
+
+def test_freshness_status_green_while_a_grown_transcript_is_still_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """An active session's file is always ahead of its last full ingest.
+    That's normal and must not turn the row yellow."""
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+
+    store, jsonl = _ingested_then_grown(tmp_path, quiet_seconds=0)
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [jsonl])
+
+    status = _freshness_status(store)
+    assert status is not None
+    assert "green" in status
+    assert "changed since" not in status
+
+
+def test_freshness_status_does_not_send_an_oversize_transcript_to_reconcile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A transcript that grew past the parser's size cap can't be re-ingested
+    by any path; reconcile books it under skipped_oversize. The row must not
+    tell the user to run a reconcile that cannot help."""
+    from longhand import setup_commands
+    from longhand.setup_commands import _freshness_status
+
+    store, jsonl = _ingested_then_grown(tmp_path, quiet_seconds=3600)
+    monkeypatch.setattr(setup_commands, "discover_sessions", lambda: [jsonl])
+    monkeypatch.setattr("longhand.parser.MAX_FILE_SIZE_BYTES", jsonl.stat().st_size - 1)
+
+    status = _freshness_status(store)
+    assert status is not None
+    assert "changed since" not in status
 
 
 # ─── recall --json flag (R4) ────────────────────────────────────────────────

@@ -14,7 +14,7 @@ python scripts/check_version_sync.py
 pytest --cov=longhand --cov-report=term-missing --cov-fail-under=60
 ```
 
-That's Tests on Python 3.10 through 3.14 (all five required), Ruff, Version sync, and mypy. A Windows leg (`windows-latest × py3.12`) runs on every PR too but is non-blocking and currently red — 12 core tests fail every run ([#112](https://github.com/Wynelson94/longhand/issues/112)), hidden behind `continue-on-error` — so don't read a green PR as Windows working. See the README's Platform support section.
+That's Tests on Python 3.10 through 3.14 (all five required), Ruff, Version sync, and mypy. A Windows leg (`windows-latest × py3.12`) runs on every PR too but is non-blocking and currently red — 18 core tests fail every run ([#112](https://github.com/Wynelson94/longhand/issues/112)), hidden behind `continue-on-error` — so don't read a green PR as Windows working. See the README's Platform support section.
 
 Work on a branch and open a PR — `main` is protected and takes no direct pushes for non-admins. In practice that means the checks above must be green for a regular contributor's PR to merge; the branch protection rule itself requires zero approving reviews and doesn't enforce against admins, so for a repo admin, green CI is a norm to follow, not something GitHub enforces — an admin can push directly or merge without green checks if they choose to.
 
@@ -31,7 +31,7 @@ Read the **migration authoring policy** in the header of `longhand/storage/migra
 
 ## Before you change the hooks
 
-Read `tests/test_hook_guarantees.py` first. Hooks never raise, never touch the network, and never block the prompt (Promise 3). A hook that fails must exit 0 — `SessionEnd` additionally leaves a breadcrumb for `reconcile` to clean up later, but `Stop` (the per-turn live tail) fails silently by design, since it must never add I/O to that path. If your change can make a hook slow, raise, or reach the network, it needs a different design rather than a passing test.
+Read `tests/test_hook_guarantees.py` first. Hooks never raise, never touch the network, and never block the prompt (Promise 3). A hook that fails must exit 0 — `SessionEnd` additionally leaves a breadcrumb for `reconcile` to clean up later, but `Stop` (the per-turn live tail) fails silently by design, since it must never add I/O to that path — its one breadcrumb is `retry-spawn-failed`, when a busy-lock retry can't be started (1.3.1+). If your change can make a hook slow, raise, or reach the network, it needs a different design rather than a passing test.
 
 ## Before you change the CLI or MCP surface
 

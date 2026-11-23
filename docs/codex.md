@@ -124,6 +124,11 @@ interrupted). On a 60-second schedule a thread is recallable about 30 minutes
 after its last message; the poller loads the embedding model only on the run
 that has a quiet thread to finalize, one thread per run.
 
+The scheduled reconciler — not `codex-sync` or its 60-second poller — also
+drives the opt-in `backup auto` push (1.3.0+), and
+captured Codex rollouts are backed up and restored alongside Claude
+transcripts — see [docs/backup.md](backup.md).
+
 ### Faster capture with launchd (macOS)
 
 `scripts/com.longhand.codex-sync.plist.template` is a ready-made user
@@ -199,8 +204,8 @@ follow the Linux guidance above.
   except commit messages parsed from `exec` commands, which only a later
   `redact --apply` masks ([#110](https://github.com/Wynelson94/longhand/issues/110)).
   Capture runs under the same ingest lock as the hooks; a Claude hook that
-  fires while a capture holds the lock skips that turn, and the reconciler
-  heals it.
+  fires while a capture holds the lock hands that turn to a background
+  retry, which reads it as soon as the lock frees.
 
 This is shared, retrievable history — not a transfer of a model's live
 context. Only locally saved rollouts are available.

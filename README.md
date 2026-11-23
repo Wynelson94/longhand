@@ -8,7 +8,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/longhand?label=PyPI&color=blue)](https://pypi.org/project/longhand/)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-802%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-834%20passing-brightgreen)
 ![Local](https://img.shields.io/badge/100%25-local-informational)
 [![SafeSkill 93/100](https://img.shields.io/badge/SafeSkill-93%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/wynelson94-longhand)
 
@@ -41,6 +41,8 @@ longhand demo         # sandboxed; cleans up afterwards (pass --keep to explore)
 - New: [COMPATIBILITY.md](https://github.com/Wynelson94/longhand/blob/main/COMPATIBILITY.md) states what 1.x guarantees and what it doesn't.
 
 Your database needs nothing. Migrations are automatic and a 0.11+ store opens on any later 1.x — that's Promise 2, and there's a real 0.11-schema fixture in the test suite proving it.
+
+**Upgrading to 1.3.0?** Nothing removed, and nothing changes until you ask for it. One new, opt-in capability: `longhand backup` writes every session's verbatim transcript to a private git repository you own (secret-shaped strings masked in the copy only), and `longhand restore` rebuilds the archive on a new machine from it. It stays off until `backup init` has shown you exactly what would be uploaded and you have typed `yes`. See [Backup](#backup) below and [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md).
 
 **Upgrading to 1.2.x?** No removals, just fixes worth knowing about:
 
@@ -93,7 +95,7 @@ longhand analyze --all           # fill in episodes + segments + project/session
 
 `search`, timelines, file history, and commit lookup all work immediately after `--skip-analysis` — every event is embedded regardless of this flag. `recall`'s episode/segment narrative and `recall_project_status` need the `analyze --all` pass to have data to draw on. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.2.3 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 802 unit tests passing.*
+> *Status: v1.3.1 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 834 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -111,7 +113,7 @@ Longhand goes the other direction. **The model doesn't need to carry the memory.
 |----------------------|----------------------------------------------|-----------------------------------|
 | **Where it lives**   | Rented from a model provider                 | A SQLite file + ChromaDB on your laptop |
 | **Cost per query**   | Tokens × dollars                             | Zero                              |
-| **Privacy**          | Goes through someone else's servers          | Never leaves your machine         |
+| **Privacy**          | Goes through someone else's servers          | Never leaves your machine, unless you opt in to `backup`, and then only to a git remote you own |
 | **Speed**            | Seconds to minutes for large contexts        | ~29ms search · ~128ms full recall (warm; see [Stats](#stats)) |
 | **Loss**             | Attention degrades in the middle of long contexts | Nothing summarized — messages, edits, and thinking blocks stored verbatim† |
 | **Persistence**      | Dies when the window closes                  | Lives until you delete the file   |
@@ -133,9 +135,11 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Python 3.10 – 3.14 are all fully supported and gated in CI** — branch protection requires the full suite to pass on all five before a PR merges (admins can bypass it — see [CONTRIBUTING.md](https://github.com/Wynelson94/longhand/blob/main/CONTRIBUTING.md)).
 
+**Python 3.15 does not install yet.** `pip install longhand` stops on 3.15 because pip finds no `onnxruntime` it can use. Longhand's embeddings run on `onnxruntime` (required by `chromadb`), and as of 2026-11-20 no `onnxruntime` release ships a Python 3.15 wheel; it has never published a source distribution to build from either. Nothing in Longhand caps the Python version, so no Longhand release is needed for 3.15 to start installing once that wheel exists. Everything past the install is untested on 3.15. Until then, install into a Python 3.10 – 3.14 environment. A weekly [watch job](https://github.com/Wynelson94/longhand/blob/main/.github/workflows/py315-watch.yml) retries the install on 3.15 and opens an issue when it succeeds; 3.15 joins the gated matrix once the suite passes there.
+
 Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
 
-**Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 12 core tests fail on every run (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
+**Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 18 core tests fail on every run as of 1.3.1 (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, backup remote and path handling, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
 
 Two things are macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op elsewhere (use cron/systemd-user on Linux; on Windows, use WSL2). `mcp install` also only ever writes Claude Desktop's macOS config path ([#105](https://github.com/Wynelson94/longhand/issues/105)) — there's no Claude Desktop release for Linux, and Windows isn't supported ([#112](https://github.com/Wynelson94/longhand/issues/112)); wiring a Windows Claude Desktop to a WSL2 install would mean hand-editing its config to launch Longhand through `wsl.exe`, which is untested.
 
@@ -219,7 +223,7 @@ Your Claude Code history is yours. It goes into a SQLite file and a ChromaDB dir
 
 One boring exception, disclosed in full: the interactive CLI checks pypi.org for a newer Longhand version. Most commands respect a 24-hour cache and print any hint only after their own output, so nothing you're waiting on is delayed. `doctor` (and `setup`, which runs it) is the exception — it forces a fresh, synchronous fetch every time, with a 2-second timeout, before it prints its table. The request carries nothing but itself — no telemetry, no identifiers, nothing about your corpus. It's excluded from Claude Code's hooks and from the `mcp-server` entry point `mcp install` actually configures for Claude Desktop, but not yet from `longhand shared-mcp`, `mcp serve`, or `demo` — those currently run the same check at exit like any other command ([#101](https://github.com/Wynelson94/longhand/issues/101)). `LONGHAND_NO_UPDATE_CHECK=1` turns all of it off. "Zero API calls" means what it always meant: no LLM or cloud service ever touches your data.
 
-The second exception is one you turn on yourself. `longhand backup` writes the verbatim record of every session into a git repository you own and pushes it there, so a crashed or replaced computer does not take the history with it. It is off until `longhand backup init` has shown you exactly what would leave the machine — session count, upload size, that the content is verbatim transcripts including thinking and tool output, that nothing is encrypted, which secret-shaped strings are masked in the copy — and you have typed `yes`. A public GitHub repository is refused. Secret-shaped strings are masked in the uploaded copy only; the local store is never changed. `longhand backup disable` turns it off. [docs/backup.md](docs/backup.md) has the whole contract.
+The second exception is one you turn on yourself. `longhand backup` writes the verbatim record of every session into a git repository you own and pushes it there, so a crashed or replaced computer does not take the history with it. It is off until `longhand backup init` has shown you exactly what would leave the machine — session count, upload size, that the content is verbatim transcripts including thinking and tool output, that nothing is encrypted, which secret-shaped strings are masked in the copy — and you have typed `yes`. A GitHub repository that `gh` reports as public or internal is refused; when `gh` can't check, `backup init` asks you to type `private` instead (`--yes` skips that prompt too). Secret-shaped strings are masked in the uploaded copy only; the local store is never changed. `longhand backup disable` turns it off. [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md) has the whole contract.
 
 ---
 
@@ -244,7 +248,7 @@ Longhand reads those files. Then it gives you:
 - **Git commit extraction** — structured extraction of every git commit, push, merge, checkout from sessions, linked to episodes
 - **MCP server** — 13 tools that let Claude query Longhand directly during live conversations
 - **Auto-ingest hook** — drops into Claude Code's `SessionEnd` hook so new sessions are indexed automatically
-- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass, or for a `reconcile --fix` pass to pick it up (the live tail never sets `project_id`, so reconcile treats it as needing a full re-ingest)
+- **Live ingestion** — the `Stop` hook (installed alongside `SessionEnd` by `hook install`; not separately optional) tails the active transcript between turns so an in-flight session is queryable immediately via `list_sessions`, timeline, file history, and replay. It stores events only, no embeddings — semantic `recall`/`search` still wait for the `SessionEnd` pass, or for a `reconcile --fix` pass to pick it up (the live tail never sets `project_id`, so reconcile treats it as needing a full re-ingest). When another ingest holds the lock, the hook hands the turn to a background retry instead of skipping it
 - **Plan history** — every Write/Edit to `~/.claude/plans/*.md` is captured as a first-class entity, queryable via `longhand plans list` and the `list_plans` MCP tool
 - **Secret redaction (opt-in)** — `longhand config --set redact.enabled=true` masks secret-shaped strings (API keys, tokens, JWTs, DB passwords) at ingest before they reach the index; `longhand redact --apply` retroactively masks data ingested earlier (see [SECURITY.md](https://github.com/Wynelson94/longhand/blob/main/SECURITY.md) for the current gap in git commit message coverage, [#110](https://github.com/Wynelson94/longhand/issues/110))
 - **Background reconciler** — optional launchd job (`longhand schedule install-reconciler`) keeps the index honest without manual `reconcile --fix` runs
@@ -468,18 +472,18 @@ Once installed, you can ask Claude things like *"what did we decide about the au
 
 Both commands read `transcript_path` from the hook's stdin JSON, so no flags are needed in the hook entry itself.
 
-- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. A failure here is silent by design — no stdout, no breadcrumb — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
-- **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0.
+- **Stop hook (`ingest-live`)** runs after every assistant turn. Tails the transcript file and stores new events (plus tool-call pairing and session stats) incrementally, so an in-flight session is queryable via `list_sessions`, timeline, file history, and replay while you're still working in it. It never embeds, so semantic `recall`/`search` still need the `SessionEnd` pass — or a `reconcile --fix` pass, which re-ingests with full analysis since a live-tailed session never got a `project_id` and lands in reconcile's `null_project` bucket. If another ingest holds the lock, the hook neither waits nor skips the turn: it starts a detached retry that reads the transcript as soon as the lock frees, so a turn isn't lost when the session ends right after it. There is one retry per transcript and hook; each logs a line to `logs/live-retry-YYYY-MM-DD.log`, and one still waiting after 10 minutes gives up with a `lock-timeout` breadcrumb for `doctor`. A failure here is silent by design — no stdout, and no breadcrumb unless a busy lock's retry can't even be started (`retry-spawn-failed`) — since it must never risk disrupting your turn; `SessionEnd` and `reconcile` are the backstop.
+- **SessionEnd hook (`ingest-session`)** runs once when a session closes. Does the full analysis pass: project inference, outcomes, episodes, segments, embeddings. A failure here prints one line to stderr and leaves a breadcrumb in `logs/hook-errors-YYYY-MM-DD.log` (surfaced by `doctor`), then exits 0. A busy lock gets the same background retry, logged to `logs/session-retry-YYYY-MM-DD.log`.
 
 Both are non-blocking and run in one to two seconds. You don't have to think about either of them again.
 
-**Optional background reconciler:** `longhand schedule install-reconciler` adds a launchd plist that runs `reconcile --fix` on a schedule. Catches sessions the hooks missed *if the transcript is still on disk* — `reconcile` enumerates from `~/.claude/projects/`, so a transcript Claude Code has already rotated away is invisible to it, same as any other tool here.
+**Optional background reconciler:** `longhand schedule install-reconciler` adds a launchd plist that runs `reconcile --fix` on a schedule. Catches sessions the hooks missed *if the transcript is still on disk* — `reconcile` enumerates from `~/.claude/projects/`, so a transcript Claude Code has already rotated away is invisible to it, same as any other tool here. That includes a transcript that grew after its last full ingest: once it has been quiet for 30 minutes, reconcile re-ingests it, and one still being written is left to its own hooks.
 
 ---
 
 ## Backup
 
-Most of a mature archive exists only in `~/.longhand/longhand.db` — Claude Code rotates transcripts away, and on the author's machine 90% of the sessions in the store no longer existed anywhere else (792 of 879, measured 2026-10-29). `longhand backup` is the opt-in answer: the verbatim record of every session, reconstructed line by line, in a private git repository you own, with secret-shaped strings masked in the copy and nothing encrypted. `longhand restore --from <url>` rebuilds the store on a new machine by re-parsing those transcripts with the current parser. Manual, or hourly from the background reconciler with `longhand backup auto on`. Nothing is uploaded until `longhand backup init` has shown you the consent screen and you have typed `yes`. Everything else — layout, masking, multi-machine behaviour, limits, what is not backed up — is in [docs/backup.md](docs/backup.md).
+Most of a mature archive exists only in `~/.longhand/longhand.db` — Claude Code rotates transcripts away, and on the author's machine 90% of the sessions in the store no longer existed anywhere else (792 of 879, measured 2026-10-29). `longhand backup` is the opt-in answer: the verbatim record of every session, reconstructed line by line, in a private git repository you own, with secret-shaped strings masked in the copy and nothing encrypted. `longhand restore --from <url>` rebuilds the store on a new machine by re-parsing those transcripts with the current parser. Manual, or hourly from the background reconciler with `longhand backup auto on`. Nothing is uploaded until `longhand backup init` has shown you the consent screen and you have typed `yes`. Everything else — layout, masking, multi-machine behaviour, limits, what is not backed up — is in [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md).
 
 ---
 
@@ -600,7 +604,7 @@ Longhand is flat-cost: the cap is per-call, not per-corpus. Recalling across 10 
 
 ---
 
-802 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
+834 unit tests passing, covering the listing and dispatch of all 13 MCP tools (only `list_plans`'s handler isn't separately call-tested). Full security audit: zero critical findings, zero high findings. `~/.longhand/` is created with 0700 permissions on the main store-open path (several early-write paths don't yet apply that mode — [#99](https://github.com/Wynelson94/longhand/issues/99)); all SQL is parameterized; all inputs are bounded. Dependencies: chromadb, posthog, typer, rich, pydantic, mcp.
 
 ---
 

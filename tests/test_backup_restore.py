@@ -473,3 +473,65 @@ def test_restore_reports_lines_the_parser_cannot_take(
     assert any("no events" in e["error"] for e in report.errors)
     survivors = [sid for sid in ("test-session-1", "edit-session") if fresh.sqlite.get_session(sid)]
     assert len(survivors) == 1
+
+
+# ─── Phase 5 finding: two sessions sharing one event id ───────────────────────
+
+
+def test_restore_marks_a_session_whose_only_event_another_session_took(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store keeps one row per event id. When two backed-up transcripts share
+    an id (one real pair in the author's archive), the later import takes the
+    row and the other session is left with no joined event; it must still get a
+    state mark, or every restore re-imports it and the row flips back and forth."""
+    from longhand.backup.export import export_session, write_manifest
+
+    monkeypatch.setattr("longhand.parser.redaction_enabled", lambda: False)
+    shared = "849aec6d-0000-4434-ae96-e89a35c6f898"
+
+    def line(sid: str, uuid: str, ts: str, text: str, parent: str | None = None) -> str:
+        return json.dumps(
+            {
+                "type": "user",
+                "uuid": uuid,
+                "parentUuid": parent,
+                "sessionId": sid,
+                "timestamp": ts,
+                "cwd": "/Users/tester/p",
+                "isSidechain": False,
+                "message": {"role": "user", "content": text},
+            }
+        )
+
+    first = tmp_path / "a-first.jsonl"  # May: sorts first in the repo, imported first
+    first.write_text(line("a-first", shared, "2026-05-28T18:14:19.000Z", "lone line") + "\n")
+    second = tmp_path / "b-second.jsonl"  # June: imported second, takes the shared row
+    second.write_text(
+        line("b-second", "b-u1", "2026-06-01T09:00:00.000Z", "hello")
+        + "\n"
+        + line("b-second", shared, "2026-06-01T09:00:05.000Z", "same id again", "b-u1")
+        + "\n"
+    )
+    # Two source stores, so each transcript keeps its own copy of the shared line.
+    store_a = _fresh_store(tmp_path, "src-a")
+    store_b = _fresh_store(tmp_path, "src-b")
+    _ingest(store_a, first)
+    _ingest(store_b, second)
+    repo_root = tmp_path / "repo"
+    for store, sid in ((store_a, "a-first"), (store_b, "b-second")):
+        row = store.sqlite.get_session(sid)
+        assert row is not None
+        export_session(store.sqlite, row, repo_root)
+    write_manifest(repo_root, 2)
+
+    fresh = _fresh_store(tmp_path, "restored")
+    first_pass = restore_backup(fresh, repo_root)
+
+    assert (first_pass.imported, first_pass.errors) == (2, [])
+    assert _event_count(fresh.sqlite, "a-first") == 0  # the row went to b-second
+    assert set(BackupState.load(fresh.data_dir).sessions) == {"a-first", "b-second"}
+
+    second_pass = restore_backup(fresh, repo_root)
+    assert (second_pass.imported, second_pass.skipped) == (0, 2)
+    assert _event_count(fresh.sqlite, "b-second") == 2

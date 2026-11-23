@@ -11,6 +11,65 @@ commits and tag annotations of those releases.
 
 ## [Unreleased]
 
+### Internal
+
+- Releases now update the official MCP Registry too. A new job in
+  `publish.yml` runs after the PyPI upload, signs in with GitHub OIDC (no
+  stored secret), and publishes `server.json` with a pinned `mcp-publisher`
+  whose Sigstore signature it checks first; a re-run skips a version the
+  registry already has. Nothing published there automatically before, so the
+  registry sat at 0.5.5 from April until 1.3.1 was published by hand.
+- Python 3.15 does not install yet, and the README now says why:
+  `onnxruntime` (required by `chromadb`) has no 3.15 wheel and has never
+  published a source distribution, so pip has nothing to install or build.
+  A new weekly `py315-watch.yml` job retries the install and the suite on
+  3.15 and opens one issue when the install first succeeds. It never gates a
+  PR. A failed install there is the expected state for now; the job goes red
+  only if the install fails for a reason other than `onnxruntime`.
+
+---
+
+## [1.3.1] — 2026-11-04
+
+A session could lose its last turn to a busy ingest lock or to a full ingest
+of the same transcript, and `reconcile` could not see the loss.
+
+### Fixed
+
+- **A turn was lost when its Stop hook found the ingest lock busy.** The hook
+  skipped the turn and left it for the next Stop, which never runs if the
+  session ends on that turn. SessionEnd deferred the same way. Both hooks now
+  hand a locked-out ingest to a detached retry (`--wait-lock 600`), one per
+  transcript and hook, which reads the transcript to its end as soon as the
+  lock frees. The hooks still never wait. Each retry logs to
+  `logs/live-retry-*.log` or `logs/session-retry-*.log`. A retry that gives
+  up leaves a `lock-timeout` breadcrumb; if one can't be started, the hook
+  leaves `retry-spawn-failed`. `doctor` counts both as healable by
+  `reconcile --fix`.
+- **A full ingest logged bytes it never read.** It measured the transcript
+  after embedding and logged that size as ingested, so a turn a live session
+  wrote during the ingest was claimed unread: the live tail's cursor skipped
+  it and `reconcile` saw nothing to heal. The size is now taken before
+  parsing.
+- **Background workers could run the wrong Longhand.** `longhand ingest`,
+  spawned by recall, ran `python -m longhand` in the hook's working
+  directory (the session's project), and Python imports a `longhand/`
+  package from there first: a session inside a Longhand checkout ran that
+  checkout's code. Background workers, including the new retries, now start
+  in the data directory.
+- **`reconcile` counted a transcript as fully indexed once it had a row.** A
+  transcript that grew after its last full ingest stayed invisible to it, so
+  a lost turn was never healed. It now re-ingests a transcript whose size
+  differs from its last full ingest once the file has been quiet for 30
+  minutes (`changed`), and counts one still being written (`settling`)
+  without touching it. A transcript whose last ingest skipped analysis on
+  purpose keeps that defer. The CLI and the `reconcile` MCP tool report both
+  counts.
+- **`doctor`'s "Recent ingest (7d)" row had the same blind spot.** It now
+  turns yellow when a quiet transcript has grown since its last full ingest.
+
+## [1.3.0] — 2026-10-30
+
 Opt-in backup of the archive to a git remote you own, and restore from it.
 Nothing leaves the machine until `backup init` has shown the consent
 screen and you have typed `yes`.
@@ -48,6 +107,9 @@ screen and you have typed `yes`.
   exception beside the version check; SECURITY.md lists the third
   `subprocess` call site (`longhand/backup/gitrepo.py`, argv-only with
   `protocol.ext.allow=never`) and the new paths under `~/.longhand/`.
+- README and the repo docs got an accuracy pass against 1.2.3 (#109); the
+  runtime-command surface check reads package sources as UTF-8 so it passes
+  on Windows (#111).
 
 ## [1.2.3] — 2026-09-27
 

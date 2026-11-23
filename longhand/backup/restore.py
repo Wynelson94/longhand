@@ -28,7 +28,7 @@ from longhand.backup.export import (
     session_dir_name,
 )
 from longhand.backup.service import CONFIG_FILENAME, CONFIG_NAMESPACE
-from longhand.backup.state import BackupState, session_marks
+from longhand.backup.state import BackupState, SessionMark, session_marks
 from longhand.parser import JSONLParser
 
 if TYPE_CHECKING:
@@ -224,8 +224,20 @@ def restore_backup(
         if imported:
             marks = session_marks(store.sqlite)
             for session_id, sha in imported.items():
-                if session_id in marks:
-                    state.sessions[session_id] = replace(marks[session_id], sha256=sha)
+                mark = marks.get(session_id)
+                if mark is None:
+                    # Every event of this session now belongs to a session imported
+                    # later that shares its event ids (the store keeps one row per
+                    # id). It is marked anyway: otherwise every restore would import
+                    # it again and the shared rows would flip back and forth.
+                    row = store.sqlite.get_session(session_id)
+                    ingested = row.get("ingested_at") if row else None
+                    mark = SessionMark(
+                        event_count=0,
+                        last_event_timestamp=None,
+                        ingested_at=str(ingested) if ingested else None,
+                    )
+                state.sessions[session_id] = replace(mark, sha256=sha)
             state.save(store.data_dir)
         report.config_copied = copy_config_if_absent(repo_root, store.data_dir)
     finally:
