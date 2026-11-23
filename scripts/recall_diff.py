@@ -197,8 +197,7 @@ def main() -> int:
 
     if not args.baseline.exists():
         print(
-            f"no baseline found at {args.baseline}. "
-            "Run with --save-baseline to capture one first.",
+            f"no baseline found at {args.baseline}. Run with --save-baseline to capture one first.",
             file=sys.stderr,
         )
         return 2
