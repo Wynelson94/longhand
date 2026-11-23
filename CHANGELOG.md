@@ -9,17 +9,38 @@ commits and tag annotations of those releases.
 
 ---
 
-## [Unreleased]
+## [1.3.2] — 2026-11-22
+
+Two fixes from outside contributors: an index rebuild keeps Longhand's CPU
+embedding model, and `doctor` stops flagging Claude Code 2.1's new transcript
+entries. Releases now also publish to the MCP Registry on their own.
+
+### Fixed
+
+- **An index rebuild switched to the wrong embedding setup.** `reset()` and
+  the episode rebuild in `analyze --all` recreated their Chroma collections
+  without an embedding function, so for the rest of that process Chroma fell
+  back to its default one, the provider selection 1.1.0 pinned away from.
+  Every collection Longhand creates now uses the same CPU-pinned model.
+  Closes #98. (#113, thanks @mayuriphad)
+- **`doctor` flagged Claude Code 2.1's new transcript entries as format
+  drift.** Five request-telemetry types (`api-request`, `api-request-blob`,
+  `api-request-shape`, `atis-latch`, `tools-used`) repeat what is already
+  stored, so the parser now skips them. Four others (`custom-title`,
+  `agent-setting`, `relocated`, `cost-state`) are kept as triaged unknowns
+  until they are worth promoting. Rows stored before this release stay in
+  the database, and `doctor` no longer counts them as drift. (#138, thanks
+  @Minecraft269)
 
 ### Internal
 
-- Releases now update the official MCP Registry too. A new job in
+- Releases now update the official MCP Registry too (#137). A new job in
   `publish.yml` runs after the PyPI upload, signs in with GitHub OIDC (no
   stored secret), and publishes `server.json` with a pinned `mcp-publisher`
   whose Sigstore signature it checks first; a re-run skips a version the
   registry already has. Nothing published there automatically before, so the
   registry sat at 0.5.5 from April until 1.3.1 was published by hand.
-- Python 3.15 does not install yet, and the README now says why:
+- Python 3.15 does not install yet, and the README now says why (#139):
   `onnxruntime` (required by `chromadb`) has no 3.15 wheel and has never
   published a source distribution, so pip has nothing to install or build.
   A new weekly `py315-watch.yml` job retries the install and the suite on
@@ -27,14 +48,18 @@ commits and tag annotations of those releases.
   PR. A failed install there is the expected state for now; the job goes red
   only if the install fails for a reason other than `onnxruntime`.
 - The test suite no longer leaves background `longhand ingest` processes
-  running. An unmatched project query starts a detached `ingest`, and ten
-  tests reach that path. On a developer's machine each child re-read all of
-  `~/.claude/projects` into a temporary store for up to an hour, so every
+  running (#140). An unmatched project query starts a detached `ingest`, and
+  ten tests reach that path. On a developer's machine each child re-read all
+  of `~/.claude/projects` into a temporary store for up to an hour, so every
   local run left ten behind and stacked runs could exhaust memory. CI never
   showed it, because its runners have no transcripts. `tests/conftest.py`
   now refuses a real detached spawn unless the test patches
   `subprocess.Popen` itself or is marked `real_spawn`, and
   `tests/test_spawn_guard.py` fails if that guard stops working.
+- README and the repo docs got an accuracy pass against 1.3.1 (#132): backup
+  behavior, the security surface, and counts.
+- Two maintenance scripts (`scripts/bump_version.py`, `scripts/recall_diff.py`)
+  are reformatted for the current `ruff format`; no behavior change.
 
 ---
 

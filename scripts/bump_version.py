@@ -121,8 +121,7 @@ def main(argv: list[str]) -> int:
 
     if new_tuple < cur_tuple:
         print(
-            f"Refusing to downgrade {cur} → {new}. "
-            f"Run with the same or higher version.",
+            f"Refusing to downgrade {cur} → {new}. Run with the same or higher version.",
             file=sys.stderr,
         )
         return 1
