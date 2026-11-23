@@ -6,7 +6,7 @@ Pre-drafted copy for the three upstream registries/lists. Work through in order.
 
 ## D2 — Official MCP Registry (`registry.modelcontextprotocol.io`)
 
-**Releases after 1.3.1 publish here automatically.** The `registry` job in [`publish.yml`](../.github/workflows/publish.yml) runs after the PyPI job, signs in with GitHub OIDC (no stored secret), and publishes `server.json` with a pinned `mcp-publisher` whose Sigstore signature it checks first. If that job fails, the PyPI release stands: re-run the job, or publish by hand as below, pinning a release tag instead of `releases/latest`. The registry sat at 0.5.5 from April until 1.3.1 was published by hand on 2026-11-05.
+**Releases after 1.3.1 publish here automatically.** 1.3.2 (2026-11-22) was the first to go out this way. The `registry` job in [`publish.yml`](../.github/workflows/publish.yml) runs after the PyPI job, signs in with GitHub OIDC (no stored secret), and publishes `server.json` with a pinned `mcp-publisher` whose Sigstore signature it checks first. If that job fails, the PyPI release stands: re-run the job, or publish by hand as below, pinning a release tag instead of `releases/latest`. The registry sat at 0.5.5 from April until 1.3.1 was published by hand on 2026-11-05.
 
 The original submission (v0.5.5) follows. The registry is submitted to via a CLI + GitHub auth, not a PR. Prerequisites: a new PyPI release (v0.5.5) so the `<!-- mcp-name: ... -->` marker in the README is present in the description PyPI serves back.
 
@@ -54,7 +54,7 @@ PR adding one line under **🧠 Knowledge & Memory**. Format follows the list's 
 - [Wynelson94/longhand](https://github.com/Wynelson94/longhand) 🐍 🏠 🍎 🐧 - Persistent local memory for Claude Code. Indexes every session JSONL verbatim into SQLite + ChromaDB for semantic recall (~128ms median) over your entire history. Zero API calls, never summarizes.
 ```
 
-Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🐧 Linux. No 🪟 Windows badge — the Windows CI leg fails 18 core tests every run as of 1.3.1 ([#112](https://github.com/Wynelson94/longhand/issues/112)); Windows isn't a supported platform.
+Badge legend used: 🐍 Python · 🏠 Local service · 🍎 macOS · 🐧 Linux. No 🪟 Windows badge — the Windows CI leg fails 18 core tests every run as of 1.3.2 ([#112](https://github.com/Wynelson94/longhand/issues/112)); Windows isn't a supported platform.
 
 **PR steps:**
 

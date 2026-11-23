@@ -45,6 +45,8 @@ Write the test first and watch it fail. A test that has never been red has not b
 
 Prefer a test that pins the behavior a user depends on over one that pins the current implementation. When a test encodes a decision, say why in the test or a comment near it — the reason is the part that gets lost.
 
+No test may start a real background `longhand` process. `project_fallback._spawn_detached` runs `python -m longhand <command>` in a new session, so a real child outlives pytest, and a background `ingest` reads your own `~/.claude/projects`. `tests/conftest.py` refuses that spawn for every test. A test that checks a spawn's arguments patches `subprocess.Popen` and still sees the call; a test that needs a real child is marked `@pytest.mark.real_spawn`, and that child must exit on its own. `tests/test_spawn_guard.py` fails if the guard stops working.
+
 `tests/test_surface_consistency.py` gates README.md and CLAUDE.md against the actual tool listing, CLI surface, and test count — but it does not read `.claude-plugin/README.md` or the [wiki](https://github.com/Wynelson94/longhand/wiki) ([#107](https://github.com/Wynelson94/longhand/issues/107)). A PR that changes the MCP tool count, retires a CLI command, or shifts the test count should grep those by hand until that gap is closed.
 
 ## Reporting a bug

@@ -95,7 +95,7 @@ longhand analyze --all           # fill in episodes + segments + project/session
 
 `search`, timelines, file history, and commit lookup all work immediately after `--skip-analysis` — every event is embedded regardless of this flag. `recall`'s episode/segment narrative and `recall_project_status` need the `analyze --all` pass to have data to draw on. Typical throughput on an M-class Mac is ~1–2 sessions/sec for full analysis.
 
-> *Status: v1.3.2 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 792 real sessions (786 Claude Code, 6 Codex) across 45 inferred projects (measured 2026-09-27). 838 unit tests passing.*
+> *Status: v1.3.2 — stable, daily-driver tested, security-audited (zero critical findings), on PyPI, available as a Claude Code plugin. Validated against 1,045 real sessions (1,039 Claude Code, 6 Codex) across 59 inferred projects (measured 2026-11-22). 838 unit tests passing.*
 
 **Full docs:** [Longhand Wiki](https://github.com/Wynelson94/longhand/wiki) — getting started, CLI reference, MCP tools reference, architecture, and troubleshooting.
 
@@ -127,7 +127,7 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 **Local. Complete. Yours.**
 
-> **Storage footprint:** ~7.5GB for a heavy power user (792+ sessions, 269k+ events, months of daily Claude Code usage across 45 inferred projects — measured 2026-09-27, see [Stats](#stats)). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
+> **Storage footprint:** ~10.8GB for a heavy power user (1,045+ sessions, 403k+ events, months of daily Claude Code usage across 59 inferred projects — measured 2026-11-22, see [Stats](#stats)). Typical users: 200–400MB. Once Claude Code rotates the source files off disk, Longhand isn't a duplicate — it's the only copy.
 
 ---
 
@@ -139,7 +139,7 @@ The "memory crisis" in AI was an artificial constraint. Storage is solved. SQLit
 
 Longhand pins `chromadb<1.0` for **every** Python version, not just 3.14. The pin originated with chromadb's newer Rust bindings segfaulting on 3.14 ([#4](https://github.com/Wynelson94/longhand/issues/4), now closed), and it stays until a 1.x chromadb is verified across the whole matrix.
 
-**Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 18 core tests fail on every run as of 1.3.1 (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, backup remote and path handling, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
+**Windows is not supported. Use WSL2.** A `windows-latest × py3.12` leg runs on every PR, but it's a non-blocking `continue-on-error` step — and it fails. 18 core tests fail on every run as of 1.3.2 (hook install/uninstall idempotency, config-file paths, redaction, live-ingest line counting, demo cleanup, backup remote and path handling, and more — tracked in [#112](https://github.com/Wynelson94/longhand/issues/112)), not flaky edge cases. The job shows green in GitHub's UI only because `continue-on-error` swallows the failed step; it is evidence-gathering, not a claim that Longhand works there. **Linux (3.10–3.14) is the only platform CI actually gates**; there is no macOS leg. macOS is the author's daily-driver OS and where it's validated by hand (see Stats), but it isn't independently verified in CI.
 
 Two things are macOS-specific regardless of the CI matrix: `schedule install-reconciler` installs a launchd job and is a no-op elsewhere (use cron/systemd-user on Linux; on Windows, use WSL2). `mcp install` also only ever writes Claude Desktop's macOS config path ([#105](https://github.com/Wynelson94/longhand/issues/105)) — there's no Claude Desktop release for Linux, and Windows isn't supported ([#112](https://github.com/Wynelson94/longhand/issues/112)); wiring a Windows Claude Desktop to a WSL2 install would mean hand-editing its config to launch Longhand through `wsl.exe`, which is untested.
 
@@ -483,7 +483,7 @@ Both are non-blocking and run in one to two seconds. You don't have to think abo
 
 ## Backup
 
-Most of a mature archive exists only in `~/.longhand/longhand.db` — Claude Code rotates transcripts away, and on the author's machine 90% of the sessions in the store no longer existed anywhere else (792 of 879, measured 2026-10-29). `longhand backup` is the opt-in answer: the verbatim record of every session, reconstructed line by line, in a private git repository you own, with secret-shaped strings masked in the copy and nothing encrypted. `longhand restore --from <url>` rebuilds the store on a new machine by re-parsing those transcripts with the current parser. Manual, or hourly from the background reconciler with `longhand backup auto on`. Nothing is uploaded until `longhand backup init` has shown you the consent screen and you have typed `yes`. Everything else — layout, masking, multi-machine behaviour, limits, what is not backed up — is in [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md).
+Most of a mature archive exists only in `~/.longhand/longhand.db` — Claude Code rotates transcripts away, and on the author's machine 83% of the sessions in the store no longer exist anywhere else (863 of 1,045, measured 2026-11-22). `longhand backup` is the opt-in answer: the verbatim record of every session, reconstructed line by line, in a private git repository you own, with secret-shaped strings masked in the copy and nothing encrypted. `longhand restore --from <url>` rebuilds the store on a new machine by re-parsing those transcripts with the current parser. Manual, or hourly from the background reconciler with `longhand backup auto on`. Nothing is uploaded until `longhand backup init` has shown you the consent screen and you have typed `yes`. Everything else — layout, masking, multi-machine behaviour, limits, what is not backed up — is in [docs/backup.md](https://github.com/Wynelson94/longhand/blob/main/docs/backup.md).
 
 ---
 
@@ -557,16 +557,16 @@ Summary memory and Longhand solve different problems. Summary memory is good for
 
 ## Stats
 
-Corpus, measured 2026-09-27 against the author's live store (Apple M4, macOS, code at `main`):
-- 792 sessions (6 of them Codex)
-- 269,067 events
-- 45 projects inferred automatically
-- 1,809 problem→fix episodes extracted
-- 6,632 conversation segments (design, story, debugging, discussion, planning)
-- 3,723 git operations extracted
-- Storage footprint: 5.9 GB SQLite + 1.6 GB ChromaDB
+Corpus, measured 2026-11-22 against the author's live store (Apple M4, macOS, code at `main`):
+- 1,045 sessions (6 of them Codex)
+- 403,365 events
+- 59 projects inferred automatically
+- 2,750 problem→fix episodes extracted
+- 9,495 conversation segments (design, story, debugging, discussion, planning)
+- 5,640 git operations extracted
+- Storage footprint: 8.0 GB SQLite + 2.9 GB ChromaDB
 
-Latency, benchmarked on the same corpus and date — warm, in-process, the 8 `scripts/recall_diff` queries:
+Latency, benchmarked on the 2026-09-27 corpus (792 sessions) and not re-measured since — warm, in-process, the 8 `scripts/recall_diff` queries:
 - `recall` (full pipeline): ~128ms median (16 runs)
 - Vector search: ~29ms median (24 runs)
 - SQL timeline read: ~1.6ms median (24 runs)
